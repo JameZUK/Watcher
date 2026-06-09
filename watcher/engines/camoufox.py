@@ -44,6 +44,9 @@ class CamoufoxRenderer:
                 }
                 if reuse_session and flow.session_state:
                     context_kwargs["storage_state"] = flow.session_state
+                # NB: Camoufox manages its own viewport/scale for fingerprinting,
+                # so we don't force device_scale_factor here (it would just
+                # produce oversized captures and ignore the mobile resize).
                 context = await browser.new_context(**context_kwargs)
                 context.set_default_timeout(settings.render_timeout_seconds * 1000)
                 page = await context.new_page()

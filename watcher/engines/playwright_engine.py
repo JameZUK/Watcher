@@ -42,7 +42,13 @@ class PlaywrightRenderer:
                 if reuse_session and flow.session_state:
                     context_kwargs["storage_state"] = flow.session_state
 
-                context = await browser.new_context(**context_kwargs)
+                # Retina-crisp captures; fall back if the engine rejects it.
+                context_kwargs["device_scale_factor"] = settings.screenshot_scale
+                try:
+                    context = await browser.new_context(**context_kwargs)
+                except Exception:
+                    context_kwargs.pop("device_scale_factor", None)
+                    context = await browser.new_context(**context_kwargs)
                 context.set_default_timeout(settings.render_timeout_seconds * 1000)
                 page = await context.new_page()
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json as _json
 
 from ..auth.login_flows import resolve_secrets
+from ..config import settings
 from ..models import Monitor
 from .base import VISIBLE_TEXT_JS, RenderResult
 
@@ -145,7 +146,9 @@ async def capture(page, response, monitor: Monitor) -> RenderResult:
     # previews. Re-uses the already-loaded page (just resizes), so no extra
     # navigation. Responsive sites reflow via media queries.
     try:
-        await page.set_viewport_size({"width": 390, "height": 844})
+        await page.set_viewport_size(
+            {"width": settings.mobile_viewport_width, "height": settings.mobile_viewport_height}
+        )
         await page.wait_for_timeout(450)
         result.screenshot_mobile_png = await page.screenshot(full_page=True, type="png")
     except Exception:

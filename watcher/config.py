@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     max_render_concurrency: int = Field(default=3)
     render_timeout_seconds: int = Field(default=45)
 
+    # Screenshot quality / device emulation.
+    screenshot_scale: int = Field(default=2)        # device pixel ratio (retina-crisp)
+    mobile_viewport_width: int = Field(default=390)   # iPhone-class logical width
+    mobile_viewport_height: int = Field(default=844)
+
     # Auto-apply the Playwright Firefox driver workaround on startup (idempotent).
     patch_playwright: bool = Field(default=True)
 
