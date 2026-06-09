@@ -79,8 +79,13 @@ async def do_wait(page, monitor: Monitor) -> None:
             pass
 
 
-async def capture(page, response, monitor: Monitor) -> RenderResult:
-    """Capture HTML, visible text, screenshot, and selector/JSON value."""
+async def capture(page, response, monitor: Monitor, mobile: bool = True) -> RenderResult:
+    """Capture HTML, visible text, screenshot, and selector/JSON value.
+
+    `mobile` controls whether a second mobile-viewport screenshot is taken by
+    resizing the page. Camoufox forbids runtime viewport resizing, so it passes
+    mobile=False and captures the mobile view via a separate instance instead.
+    """
     result = RenderResult()
     result.http_status = response.status if response else None
     result.content_type = (
@@ -145,6 +150,8 @@ async def capture(page, response, monitor: Monitor) -> RenderResult:
     # Second full-page screenshot at a mobile viewport, for device-appropriate
     # previews. Re-uses the already-loaded page (just resizes), so no extra
     # navigation. Responsive sites reflow via media queries.
+    if not mobile:
+        return result
     try:
         await page.set_viewport_size(
             {"width": settings.mobile_viewport_width, "height": settings.mobile_viewport_height}
