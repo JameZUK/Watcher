@@ -59,7 +59,7 @@
     {% set ns = namespace(items=[]) %}
     {% for s in snapshots|reverse %}
       {% if s.status.value == 'ok' and s.screenshot_blob %}
-        {% set ns.items = ns.items + [ {'id': s.id, 'ago': (s.taken_at|timeago), 'changed': (s.id in csids)} ] %}
+        {% set ns.items = ns.items + [ {'id': s.id, 'ago': (s.taken_at|timeago), 'changed': (s.id in csids), 'mobile': (s.screenshot_mobile_blob is not none)} ] %}
       {% endif %}
     {% endfor %}
     <section class="glass rounded-2xl overflow-hidden" x-data='timeMachine({{ ns.items|tojson }}, {{ monitor.id }})'>
@@ -82,9 +82,10 @@
       <template x-if="frames.length">
         <div>
           <div class="relative bg-black/40">
-            <img :src="src" @click="$store.lb.open(src)" class="w-full block cursor-zoom-in">
+            <img :src="imgUrl()" @click="$store.lb.open(imgUrl())" class="w-full block cursor-zoom-in">
             <span class="absolute top-3 left-3 pill pill-amber backdrop-blur" x-show="frames[i] && frames[i].changed">change detected</span>
-            <button type="button" @click="$store.lb.open(src)" class="absolute bottom-3 right-3 btn btn-ghost !px-2.5 !py-1.5 backdrop-blur" aria-label="Zoom">
+            <span class="absolute top-3 right-3 pill backdrop-blur" x-show="device==='mobile' && frames[i] && !frames[i].mobile" x-cloak>desktop only · no mobile capture yet</span>
+            <button type="button" @click="$store.lb.open(imgUrl())" class="absolute bottom-3 right-3 btn btn-ghost !px-2.5 !py-1.5 backdrop-blur" aria-label="Zoom">
               <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3M11 8v6M8 11h6"/></svg>
             </button>
           </div>
@@ -188,7 +189,7 @@
         {% for c in changes %}
         <li>
           <a href="/monitors/{{ monitor.id }}?change={{ c.id }}"
-             class="block px-4 py-3 transition hover:bg-white/5 {{ 'bg-brand-500/10 border-l-2 border-brand-500' if selected and selected.id==c.id else 'border-l-2 border-transparent' }}">
+             class="block px-4 py-3 transition hover:bg-white/5 select-none {{ 'bg-brand-500/10 border-l-2 border-brand-500' if selected and selected.id==c.id else 'border-l-2 border-transparent' }}">
             <div class="flex items-center justify-between gap-2">
               <span class="text-xs font-medium text-slate-200">{{ c.detected_at|timeago }}</span>
               <span class="text-[11px] text-slate-500">{{ c.magnitude|pct }}</span>
@@ -240,7 +241,7 @@ function timeMachine(frames, mid){return {
   frames: frames || [], mid,
   i: (frames && frames.length) ? frames.length - 1 : 0,
   device: (window.matchMedia && window.matchMedia('(max-width: 640px)').matches) ? 'mobile' : 'desktop',
-  get src(){
+  imgUrl(){
     if (!this.frames.length) return '';
     const q = this.device === 'mobile' ? '?v=mobile' : '';
     return `/monitors/${this.mid}/snapshots/${this.frames[this.i].id}/image${q}`;

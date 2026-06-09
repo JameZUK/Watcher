@@ -28,7 +28,7 @@
 <div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
   {% for m in monitors %}
   {% set name = m.name or m.url %}
-  <a href="/monitors/{{ m.id }}" class="group glass glass-hover rounded-2xl overflow-hidden flex flex-col">
+  <a href="/monitors/{{ m.id }}" class="group glass glass-hover rounded-2xl overflow-hidden flex flex-col select-none">
     <!-- Rendered preview -->
     <div class="relative aspect-[16/10] bg-black/40 overflow-hidden">
       {% if thumbs.get(m.id) %}

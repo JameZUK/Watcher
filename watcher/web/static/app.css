@@ -12,6 +12,16 @@
 * { -webkit-tap-highlight-color: transparent; }
 [x-cloak] { display: none !important; }
 
+/* Prevent accidental text selection on interactive controls (especially on
+   touch devices). Real content — diffs, page text, URLs — stays selectable. */
+button, .btn, .pill, label, summary, nav, [role="button"], .no-select,
+select, input[type="range"], input[type="checkbox"], input[type="radio"] {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
 html { scroll-behavior: smooth; }
 body {
   background: var(--bg);
