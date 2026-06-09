@@ -1,0 +1,136 @@
+/* ===========================================================================
+   Watcher — futuristic design system (on top of Tailwind CDN)
+   =========================================================================== */
+
+:root {
+  --bg: #06070f;
+  --accent-a: #6366f1;   /* indigo  */
+  --accent-b: #a855f7;   /* violet  */
+  --accent-c: #22d3ee;   /* cyan    */
+}
+
+* { -webkit-tap-highlight-color: transparent; }
+[x-cloak] { display: none !important; }
+
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg);
+  color: #e2e8f0;
+  font-feature-settings: "cv02","cv03","cv04","cv11";
+}
+
+/* Ambient background: layered radial glows + faint grid -------------------- */
+.bg-aurora {
+  position: fixed; inset: 0; z-index: -1; overflow: hidden;
+  background:
+    radial-gradient(60rem 60rem at 12% -10%, rgba(99,102,241,.20), transparent 60%),
+    radial-gradient(50rem 50rem at 100% 0%, rgba(168,85,247,.16), transparent 55%),
+    radial-gradient(45rem 45rem at 50% 120%, rgba(34,211,238,.12), transparent 60%),
+    var(--bg);
+}
+.bg-aurora::after {
+  content: ""; position: absolute; inset: 0;
+  background-image:
+    linear-gradient(rgba(255,255,255,.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.03) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(circle at 50% 30%, black, transparent 80%);
+}
+
+/* Glass surfaces ----------------------------------------------------------- */
+.glass {
+  background: rgba(255,255,255,.045);
+  border: 1px solid rgba(255,255,255,.09);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+.glass-hover { transition: transform .25s cubic-bezier(.2,.7,.2,1), border-color .25s, box-shadow .25s; }
+.glass-hover:hover {
+  transform: translateY(-3px);
+  border-color: rgba(129,140,248,.45);
+  box-shadow: 0 18px 50px -20px rgba(99,102,241,.55);
+}
+
+/* Gradient text + accents -------------------------------------------------- */
+.grad-text {
+  background: linear-gradient(100deg, var(--accent-a), var(--accent-b) 45%, var(--accent-c));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.grad-bar { background: linear-gradient(90deg, var(--accent-a), var(--accent-b), var(--accent-c)); }
+
+/* Buttons ------------------------------------------------------------------ */
+.btn { display:inline-flex; align-items:center; gap:.5rem; font-weight:600; border-radius:.75rem;
+  transition: transform .15s, box-shadow .25s, background .2s, border-color .2s; }
+.btn:active { transform: translateY(1px) scale(.99); }
+.btn-primary {
+  color:#fff; padding:.6rem 1.1rem;
+  background: linear-gradient(100deg, var(--accent-a), var(--accent-b));
+  box-shadow: 0 10px 30px -10px rgba(124,58,237,.7), inset 0 1px 0 rgba(255,255,255,.2);
+}
+.btn-primary:hover { box-shadow: 0 14px 40px -10px rgba(124,58,237,.9); }
+.btn-ghost {
+  color:#cbd5e1; padding:.55rem 1rem;
+  background: rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.1);
+}
+.btn-ghost:hover { background: rgba(255,255,255,.1); color:#fff; }
+.btn-danger { color:#fca5a5; padding:.55rem 1rem; background:rgba(239,68,68,.1); border:1px solid rgba(239,68,68,.25); }
+.btn-danger:hover { background:rgba(239,68,68,.18); color:#fecaca; }
+
+/* Status dot with glow ----------------------------------------------------- */
+.dot { width:.6rem; height:.6rem; border-radius:9999px; display:inline-block; }
+.dot-live { background:#34d399; box-shadow:0 0 0 3px rgba(52,211,153,.18), 0 0 12px rgba(52,211,153,.8); }
+.dot-paused { background:#64748b; }
+.dot-err { background:#f87171; box-shadow:0 0 0 3px rgba(248,113,113,.18), 0 0 12px rgba(248,113,113,.7); }
+
+/* Inputs ------------------------------------------------------------------- */
+.field {
+  width:100%; border-radius:.75rem; padding:.6rem .85rem; font-size:.875rem; color:#e2e8f0;
+  background: rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.12);
+  transition: border-color .2s, box-shadow .2s, background .2s;
+}
+.field::placeholder { color:#64748b; }
+.field:focus { outline:none; border-color: var(--accent-a);
+  box-shadow: 0 0 0 3px rgba(99,102,241,.25); background: rgba(255,255,255,.06); }
+select.field option { background:#0b0d1f; }
+
+/* Pills / badges ----------------------------------------------------------- */
+.pill { font-size:.7rem; padding:.15rem .55rem; border-radius:9999px; border:1px solid rgba(255,255,255,.12);
+  background:rgba(255,255,255,.05); color:#cbd5e1; }
+.pill-amber { background:rgba(245,158,11,.15); border-color:rgba(245,158,11,.3); color:#fcd34d; }
+
+/* Diff rendering ----------------------------------------------------------- */
+pre.diff { tab-size:2; }
+.diff-add { background:rgba(16,185,129,.12); color:#6ee7b7; }
+.diff-del { background:rgba(244,63,94,.12); color:#fda4af; }
+.diff-hunk { color:#a5b4fc; }
+.diff-ctx { color:#64748b; }
+
+/* Scrollbars --------------------------------------------------------------- */
+.scroll-thin::-webkit-scrollbar { width:8px; height:8px; }
+.scroll-thin::-webkit-scrollbar-thumb { background:rgba(148,163,184,.3); border-radius:8px; }
+.scroll-thin::-webkit-scrollbar-track { background:transparent; }
+
+/* Range slider (history scrubber) ----------------------------------------- */
+input.time-range { -webkit-appearance:none; appearance:none; height:6px; border-radius:9999px;
+  background: rgba(255,255,255,.12); outline:none; cursor:pointer; }
+input.time-range::-webkit-slider-thumb { -webkit-appearance:none; appearance:none;
+  width:18px; height:18px; border-radius:9999px; border:2px solid #fff;
+  background: linear-gradient(100deg, var(--accent-a), var(--accent-b));
+  box-shadow: 0 0 0 3px rgba(99,102,241,.25), 0 2px 8px rgba(0,0,0,.4); }
+input.time-range::-moz-range-thumb { width:18px; height:18px; border-radius:9999px; border:2px solid #fff;
+  background: var(--accent-a); box-shadow: 0 0 0 3px rgba(99,102,241,.25); }
+
+/* Entrance animation ------------------------------------------------------- */
+@keyframes rise { from { opacity:0; transform: translateY(10px); } to { opacity:1; transform:none; } }
+.rise { animation: rise .45s cubic-bezier(.2,.7,.2,1) both; }
+
+/* Checkerboard behind screenshots (so transparent overlays read clearly) --- */
+.checker {
+  background-image:
+    linear-gradient(45deg, rgba(255,255,255,.04) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255,255,255,.04) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255,255,255,.04) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255,255,255,.04) 75%);
+  background-size: 18px 18px;
+  background-position: 0 0, 0 9px, 9px -9px, -9px 0;
+}

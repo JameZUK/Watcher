@@ -1,0 +1,22 @@
+services:
+  watcher:
+    build: .
+    image: watcher:latest
+    ports:
+      - "8000:8000"
+    environment:
+      # CHANGE THESE in production.
+      WATCHER_SECRET_KEY: "change-me-to-a-long-random-string"
+      # Optional: enable Web Push (generate with `vapid --gen`)
+      # WATCHER_VAPID_PUBLIC_KEY: ""
+      # WATCHER_VAPID_PRIVATE_KEY: ""
+      # WATCHER_VAPID_SUBJECT: "mailto:you@example.com"
+      WATCHER_DATA_DIR: "/data"
+    volumes:
+      - watcher-data:/data
+    restart: unless-stopped
+    # Chromium needs a larger shared memory segment for stability.
+    shm_size: "1gb"
+
+volumes:
+  watcher-data:

@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · Watcher{% endblock %}
+{% set mode_label = {'auto':'Smart','text':'Text','visual':'Visual','element':'Element','html':'HTML','json':'JSON'} %}
+{% block content %}
+<div class="flex flex-wrap items-end justify-between gap-3 mb-7">
+  <div>
+    <h1 class="text-3xl font-bold tracking-tight text-white">Your <span class="grad-text">monitors</span></h1>
+    <p class="text-sm text-slate-400 mt-1">
+      {{ monitors|length }} tracked
+      {% if total_unacked %}· <a href="/inbox" class="text-brand-400 hover:underline">{{ total_unacked }} unreviewed change{{ 's' if total_unacked != 1 }}</a>{% else %}· all quiet{% endif %}
+    </p>
+  </div>
+  <a href="/monitors/new" class="btn btn-primary hidden sm:inline-flex">
+    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>New monitor
+  </a>
+</div>
+
+{% if not monitors %}
+<div class="glass rounded-3xl p-12 sm:p-16 text-center">
+  <div class="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl grad-bar shadow-lg">
+    <svg viewBox="0 0 24 24" class="h-8 w-8 text-white" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/></svg>
+  </div>
+  <h2 class="text-xl font-semibold text-white">Watch your first page</h2>
+  <p class="text-sm text-slate-400 mt-2 mb-6 max-w-sm mx-auto">Paste any URL and Watcher renders it in a real browser, then tells you the moment its content or appearance changes.</p>
+  <a href="/monitors/new" class="btn btn-primary">Create a monitor</a>
+</div>
+{% else %}
+<div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+  {% for m in monitors %}
+  {% set name = m.name or m.url %}
+  <a href="/monitors/{{ m.id }}" class="group glass glass-hover rounded-2xl overflow-hidden flex flex-col">
+    <!-- Rendered preview -->
+    <div class="relative aspect-[16/10] bg-black/40 overflow-hidden">
+      {% if thumbs.get(m.id) %}
+        <img src="/monitors/{{ m.id }}/snapshots/{{ thumbs[m.id] }}/image" alt=""
+             class="absolute inset-0 h-full w-full object-cover object-top opacity-80 group-hover:opacity-100 transition duration-500 group-hover:scale-[1.03]">
+        <div class="absolute inset-0 bg-gradient-to-t from-[#06070f] via-transparent to-transparent"></div>
+      {% else %}
+        <div class="absolute inset-0 flex items-center justify-center text-slate-600">
+          <svg viewBox="0 0 24 24" class="h-9 w-9 animate-pulse" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/></svg>
+        </div>
+      {% endif %}
+      {% if unacked.get(m.id) %}
+      <span class="absolute top-3 right-3 pill pill-amber font-semibold backdrop-blur">{{ unacked[m.id] }} new</span>
+      {% endif %}
+      <span class="absolute top-3 left-3 pill backdrop-blur">{{ mode_label.get(m.detection_mode.value, m.detection_mode.value) }}</span>
+      {% if m.id in blocked %}
+      <span class="absolute bottom-3 left-3 pill backdrop-blur" style="background:rgba(239,68,68,.18);border-color:rgba(239,68,68,.35);color:#fca5a5;">⚠ last check failed</span>
+      {% endif %}
+    </div>
+    <!-- Meta -->
+    <div class="p-4 flex flex-col gap-3 flex-1">
+      <div class="flex items-start gap-2">
+        <span class="dot {{ 'dot-err' if m.id in blocked else ('dot-live' if m.enabled else 'dot-paused') }} mt-1.5 shrink-0"></span>
+        <div class="min-w-0">
+          <h3 class="font-semibold text-white truncate group-hover:text-brand-400 transition">{{ name }}</h3>
+          <p class="text-xs text-slate-500 truncate">{{ m.url }}</p>
+        </div>
+      </div>
+      <div class="mt-auto flex items-center justify-between text-xs text-slate-500">
+        <span>every {{ m.interval_seconds|interval }} · {{ m.engine.value }}</span>
+        <span class="{{ 'text-amber-400' if m.last_change_at else '' }}">
+          {% if m.last_change_at %}changed {{ m.last_change_at|timeago }}{% else %}checked {{ m.last_checked_at|timeago }}{% endif %}
+        </span>
+      </div>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

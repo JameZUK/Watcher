@@ -1,0 +1,233 @@
+{% extends "base.html" %}
+{% set name = monitor.name or monitor.url %}
+{% block title %}{{ name }} · Watcher{% endblock %}
+{% set mode_label = {'auto':'Smart','text':'Text','visual':'Visual','element':'Element','html':'HTML','json':'JSON'} %}
+{% block content %}
+<a href="/" class="inline-flex items-center gap-1 text-sm text-slate-400 hover:text-white transition mb-4">
+  <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>Dashboard
+</a>
+
+<!-- Header -->
+<div class="flex flex-wrap items-start justify-between gap-4 mb-6">
+  <div class="min-w-0">
+    <div class="flex items-center gap-2.5">
+      <span class="dot {{ 'dot-live' if monitor.enabled else 'dot-paused' }}"></span>
+      <h1 class="text-2xl sm:text-3xl font-bold tracking-tight text-white truncate">{{ name }}</h1>
+    </div>
+    <a href="{{ monitor.url }}" target="_blank" class="text-sm text-brand-400 hover:underline break-all">{{ monitor.url }}</a>
+    <div class="mt-2 flex flex-wrap gap-2">
+      <span class="pill">{{ mode_label.get(monitor.detection_mode.value, monitor.detection_mode.value) }}</span>
+      <span class="pill">{{ monitor.engine.value }}</span>
+      <span class="pill">every {{ monitor.interval_seconds|interval }}</span>
+      <span class="pill">checked {{ monitor.last_checked_at|timeago }}</span>
+      {% if monitor.login_flow %}<span class="pill pill-amber">authenticated</span>{% endif %}
+    </div>
+  </div>
+  <div class="flex items-center gap-2">
+    <form method="post" action="/monitors/{{ monitor.id }}/check"><button class="btn btn-primary text-sm">
+      <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 12a9 9 0 1 1-3-6.7M21 3v6h-6"/></svg>Check now
+    </button></form>
+    <div x-data="{open:false}" class="relative">
+      <button @click="open=!open" class="btn btn-ghost text-sm">···</button>
+      <div x-show="open" @click.outside="open=false" x-cloak x-transition
+           class="absolute right-0 mt-2 w-44 glass rounded-xl p-1.5 z-20 text-sm">
+        <a href="/monitors/{{ monitor.id }}/edit" class="block px-3 py-2 rounded-lg text-slate-300 hover:bg-white/10 hover:text-white">Edit</a>
+        <form method="post" action="/monitors/{{ monitor.id }}/toggle"><button class="w-full text-left px-3 py-2 rounded-lg text-slate-300 hover:bg-white/10 hover:text-white">{{ 'Pause' if monitor.enabled else 'Resume' }}</button></form>
+        <form method="post" action="/monitors/{{ monitor.id }}/delete" onsubmit="return confirm('Delete this monitor and all its history?')"><button class="w-full text-left px-3 py-2 rounded-lg text-red-400 hover:bg-red-500/10">Delete</button></form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="grid lg:grid-cols-[1fr_19rem] gap-6 items-start">
+  <!-- Main column -->
+  <div class="space-y-6 min-w-0">
+    {% if latest and latest.status.value == 'error' %}
+    <div class="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 flex items-start gap-3">
+      <svg viewBox="0 0 24 24" class="h-5 w-5 text-red-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+      <div class="min-w-0">
+        <p class="font-semibold text-red-200">Last check failed</p>
+        <p class="text-sm text-red-300/90 mt-0.5">{{ latest.error or 'Render error' }}</p>
+        {% if 'anti-bot' in (latest.error or '') or 'challenge' in (latest.error or '') %}
+        <p class="text-xs text-red-300/70 mt-1.5">This site uses bot protection. Try the <span class="font-medium">Camoufox</span> engine, a slower interval, or a residential proxy — though some sites can't be monitored automatically.</p>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+    <!-- History time machine: scrub through every captured render -->
+    {% set csids = changes|map(attribute='to_snapshot_id')|list %}
+    {% set ns = namespace(items=[]) %}
+    {% for s in snapshots|reverse %}
+      {% if s.status.value == 'ok' and s.screenshot_blob %}
+        {% set ns.items = ns.items + [ {'id': s.id, 'ago': (s.taken_at|timeago), 'changed': (s.id in csids)} ] %}
+      {% endif %}
+    {% endfor %}
+    <section class="glass rounded-2xl overflow-hidden" x-data='timeMachine({{ ns.items|tojson }}, {{ monitor.id }})'>
+      <div class="px-5 py-3 border-b border-white/10 flex items-center justify-between">
+        <h2 class="font-semibold text-white">History</h2>
+        <span class="text-xs text-slate-500" x-text="label"></span>
+      </div>
+      <template x-if="frames.length">
+        <div>
+          <div class="relative bg-black/40">
+            <img :src="src" @click="$store.lb.open(src)" class="w-full block cursor-zoom-in">
+            <span class="absolute top-3 left-3 pill pill-amber backdrop-blur" x-show="frames[i] && frames[i].changed">change detected</span>
+            <button type="button" @click="$store.lb.open(src)" class="absolute bottom-3 right-3 btn btn-ghost !px-2.5 !py-1.5 backdrop-blur" aria-label="Zoom">
+              <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3M11 8v6M8 11h6"/></svg>
+            </button>
+          </div>
+          <div class="p-4">
+            <input type="range" min="0" :max="frames.length-1" x-model.number="i" class="time-range w-full">
+            <div class="flex items-center justify-between mt-2 text-xs text-slate-500">
+              <button type="button" @click="i = Math.max(0, i-1)" class="btn btn-ghost !px-2.5 !py-1">‹ Older</button>
+              <span x-text="'Render ' + (i+1) + ' of ' + frames.length"></span>
+              <button type="button" @click="i = Math.min(frames.length-1, i+1)" class="btn btn-ghost !px-2.5 !py-1">Newer ›</button>
+            </div>
+          </div>
+        </div>
+      </template>
+      <template x-if="!frames.length">
+        <div class="p-12 text-center text-slate-500 text-sm">No render captured yet. The first check runs shortly.</div>
+      </template>
+    </section>
+
+    {% if not selected %}
+      <p class="text-center text-sm text-slate-500">No changes detected yet — Watcher will surface them here in place.</p>
+    {% else %}
+      <!-- Diff viewer -->
+      <section class="glass rounded-2xl overflow-hidden"
+               x-data="{ tab: '{{ 'visual' if diff.has_visual else 'text' }}' }">
+        <div class="px-5 py-3.5 border-b border-white/10 flex flex-wrap items-center justify-between gap-3">
+          <div class="min-w-0">
+            <h2 class="font-semibold text-white">What changed</h2>
+            <p class="text-xs text-slate-400 mt-0.5">{{ selected.detected_at|timeago }} · <span class="text-slate-300">{{ selected.summary }}</span></p>
+          </div>
+          <div class="flex items-center gap-2">
+            {% if diff.has_visual and diff.has_text %}
+            <div class="flex p-0.5 rounded-lg bg-white/5 border border-white/10 text-xs">
+              <button @click="tab='visual'" :class="tab==='visual' ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-3 py-1.5 rounded-md transition">Visual</button>
+              <button @click="tab='text'" :class="tab==='text' ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-3 py-1.5 rounded-md transition">Text</button>
+            </div>
+            {% endif %}
+            {% if not selected.acknowledged %}
+            <form method="post" action="/changes/{{ selected.id }}/ack"><button class="btn btn-ghost text-xs">Mark reviewed</button></form>
+            {% endif %}
+          </div>
+        </div>
+
+        {% if diff.has_visual %}
+        <div x-show="tab==='visual'" class="p-5 space-y-5">
+          {% if selected.from_snapshot_id %}
+          <div>
+            <p class="text-xs font-medium text-slate-400 mb-2">Before / after <span class="text-slate-600">— drag the handle to compare</span></p>
+            <div x-data="beforeAfter()" x-ref="box" x-init="measure()" @resize.window="measure()"
+                 @pointerdown="start($event)" @pointermove="move($event)" @pointerup="dragging=false"
+                 class="relative select-none rounded-xl overflow-hidden border border-white/10 cursor-ew-resize"
+                 style="touch-action:none;">
+              <img src="/monitors/{{ monitor.id }}/snapshots/{{ selected.to_snapshot_id }}/image" class="block w-full" @load="measure()">
+              <div class="absolute inset-0 overflow-hidden" :style="`width:${pos}%`">
+                <img src="/monitors/{{ monitor.id }}/snapshots/{{ selected.from_snapshot_id }}/image" class="block max-w-none" :style="`width:${w}px`">
+              </div>
+              <div class="absolute top-0 bottom-0 grad-bar pointer-events-none" style="width:2px" :style="`left:${pos}%`"></div>
+              <div class="absolute top-1/2 grad-bar rounded-full shadow-lg pointer-events-none flex items-center justify-center"
+                   style="width:34px;height:34px;transform:translate(-50%,-50%)" :style="`left:${pos}%`">
+                <svg viewBox="0 0 24 24" class="h-4 w-4 text-white" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M8 7l-4 5 4 5M16 7l4 5-4 5"/></svg>
+              </div>
+              <span class="absolute top-2 left-2 pill backdrop-blur pointer-events-none">Before</span>
+              <span class="absolute top-2 right-2 pill backdrop-blur pointer-events-none">After</span>
+              <button type="button" @pointerdown.stop @click.stop="$store.lb.open('/monitors/{{ monitor.id }}/snapshots/{{ selected.to_snapshot_id }}/image')"
+                      class="absolute bottom-2 right-2 btn btn-ghost !px-2.5 !py-1.5 backdrop-blur" aria-label="Zoom after image">
+                <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3M11 8v6M8 11h6"/></svg>
+              </button>
+            </div>
+          </div>
+          {% else %}
+          <img src="/monitors/{{ monitor.id }}/snapshots/{{ selected.to_snapshot_id }}/image" @click="$store.lb.open('/monitors/{{ monitor.id }}/snapshots/{{ selected.to_snapshot_id }}/image')" class="w-full rounded-xl border border-white/10 cursor-zoom-in">
+          {% endif %}
+          <div>
+            <p class="text-xs font-medium text-slate-400 mb-2">Highlighted differences <span class="text-slate-600">— changed regions in red</span></p>
+            <div class="checker rounded-xl overflow-hidden border border-white/10">
+              <img src="/monitors/{{ monitor.id }}/changes/{{ selected.id }}/overlay" @click="$store.lb.open('/monitors/{{ monitor.id }}/changes/{{ selected.id }}/overlay')" class="w-full cursor-zoom-in">
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+        {% if diff.has_text %}
+        <div {% if diff.has_visual %}x-show="tab==='text'"{% endif %} class="p-5">
+          <pre class="diff scroll-thin text-xs font-mono overflow-x-auto rounded-xl bg-black/40 border border-white/10 p-4 leading-relaxed max-h-[36rem] overflow-y-auto">{% for line in diff.lines %}<div class="{% if line.startswith('+') and not line.startswith('+++') %}diff-add{% elif line.startswith('-') and not line.startswith('---') %}diff-del{% elif line.startswith('@@') %}diff-hunk{% else %}diff-ctx{% endif %} px-1 rounded">{{ line if line else ' ' }}</div>{% endfor %}</pre>
+        </div>
+        {% endif %}
+
+        {% if not diff.has_visual and not diff.has_text %}
+        <div class="p-5 text-sm text-slate-400">{{ selected.summary }}</div>
+        {% endif %}
+      </section>
+    {% endif %}
+  </div>
+
+  <!-- Sidebar: timeline -->
+  <aside class="space-y-5 lg:sticky lg:top-24">
+    <div class="glass rounded-2xl overflow-hidden">
+      <div class="px-4 py-3 border-b border-white/10 font-semibold text-white text-sm flex items-center justify-between">
+        Changes <span class="pill">{{ changes|length }}</span>
+      </div>
+      <ul class="max-h-[26rem] overflow-y-auto scroll-thin divide-y divide-white/5">
+        {% for c in changes %}
+        <li>
+          <a href="/monitors/{{ monitor.id }}?change={{ c.id }}"
+             class="block px-4 py-3 transition hover:bg-white/5 {{ 'bg-brand-500/10 border-l-2 border-brand-500' if selected and selected.id==c.id else 'border-l-2 border-transparent' }}">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs font-medium text-slate-200">{{ c.detected_at|timeago }}</span>
+              <span class="text-[11px] text-slate-500">{{ c.magnitude|pct }}</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-1 line-clamp-2">{{ c.summary }}</p>
+            {% if not c.acknowledged %}<span class="inline-block mt-1.5 pill pill-amber">new</span>{% endif %}
+          </a>
+        </li>
+        {% else %}
+        <li class="px-4 py-8 text-center text-sm text-slate-500">No changes yet.</li>
+        {% endfor %}
+      </ul>
+    </div>
+    <div class="glass rounded-2xl overflow-hidden">
+      <div class="px-4 py-3 border-b border-white/10 font-semibold text-white text-sm flex items-center justify-between">
+        Snapshots <span class="pill">{{ snapshots|length }}</span>
+      </div>
+      <ul class="max-h-56 overflow-y-auto scroll-thin divide-y divide-white/5 text-xs">
+        {% for s in snapshots %}
+        <li class="px-4 py-2.5 flex items-center justify-between">
+          <span class="text-slate-300">{{ s.taken_at|timeago }}</span>
+          {% if s.status.value == 'error' %}<span class="text-red-400" title="{{ s.error }}">error</span>
+          {% else %}<span class="text-slate-500">{{ s.http_status or '—' }}{% if s.render_ms %} · {{ s.render_ms }}ms{% endif %}</span>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </aside>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+// Draggable before/after image comparison.
+function beforeAfter(){return {
+  pos: 50, w: 0, dragging: false,
+  measure(){ if (this.$refs.box) this.w = this.$refs.box.clientWidth; },
+  start(e){ this.dragging = true; this.set(e); try { this.$refs.box.setPointerCapture(e.pointerId); } catch(_){} },
+  move(e){ if (this.dragging || e.buttons === 1) this.set(e); },
+  set(e){
+    const r = this.$refs.box.getBoundingClientRect();
+    const x = (e.clientX ?? 0) - r.left;
+    this.pos = Math.max(0, Math.min(100, (x / r.width) * 100));
+  },
+}}
+
+// History scrubber: step through every captured render over time.
+function timeMachine(frames, mid){return {
+  frames: frames || [], mid,
+  i: (frames && frames.length) ? frames.length - 1 : 0,
+  get src(){ return this.frames.length ? `/monitors/${this.mid}/snapshots/${this.frames[this.i].id}/image` : ''; },
+  get label(){ return this.frames.length ? this.frames[this.i].ago : '—'; },
+}}
+</script>
+{% endblock %}

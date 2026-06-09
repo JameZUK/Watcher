@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% set m = monitor %}
+{% block title %}{{ 'Edit' if m else 'New' }} monitor · Watcher{% endblock %}
+{% set mode_meta = {
+  'auto':   ('Smart', 'Watches content & appearance together'),
+  'text':   ('Text', 'Rendered visible text only'),
+  'visual': ('Visual', 'Screenshot pixel diff'),
+  'element':('Element', 'A single CSS/XPath selector'),
+  'html':   ('HTML', 'Raw HTML source'),
+  'json':   ('JSON', 'Parsed JSON response') } %}
+{% macro field(name, value='', type='text', placeholder='') %}
+  <input name="{{ name }}" type="{{ type }}" value="{{ value if value is not none else '' }}" placeholder="{{ placeholder }}" class="field">
+{% endmacro %}
+{% block content %}
+<div class="max-w-3xl mx-auto">
+  <div class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl sm:text-3xl font-bold tracking-tight text-white">{{ 'Edit monitor' if m else 'New' }} {% if not m %}<span class="grad-text">monitor</span>{% endif %}</h1>
+    {% if m %}<a href="/monitors/{{ m.id }}" class="text-sm text-slate-400 hover:text-white">Cancel</a>{% endif %}
+  </div>
+
+  <form method="post" action="{{ '/monitors/' ~ m.id if m else '/monitors' }}"
+        x-data="{ mode: '{{ m.detection_mode.value if m else 'auto' }}', login: {{ 'true' if m and m.login_flow else 'false' }} }"
+        class="space-y-5">
+
+    <!-- Basics -->
+    <section class="glass rounded-2xl p-5 sm:p-6 space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-slate-300 mb-1.5">URL to watch</label>
+        {{ field('url', m.url if m else '', type='url', placeholder='https://example.com/page') }}
+      </div>
+      <div class="grid sm:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-1.5">Name <span class="text-slate-500 font-normal">· optional</span></label>
+          {{ field('name', m.name if m else '', placeholder='Auto-detected from page title') }}
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-1.5">Check every</label>
+          <div class="relative">
+            {{ field('interval_minutes', (m.interval_seconds//60) if m else 60, type='number') }}
+            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-500 pointer-events-none">minutes</span>
+          </div>
+          <p class="text-xs text-slate-500 mt-1">Minimum 15 min.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Detection -->
+    <section class="glass rounded-2xl p-5 sm:p-6 space-y-4">
+      <h2 class="font-semibold text-white">What to watch for</h2>
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+        {% for mode in modes %}
+        {% set meta = mode_meta.get(mode.value, (mode.value, '')) %}
+        <label class="cursor-pointer">
+          <input type="radio" name="detection_mode" value="{{ mode.value }}" class="sr-only peer"
+                 x-model="mode" {{ 'checked' if (m and m.detection_mode==mode) or (not m and mode.value=='auto') else '' }}>
+          <div class="h-full rounded-xl border border-white/10 bg-white/[.03] p-3 transition peer-checked:border-brand-500 peer-checked:bg-brand-500/10 hover:border-white/25">
+            <div class="flex items-center gap-1.5">
+              <span class="text-sm font-semibold text-white">{{ meta[0] }}</span>
+              {% if mode.value=='auto' %}<span class="pill pill-amber">recommended</span>{% endif %}
+            </div>
+            <p class="text-[11px] text-slate-400 mt-0.5 leading-snug">{{ meta[1] }}</p>
+          </div>
+        </label>
+        {% endfor %}
+      </div>
+
+      <div x-show="mode==='element'" x-cloak class="grid sm:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-1.5">CSS / XPath selector</label>
+          {{ field('selector', m.selector if m else '', placeholder='.price, #stock') }}
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-1.5">Attribute <span class="text-slate-500 font-normal">· optional</span></label>
+          {{ field('selector_attr', m.selector_attr if m else '', placeholder='blank = element text') }}
+        </div>
+      </div>
+
+      <div class="grid sm:grid-cols-2 gap-4" x-show="mode!=='visual' && mode!=='element'" x-cloak>
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-1.5">Ignore selectors</label>
+          <textarea name="ignore_selectors" rows="2" placeholder=".ad, .timestamp — one per line" class="field font-mono">{{ '\n'.join(m.ignore_selectors) if m and m.ignore_selectors else '' }}</textarea>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-1.5">Ignore patterns <span class="text-slate-500 font-normal">· regex</span></label>
+          <textarea name="ignore_patterns" rows="2" placeholder="\d{2}:\d{2}:\d{2} — one per line" class="field font-mono">{{ '\n'.join(m.ignore_patterns) if m and m.ignore_patterns else '' }}</textarea>
+        </div>
+      </div>
+
+      <div class="grid sm:grid-cols-2 gap-4 items-start">
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-1.5">Minimum change threshold <span class="text-slate-500 font-normal">· %</span></label>
+          {{ field('min_change_threshold', (m.min_change_threshold*100)|round(1) if m else 0, type='number') }}
+          <p class="text-xs text-slate-500 mt-1">Ignore changes smaller than this.</p>
+        </div>
+        <div class="space-y-2 pt-1" x-show="mode==='text' || mode==='auto'" x-cloak>
+          <label class="flex items-center gap-2.5 text-sm text-slate-300">
+            <input type="checkbox" name="normalize_whitespace" {{ 'checked' if not m or m.normalize_whitespace else '' }} class="rounded bg-white/10 border-white/20 text-brand-500"> Normalize whitespace
+          </label>
+          <label class="flex items-center gap-2.5 text-sm text-slate-300">
+            <input type="checkbox" name="normalize_numbers" {{ 'checked' if m and m.normalize_numbers else '' }} class="rounded bg-white/10 border-white/20 text-brand-500"> Ignore number changes
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <!-- Rendering (collapsible) -->
+    <section class="glass rounded-2xl p-5 sm:p-6" x-data="{ open: false }">
+      <button type="button" @click="open=!open" class="flex w-full items-center justify-between">
+        <h2 class="font-semibold text-white">Rendering & advanced</h2>
+        <svg viewBox="0 0 24 24" class="h-5 w-5 text-slate-400 transition" :class="open && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+      <div x-show="open" x-cloak x-transition class="mt-4 grid sm:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-1.5">Engine</label>
+          <select name="engine" class="field">
+            {% for e in engines %}<option value="{{ e.value }}" {{ 'selected' if m and m.engine==e else '' }}>{{ e.value }}</option>{% endfor %}
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-1.5">Wait until</label>
+          <select name="wait_until" class="field">
+            {% for w in ['load','domcontentloaded','networkidle','commit'] %}<option value="{{ w }}" {{ 'selected' if (m and m.wait_until==w) or (not m and w=='networkidle') else '' }}>{{ w }}</option>{% endfor %}
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-1.5">Wait timeout (ms)</label>
+          {{ field('wait_timeout_ms', m.wait_timeout_ms if m else 15000, type='number') }}
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-1.5">Wait for selector <span class="text-slate-500 font-normal">· optional</span></label>
+          {{ field('wait_selector', m.wait_selector if m else '', placeholder='#content') }}
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-1.5">Viewport</label>
+          <div class="flex gap-2">
+            {{ field('viewport_width', m.viewport_width if m else 1280, type='number') }}
+            {{ field('viewport_height', m.viewport_height if m else 800, type='number') }}
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-1.5">Proxy <span class="text-slate-500 font-normal">· optional</span></label>
+          {{ field('proxy', m.proxy if m else '', placeholder='http://host:port') }}
+        </div>
+      </div>
+    </section>
+
+    <!-- Authentication -->
+    <section class="glass rounded-2xl p-5 sm:p-6 space-y-4">
+      <label class="flex items-center gap-2.5">
+        <input type="checkbox" name="login_enabled" x-model="login" class="rounded bg-white/10 border-white/20 text-brand-500">
+        <span class="font-semibold text-white">This page requires login</span>
+      </label>
+      <div x-show="login" x-cloak x-transition class="space-y-4">
+        <p class="text-xs text-slate-500">Credentials are encrypted at rest; the session is reused between checks until it expires.</p>
+        {% set lf = m.login_flow if m else None %}
+        <div class="grid sm:grid-cols-2 gap-4">
+          <div class="sm:col-span-2"><label class="block text-sm font-medium text-slate-300 mb-1.5">Login page URL</label>{{ field('login_url', (lf.steps[0].url if lf and lf.steps else ''), type='url', placeholder='https://site/login') }}</div>
+          <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Username field selector</label>{{ field('login_user_selector', '', placeholder='#email') }}</div>
+          <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Username</label>{{ field('login_username', '', placeholder='you@example.com') }}</div>
+          <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Password field selector</label>{{ field('login_pass_selector', '', placeholder='#password') }}</div>
+          <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Password</label>{{ field('login_password', '', type='password', placeholder='blank = keep current') }}</div>
+          <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Submit selector</label>{{ field('login_submit_selector', '', placeholder='button[type=submit]') }}</div>
+          <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Success selector <span class="text-slate-500 font-normal">· optional</span></label>{{ field('login_success_selector', '', placeholder='.dashboard') }}</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Notifications -->
+    <section class="glass rounded-2xl p-5 sm:p-6 space-y-4" x-data="{ channels: {{ (m.notify_channels if m else ['inbox'])|tojson }} }">
+      <h2 class="font-semibold text-white">Notify me via</h2>
+      <div class="flex flex-wrap gap-2.5">
+        {% for ch, label in [('inbox','In-app inbox'),('push','Web Push'),('webhook','Webhook')] %}
+        <label class="cursor-pointer">
+          <input type="checkbox" name="notify_channels" value="{{ ch }}" x-model="channels" class="sr-only peer">
+          <span class="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[.03] px-3.5 py-2 text-sm text-slate-300 transition peer-checked:border-brand-500 peer-checked:bg-brand-500/10 peer-checked:text-white">{{ label }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      <div x-show="channels.includes('webhook')" x-cloak>
+        <label class="block text-sm font-medium text-slate-300 mb-1.5">Webhook URL</label>
+        {{ field('webhook_url', m.webhook_url if m else '', type='url', placeholder='https://hooks.example.com/...') }}
+      </div>
+    </section>
+
+    <div class="flex items-center justify-between gap-4">
+      <label class="flex items-center gap-2.5 text-sm text-slate-300">
+        <input type="checkbox" name="enabled" {{ 'checked' if not m or m.enabled else '' }} class="rounded bg-white/10 border-white/20 text-brand-500"> Enabled
+      </label>
+      <button class="btn btn-primary">{{ 'Save changes' if m else 'Create monitor' }}</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

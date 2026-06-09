@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Sign in' if mode=='login' else 'Create account' }} · Watcher{% endblock %}
+{% block auth %}
+<div class="min-h-screen flex items-center justify-center px-4 py-12">
+  <div class="w-full max-w-sm rise">
+    <div class="flex flex-col items-center gap-3 mb-7">
+      <span class="inline-flex h-12 w-12 items-center justify-center rounded-2xl grad-bar shadow-lg">
+        <svg viewBox="0 0 24 24" class="h-6 w-6 text-white" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/></svg>
+      </span>
+      <h1 class="text-2xl font-bold tracking-tight text-white">Watcher</h1>
+    </div>
+    <div class="glass rounded-2xl p-6 sm:p-7">
+      <h2 class="text-lg font-semibold text-white mb-1">{{ 'Welcome back' if mode=='login' else 'Create your account' }}</h2>
+      <p class="text-sm text-slate-400 mb-5">{{ 'Sign in to your monitors.' if mode=='login' else 'Start watching the web for changes.' }}</p>
+      {% if error %}
+      <div class="mb-4 rounded-xl bg-red-500/10 border border-red-500/25 px-3.5 py-2.5 text-sm text-red-300">{{ error }}</div>
+      {% endif %}
+      <form method="post" action="{{ '/login' if mode=='login' else '/register' }}" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-1.5">Email</label>
+          <input name="email" type="email" required value="{{ email or '' }}" class="field" autocomplete="email">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-1.5">Password</label>
+          <input name="password" type="password" required class="field" autocomplete="{{ 'current-password' if mode=='login' else 'new-password' }}">
+        </div>
+        <button class="btn btn-primary w-full justify-center">{{ 'Sign in' if mode=='login' else 'Create account' }}</button>
+      </form>
+    </div>
+    <p class="text-center text-sm text-slate-400 mt-5">
+      {% if mode=='login' %}No account? <a href="/register" class="text-brand-400 hover:underline">Create one</a>
+      {% else %}Already have an account? <a href="/login" class="text-brand-400 hover:underline">Sign in</a>{% endif %}
+    </p>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Settings · Watcher{% endblock %}
+{% block content %}
+<div class="max-w-2xl mx-auto space-y-5">
+  <h1 class="text-3xl font-bold tracking-tight text-white mb-2">Settings</h1>
+
+  <section class="glass rounded-2xl p-5 sm:p-6">
+    <h2 class="font-semibold text-white mb-1">Account</h2>
+    <p class="text-sm text-slate-400">Signed in as <span class="font-medium text-slate-200">{{ user.email }}</span></p>
+  </section>
+
+  <section class="glass rounded-2xl p-5 sm:p-6" x-data="pushManager()" x-init="init()">
+    <div class="flex items-start justify-between gap-4">
+      <div>
+        <h2 class="font-semibold text-white">Web Push notifications</h2>
+        <p class="text-sm text-slate-400 mt-0.5">Browser notifications the moment a monitor changes.</p>
+      </div>
+      {% if push_enabled %}
+        <button @click="toggle()" :disabled="busy"
+                class="btn text-sm shrink-0" :class="subscribed ? 'btn-ghost' : 'btn-primary'"
+                x-text="subscribed ? 'Disable here' : 'Enable here'"></button>
+      {% else %}
+        <span class="pill shrink-0">not configured</span>
+      {% endif %}
+    </div>
+    {% if push_enabled %}
+    <p class="text-xs text-slate-500 mt-3" x-text="status"></p>
+    {% else %}
+    <div class="mt-3 rounded-xl bg-white/[.03] border border-white/10 p-3 text-xs text-slate-400">
+      Set <code class="text-brand-400">WATCHER_VAPID_PUBLIC_KEY</code> and <code class="text-brand-400">WATCHER_VAPID_PRIVATE_KEY</code> to enable Web Push. Generate a keypair with <code class="text-brand-400">vapid --gen</code>.
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="glass rounded-2xl p-5 sm:p-6">
+    <h2 class="font-semibold text-white mb-3">Defaults & retention</h2>
+    <dl class="grid grid-cols-2 gap-y-2.5 text-sm">
+      <dt class="text-slate-400">Minimum check interval</dt><dd class="text-slate-200">{{ min_interval_min }} min</dd>
+      <dt class="text-slate-400">Snapshot retention</dt><dd class="text-slate-200">{{ retention_snapshots }} per monitor</dd>
+      <dt class="text-slate-400">Max age</dt><dd class="text-slate-200">{{ retention_days }} days</dd>
+    </dl>
+    <p class="text-xs text-slate-500 mt-3">Configured via environment variables. Change-point snapshots are always kept.</p>
+  </section>
+
+  <section class="glass rounded-2xl p-5 sm:p-6">
+    <h2 class="font-semibold text-white mb-1">Webhooks</h2>
+    <p class="text-sm text-slate-400">Configured per monitor. Payloads are signed with HMAC-SHA256 in the <code class="text-brand-400">X-Watcher-Signature</code> header.</p>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const VAPID_PUBLIC_KEY = "{{ vapid_public_key }}";
+function urlB64ToUint8Array(b64){const pad='='.repeat((4-b64.length%4)%4);const s=(b64+pad).replace(/-/g,'+').replace(/_/g,'/');const raw=atob(s);return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));}
+function pushManager(){return {
+  subscribed:false, busy:false, status:'',
+  async init(){
+    if(!('serviceWorker' in navigator)){this.status='Service workers unsupported.';return;}
+    const reg=await navigator.serviceWorker.register('/static/sw.js');
+    const sub=await reg.pushManager.getSubscription();
+    this.subscribed=!!sub;
+    this.status=this.subscribed?'Enabled on this device.':'Not enabled on this device.';
+  },
+  async toggle(){
+    this.busy=true;
+    try{
+      const reg=await navigator.serviceWorker.ready;
+      if(this.subscribed){
+        const sub=await reg.pushManager.getSubscription();
+        if(sub){await fetch('/push/unsubscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({endpoint:sub.endpoint})});await sub.unsubscribe();}
+        this.subscribed=false;this.status='Disabled on this device.';
+      }else{
+        const perm=await Notification.requestPermission();
+        if(perm!=='granted'){this.status='Permission denied.';return;}
+        const sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlB64ToUint8Array(VAPID_PUBLIC_KEY)});
+        await fetch('/push/subscribe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(sub.toJSON())});
+        this.subscribed=true;this.status='Enabled on this device.';
+      }
+    }catch(e){this.status='Error: '+e.message;}finally{this.busy=false;}
+  }
+};}
+</script>
+{% endblock %}

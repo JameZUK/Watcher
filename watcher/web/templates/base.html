@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#06070f">
+  <title>{% block title %}Watcher{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = { theme: { extend: {
+      fontFamily: { sans: ['Inter','ui-sans-serif','system-ui','sans-serif'],
+                    mono: ['"JetBrains Mono"','ui-monospace','monospace'] },
+      colors: { brand: { 400:'#818cf8',500:'#6366f1',600:'#4f46e5' } },
+    } } }
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/htmx.org@2.0.3"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="h-full font-sans">
+<div class="bg-aurora"></div>
+{% if user %}
+{% set p = request.url.path %}
+<div class="min-h-full pb-24 sm:pb-0">
+  <!-- Desktop / top nav -->
+  <header class="sticky top-0 z-30">
+    <div class="glass border-x-0 border-t-0">
+      <div class="max-w-6xl mx-auto px-4 h-16 flex items-center gap-6">
+        <a href="/" class="flex items-center gap-2.5 font-bold tracking-tight text-white">
+          <span class="relative inline-flex h-8 w-8 items-center justify-center rounded-xl grad-bar text-white shadow-lg">
+            <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="3"/><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/></svg>
+          </span>
+          <span class="text-lg">Watcher</span>
+        </a>
+        <nav class="hidden sm:flex items-center gap-1 text-sm">
+          {% macro nav(href, label) %}
+          <a href="{{ href }}" class="px-3.5 py-2 rounded-lg transition {{ 'text-white bg-white/10' if p==href else 'text-slate-400 hover:text-white hover:bg-white/5' }}">{{ label }}</a>
+          {% endmacro %}
+          {{ nav('/', 'Dashboard') }}
+          {{ nav('/inbox', 'Inbox') }}
+          {{ nav('/settings', 'Settings') }}
+        </nav>
+        <div class="ml-auto flex items-center gap-3 text-sm">
+          <a href="/monitors/new" class="btn btn-primary hidden sm:inline-flex text-sm">
+            <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>New monitor
+          </a>
+          <div class="hidden md:flex items-center gap-2 text-slate-400">
+            <span class="h-7 w-7 rounded-full grad-bar flex items-center justify-center text-xs font-semibold text-white">{{ user.email[0]|upper }}</span>
+          </div>
+          <form method="post" action="/logout"><button class="text-slate-400 hover:text-white transition">Sign out</button></form>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-4 py-8 rise">
+    {% block content %}{% endblock %}
+  </main>
+
+  <!-- Mobile bottom nav -->
+  <nav class="sm:hidden fixed bottom-0 inset-x-0 z-30">
+    <div class="glass border-x-0 border-b-0 px-2 py-2 flex items-center justify-around"
+         style="padding-bottom: calc(.5rem + env(safe-area-inset-bottom));">
+      {% macro tab(href, label, icon) %}
+      <a href="{{ href }}" class="flex flex-col items-center gap-1 px-3 py-1 rounded-lg text-[11px] {{ 'text-white' if p==href else 'text-slate-500' }}">
+        <span class="h-5 w-5">{{ icon|safe }}</span>{{ label }}
+      </a>
+      {% endmacro %}
+      {{ tab('/', 'Home', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 11l9-8 9 8M5 10v10h14V10"/></svg>') }}
+      {{ tab('/inbox', 'Inbox', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v12H5.2L4 17.5V4Z"/></svg>') }}
+      <a href="/monitors/new" class="flex flex-col items-center -mt-6">
+        <span class="h-12 w-12 rounded-2xl grad-bar flex items-center justify-center text-white shadow-lg">
+          <svg viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+        </span>
+      </a>
+      {{ tab('/settings', 'Settings', '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.6-2-3.4-2.4 1a7 7 0 0 0-1.7-1l-.3-2.5H9.5l-.3 2.5a7 7 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7 7 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 1.7 1l.3 2.5h4.9l.3-2.5a7 7 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6c.07-.33.1-.66.1-1Z"/></svg>') }}
+    </div>
+  </nav>
+
+  <!-- Fullscreen image lightbox: zoom (buttons / double-tap / pinch) + scroll-to-pan -->
+  <div x-data x-cloak x-show="$store.lb.shown" x-transition.opacity
+       class="fixed inset-0 z-[60] bg-black/90 backdrop-blur-sm flex flex-col"
+       @keydown.escape.window="$store.lb.close()">
+    <div class="flex items-center justify-between px-4 h-14 shrink-0">
+      <span class="text-sm text-slate-300 tabular-nums" x-text="Math.round($store.lb.zoom*100)+'%'"></span>
+      <div class="flex items-center gap-1.5">
+        <button @click="$store.lb.zoomOut()" class="btn btn-ghost !px-3 !py-1.5" aria-label="Zoom out">−</button>
+        <button @click="$store.lb.reset()" class="btn btn-ghost !px-3 !py-1.5 text-xs">Fit</button>
+        <button @click="$store.lb.zoomIn()" class="btn btn-ghost !px-3 !py-1.5" aria-label="Zoom in">+</button>
+        <button @click="$store.lb.close()" class="btn btn-ghost !px-3 !py-1.5" aria-label="Close">✕</button>
+      </div>
+    </div>
+    <div class="flex-1 overflow-auto scroll-thin overscroll-contain" style="touch-action:pan-x pan-y pinch-zoom;"
+         @click.self="$store.lb.close()">
+      <img :src="$store.lb.src" @dblclick="$store.lb.toggle()"
+           :style="`width:${$store.lb.zoom*100}%;max-width:none`"
+           class="mx-auto block select-none" :class="$store.lb.zoom>1 ? 'cursor-zoom-out' : 'cursor-zoom-in'">
+    </div>
+    <p class="text-center text-[11px] text-slate-500 py-2 shrink-0 sm:hidden">Double-tap or pinch to zoom · drag to pan</p>
+  </div>
+</div>
+{% else %}
+  {% block auth %}{% endblock %}
+{% endif %}
+<script>
+  document.addEventListener('alpine:init', () => {
+    Alpine.store('lb', {
+      shown: false, src: '', zoom: 1,
+      open(src){ this.src = src; this.zoom = 1; this.shown = true; document.documentElement.style.overflow = 'hidden'; },
+      close(){ this.shown = false; document.documentElement.style.overflow = ''; },
+      reset(){ this.zoom = 1; },
+      zoomIn(){ this.zoom = Math.min(this.zoom * 1.5, 8); },
+      zoomOut(){ this.zoom = Math.max(this.zoom / 1.5, 1); },
+      toggle(){ this.zoom = this.zoom > 1 ? 1 : 2.5; },
+    });
+  });
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>
