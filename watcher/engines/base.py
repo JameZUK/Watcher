@@ -46,7 +46,8 @@ class RenderResult:
     html: str | None = None
     rendered_text: str | None = None
     extracted_value: str | None = None
-    screenshot_png: bytes | None = None
+    screenshot_png: bytes | None = None          # desktop viewport
+    screenshot_mobile_png: bytes | None = None   # mobile viewport
     content_type: str | None = None
     render_ms: int | None = None
     # Updated browser storage_state if a login flow ran (for session persistence).

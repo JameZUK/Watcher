@@ -63,9 +63,21 @@
       {% endif %}
     {% endfor %}
     <section class="glass rounded-2xl overflow-hidden" x-data='timeMachine({{ ns.items|tojson }}, {{ monitor.id }})'>
-      <div class="px-5 py-3 border-b border-white/10 flex items-center justify-between">
+      <div class="px-5 py-3 border-b border-white/10 flex items-center justify-between gap-3">
         <h2 class="font-semibold text-white">History</h2>
-        <span class="text-xs text-slate-500" x-text="label"></span>
+        <div class="flex items-center gap-3">
+          <div class="flex p-0.5 rounded-lg bg-white/5 border border-white/10">
+            <button type="button" @click="device='desktop'" title="Desktop preview"
+                    :class="device==='desktop' ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-2.5 py-1 rounded-md transition">
+              <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+            </button>
+            <button type="button" @click="device='mobile'" title="Mobile preview"
+                    :class="device==='mobile' ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-2.5 py-1 rounded-md transition">
+              <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>
+            </button>
+          </div>
+          <span class="text-xs text-slate-500 hidden sm:inline" x-text="label"></span>
+        </div>
       </div>
       <template x-if="frames.length">
         <div>
@@ -222,11 +234,17 @@ function beforeAfter(){return {
   },
 }}
 
-// History scrubber: step through every captured render over time.
+// History scrubber: step through every captured render over time, in the
+// desktop or mobile preview (auto-defaults to the viewing device).
 function timeMachine(frames, mid){return {
   frames: frames || [], mid,
   i: (frames && frames.length) ? frames.length - 1 : 0,
-  get src(){ return this.frames.length ? `/monitors/${this.mid}/snapshots/${this.frames[this.i].id}/image` : ''; },
+  device: (window.matchMedia && window.matchMedia('(max-width: 640px)').matches) ? 'mobile' : 'desktop',
+  get src(){
+    if (!this.frames.length) return '';
+    const q = this.device === 'mobile' ? '?v=mobile' : '';
+    return `/monitors/${this.mid}/snapshots/${this.frames[this.i].id}/image${q}`;
+  },
   get label(){ return this.frames.length ? this.frames[this.i].ago : '—'; },
 }}
 </script>

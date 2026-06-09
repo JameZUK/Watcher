@@ -135,10 +135,27 @@ async def capture(page, response, monitor: Monitor) -> RenderResult:
         except Exception:
             result.extracted_value = None
 
-    # Full-page screenshot (PNG).
+    # Full-page screenshot at the desktop viewport (PNG).
     try:
         result.screenshot_png = await page.screenshot(full_page=True, type="png")
     except Exception:
         result.screenshot_png = None
+
+    # Second full-page screenshot at a mobile viewport, for device-appropriate
+    # previews. Re-uses the already-loaded page (just resizes), so no extra
+    # navigation. Responsive sites reflow via media queries.
+    try:
+        await page.set_viewport_size({"width": 390, "height": 844})
+        await page.wait_for_timeout(450)
+        result.screenshot_mobile_png = await page.screenshot(full_page=True, type="png")
+    except Exception:
+        result.screenshot_mobile_png = None
+    finally:
+        try:
+            await page.set_viewport_size(
+                {"width": monitor.viewport_width, "height": monitor.viewport_height}
+            )
+        except Exception:
+            pass
 
     return result

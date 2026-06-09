@@ -134,6 +134,8 @@ async def check_monitor(monitor_id: int) -> None:
                 snap.dom_hash = _hash(result.html)
             if result.screenshot_png:
                 snap.screenshot_blob = blobs.put_bytes(result.screenshot_png)
+            if result.screenshot_mobile_png:
+                snap.screenshot_mobile_blob = blobs.put_bytes(result.screenshot_mobile_png)
             snap.content_hash = _hash(
                 result.rendered_text, result.extracted_value, result.html
             )

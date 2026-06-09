@@ -173,7 +173,8 @@ class Snapshot(Base):
 
     # Content-addressed blob keys (sha256) resolved via storage.blobs
     html_blob: Mapped[str | None] = mapped_column(String(64), default=None)
-    screenshot_blob: Mapped[str | None] = mapped_column(String(64), default=None)
+    screenshot_blob: Mapped[str | None] = mapped_column(String(64), default=None)         # desktop
+    screenshot_mobile_blob: Mapped[str | None] = mapped_column(String(64), default=None)  # mobile
 
     render_ms: Mapped[int | None] = mapped_column(Integer, default=None)
 

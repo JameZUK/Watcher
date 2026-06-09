@@ -282,14 +282,18 @@ def _diff_payload(change: Change) -> dict:
 async def snapshot_image(
     monitor_id: int,
     snapshot_id: int,
+    v: str | None = None,  # "mobile" for the mobile-viewport capture
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
     await _owned_monitor(session, user, monitor_id)
     snap = await session.get(Snapshot, snapshot_id)
-    if not snap or snap.monitor_id != monitor_id or not snap.screenshot_blob:
+    if not snap or snap.monitor_id != monitor_id:
         raise HTTPException(404)
-    data = blobs.get_bytes(snap.screenshot_blob)
+    # Prefer the requested variant; fall back to the desktop capture.
+    key = snap.screenshot_mobile_blob if v == "mobile" else snap.screenshot_blob
+    key = key or snap.screenshot_blob or snap.screenshot_mobile_blob
+    data = blobs.get_bytes(key) if key else None
     if data is None:
         raise HTTPException(404)
     return Response(content=data, media_type="image/png")

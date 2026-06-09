@@ -32,8 +32,11 @@
     <!-- Rendered preview -->
     <div class="relative aspect-[16/10] bg-black/40 overflow-hidden">
       {% if thumbs.get(m.id) %}
-        <img src="/monitors/{{ m.id }}/snapshots/{{ thumbs[m.id] }}/image" alt=""
-             class="absolute inset-0 h-full w-full object-cover object-top opacity-80 group-hover:opacity-100 transition duration-500 group-hover:scale-[1.03]">
+        <picture>
+          <source media="(max-width: 640px)" srcset="/monitors/{{ m.id }}/snapshots/{{ thumbs[m.id] }}/image?v=mobile">
+          <img src="/monitors/{{ m.id }}/snapshots/{{ thumbs[m.id] }}/image" alt=""
+               class="absolute inset-0 h-full w-full object-cover object-top opacity-80 group-hover:opacity-100 transition duration-500 group-hover:scale-[1.03]">
+        </picture>
         <div class="absolute inset-0 bg-gradient-to-t from-[#06070f] via-transparent to-transparent"></div>
       {% else %}
         <div class="absolute inset-0 flex items-center justify-center text-slate-600">

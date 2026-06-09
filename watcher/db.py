@@ -26,7 +26,7 @@ async def get_session() -> AsyncIterator[AsyncSession]:
 # Columns added after the initial release. SQLite's create_all won't ALTER an
 # existing table, so we add any missing ones idempotently on startup.
 _ADDED_COLUMNS = {
-    "snapshots": {"title": "VARCHAR(512)"},
+    "snapshots": {"title": "VARCHAR(512)", "screenshot_mobile_blob": "VARCHAR(64)"},
     "changes": {"visual_blob": "VARCHAR(64)"},
 }
 
