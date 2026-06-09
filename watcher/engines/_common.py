@@ -57,6 +57,19 @@ async def apply_actions(page, monitor: Monitor) -> None:
             await page.wait_for_timeout(int(act.get("ms", 500)))
 
 
+async def _settle_for_content(page, *, min_chars: int = 150, timeout_ms: int = 9000) -> None:
+    """Wait until the page has a meaningful amount of visible text, so we don't
+    capture a transient anti-bot challenge / loading screen instead of content."""
+    try:
+        await page.wait_for_function(
+            "(n) => ((document.body && document.body.innerText) || '').trim().length >= n",
+            arg=min_chars,
+            timeout=timeout_ms,
+        )
+    except Exception:
+        pass
+
+
 async def do_wait(page, monitor: Monitor) -> None:
     if monitor.wait_selector:
         try:
@@ -69,10 +82,6 @@ async def capture(page, response, monitor: Monitor) -> RenderResult:
     """Capture HTML, visible text, screenshot, and selector/JSON value."""
     result = RenderResult()
     result.http_status = response.status if response else None
-    try:
-        result.title = (await page.title() or "").strip() or None
-    except Exception:
-        result.title = None
     result.content_type = (
         (response.headers.get("content-type", "") if response else "") or ""
     ).split(";")[0].strip()
@@ -88,6 +97,15 @@ async def capture(page, response, monitor: Monitor) -> RenderResult:
             result.rendered_text = body
         result.html = body
         return result
+
+    # Wait for meaningful content to appear before capturing. This handles
+    # anti-bot challenge interstitials (DataDome/Cloudflare) that swap in the
+    # real page via JS a moment after load, as well as late client rendering.
+    await _settle_for_content(page)
+    try:
+        result.title = (await page.title() or "").strip() or None
+    except Exception:
+        result.title = None
 
     # Strip ignored elements (ads, timestamps, etc.) from the live DOM so they
     # affect neither the text, the HTML, nor the screenshot.
