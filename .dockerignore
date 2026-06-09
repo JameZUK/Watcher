@@ -1,0 +1,29 @@
+# Keep the build context small — only watcher/ and requirements.txt are needed.
+.git
+.github
+.gitignore
+.dockerignore
+
+# Virtualenvs / local Python caches
+.venv
+venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+
+# Runtime data (DB + snapshot blobs) and secrets
+data
+*.db
+*.db-wal
+*.db-shm
+.env
+.env.*
+
+# Dev-only / docs (not needed in the image)
+docs
+tests
+requirements-dev.txt
+*.md
+docker-compose.yml

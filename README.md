@@ -10,6 +10,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/JameZUK/Watcher/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/JameZUK/Watcher/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Python 3.12+" src="https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white">
   <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-async-009688?logo=fastapi&logoColor=white">
   <img alt="Playwright" src="https://img.shields.io/badge/Playwright-Chromium%20%7C%20Firefox%20%7C%20WebKit-2EAD33?logo=playwright&logoColor=white">
