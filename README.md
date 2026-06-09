@@ -55,7 +55,11 @@ Open **http://localhost:8000**, create an account, and add your first monitor. T
 
 > Python **3.11–3.13** is recommended — the pinned dependencies have prebuilt wheels there. On 3.14+, install the latest releases instead of the pins, or just use Docker.
 >
-> **Camoufox + Playwright:** Camoufox is validated against the pinned `playwright==1.49.1` (used in the Docker image). If you force a much newer Playwright (e.g. on Python 3.14), its bundled Firefox driver can crash on pages that emit a location-less `pageerror` (some anti-bot challenge scripts do). Stick to the pinned Playwright, or use Docker, for reliable Camoufox rendering.
+> **Camoufox + Playwright:** Camoufox is validated against the pinned `playwright==1.49.1` (used in the Docker image). If you force a much newer Playwright (e.g. on Python 3.14), its bundled Firefox driver can crash on pages that emit a location-less `pageerror` (some anti-bot challenge scripts do). Watcher **auto-applies an idempotent workaround on startup**; you can also run it manually after installing/updating deps, or disable it with `WATCHER_PATCH_PLAYWRIGHT=false`:
+>
+> ```bash
+> python scripts/patch_playwright.py
+> ```
 
 ```bash
 python -m venv .venv && source .venv/bin/activate

@@ -23,6 +23,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.ensure_dirs()
+    if settings.patch_playwright:
+        from ._playwright_patch import apply as _patch_playwright
+        logging.getLogger("watcher").info(_patch_playwright())
     await init_db()
     await schedule_all()
     start_scheduler()

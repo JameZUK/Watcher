@@ -93,6 +93,14 @@ def test_blocked_reason_passes_clean_page():
 
 # --- app wiring ------------------------------------------------------------
 
+def test_playwright_patch_is_safe_and_idempotent():
+    from watcher._playwright_patch import apply
+    msg1 = apply()
+    msg2 = apply()
+    assert isinstance(msg1, str) and msg1
+    assert msg2 == msg1  # second run is a no-op
+
+
 def test_app_imports_and_has_routes():
     from watcher.main import app
     paths = {r.path for r in app.routes}

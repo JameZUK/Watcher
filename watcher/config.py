@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     max_render_concurrency: int = Field(default=3)
     render_timeout_seconds: int = Field(default=45)
 
+    # Auto-apply the Playwright Firefox driver workaround on startup (idempotent).
+    patch_playwright: bool = Field(default=True)
+
     # --- Retention ---
     retention_max_snapshots: int = Field(default=50)
     retention_max_days: int = Field(default=90)
