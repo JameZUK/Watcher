@@ -72,7 +72,9 @@ class CamoufoxRenderer:
 
                 try:
                     desktop_state = await context.storage_state()
-                    if flow and flow.steps:
+                    # Refresh persisted state whenever a flow exists (incl. pure
+                    # cookie-injection flows), so injected clearance stays fresh.
+                    if flow is not None:
                         mark_session(flow, desktop_state)
                         result.session_state = desktop_state
                 except Exception:

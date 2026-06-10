@@ -65,8 +65,11 @@ class PlaywrightRenderer:
 
                 result = await capture(page, response, monitor)
 
-                # Persist session state if a login flow is configured.
-                if flow and flow.steps:
+                # Persist (refresh) session state whenever a login flow exists —
+                # not only for step-based logins. This keeps an injected
+                # clearance cookie (e.g. DataDome) rolling forward on every
+                # successful check instead of going stale.
+                if flow is not None:
                     try:
                         state = await context.storage_state()
                         mark_session(flow, state)
