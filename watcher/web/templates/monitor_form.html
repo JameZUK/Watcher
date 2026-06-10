@@ -18,24 +18,8 @@
     {% if m %}<a href="/monitors/{{ m.id }}" class="text-sm text-slate-400 hover:text-white">Cancel</a>{% endif %}
   </div>
 
-  {% if not m %}
-  <section class="glass rounded-2xl p-5 sm:p-6 mb-5 border border-brand-500/30" x-data="{ busy:false }">
-    <h2 class="font-semibold text-white flex items-center gap-2">
-      <svg viewBox="0 0 24 24" class="h-4 w-4 text-brand-400" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg>
-      AI quick setup
-    </h2>
-    <p class="text-xs text-slate-400 mt-1">Give a URL and say what you want to watch — the AI reviews the page and configures everything.</p>
-    <form method="post" action="/monitors/ai-create" class="mt-3 space-y-3" @submit="busy=true">
-      <input name="url" type="url" required placeholder="https://example.com/product" class="field">
-      <textarea name="goal" rows="2" required placeholder="e.g. Alert me if this product's price drops below £250, or if it goes out of stock" class="field"></textarea>
-      <button class="btn btn-primary text-sm" :disabled="busy" x-text="busy ? 'Reviewing the page…' : 'Create with AI'"></button>
-    </form>
-    <div class="text-center text-xs text-slate-500 mt-4">— or configure it manually below —</div>
-  </section>
-  {% endif %}
-
   <form method="post" action="{{ '/monitors/' ~ m.id if m else '/monitors' }}"
-        x-data="{ mode: '{{ m.detection_mode.value if m else 'auto' }}', login: {{ 'true' if m and m.login_flow else 'false' }} }"
+        x-data="monitorForm({ mode: '{{ m.detection_mode.value if m else 'auto' }}', login: {{ 'true' if m and m.login_flow else 'false' }}, adv: {{ 'true' if m else 'false' }} })"
         class="space-y-5">
 
     {% if error %}
@@ -45,21 +29,39 @@
     </div>
     {% endif %}
 
+    <!-- URL (always visible) -->
+    <section class="glass rounded-2xl p-5 sm:p-6">
+      <label class="block text-sm font-medium text-slate-300 mb-1.5">URL to watch</label>
+      {{ field('url', m.url if m else (request.query_params.get('url') or ''), type='url', placeholder='https://example.com/page') }}
+    </section>
+
+    {% if not m %}
+    <!-- AI-first quick setup (default; hidden in advanced mode) -->
+    <section x-show="!adv" x-cloak class="glass rounded-2xl p-5 sm:p-6 border border-brand-500/30 space-y-3">
+      <h2 class="font-semibold text-white flex items-center gap-2">
+        <svg viewBox="0 0 24 24" class="h-4 w-4 text-brand-400" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg>
+        Set up with AI
+      </h2>
+      <p class="text-xs text-slate-400">Describe what you want to watch — the AI reviews the page above and configures everything (detection, interval, value tracking, alerts).</p>
+      <textarea name="goal" x-model="goal" rows="2" placeholder="e.g. Alert me if this product's price drops below £250, or if it goes out of stock" class="field"></textarea>
+      <p class="text-xs text-red-300" x-show="aiError" x-cloak x-text="aiError"></p>
+      <button type="submit" formaction="/monitors/ai-create" @click="aiGuard($event)" :disabled="busy"
+              class="btn btn-primary text-sm" x-text="busy ? 'Reviewing the page…' : 'Set up with AI'"></button>
+    </section>
+
+    <!-- Advanced toggle -->
+    <label class="flex items-center gap-2.5 text-sm text-slate-300 cursor-pointer select-none">
+      <input type="checkbox" x-model="adv" class="rounded bg-white/10 border-white/20 text-brand-500">
+      <span class="font-medium">Advanced</span>
+      <span class="text-slate-500 text-xs">— skip the AI and configure every option by hand</span>
+    </label>
+    {% endif %}
+
+    <!-- Manual configuration (advanced for new monitors; always shown when editing) -->
+    <div x-show="adv" x-cloak class="space-y-5">
+
     <!-- Basics -->
     <section class="glass rounded-2xl p-5 sm:p-6 space-y-4">
-      <div>
-        <div class="flex items-center justify-between gap-2 mb-1.5">
-          <label class="block text-sm font-medium text-slate-300">URL to watch</label>
-          <button type="button" @click="$dispatch('ai-suggest-url')"
-                  class="btn btn-ghost !py-1 !px-2.5 text-xs inline-flex items-center gap-1.5"
-                  title="Let the AI review this page and suggest what to watch for">
-            <svg viewBox="0 0 24 24" class="h-3.5 w-3.5 text-brand-400" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg>
-            AI suggest
-          </button>
-        </div>
-        {{ field('url', m.url if m else (request.query_params.get('url') or ''), type='url', placeholder='https://example.com/page') }}
-        <p class="text-xs text-slate-500 mt-1">Enter a URL, then “AI suggest” reviews the page and proposes what to watch for.</p>
-      </div>
       <div class="grid sm:grid-cols-2 gap-4">
         <div>
           <label class="block text-sm font-medium text-slate-300 mb-1.5">Name <span class="text-slate-500 font-normal">· optional</span></label>
@@ -337,11 +339,23 @@
       </label>
       <button class="btn btn-primary">{{ 'Save changes' if m else 'Create monitor' }}</button>
     </div>
+    </div><!-- /advanced manual configuration -->
   </form>
 </div>
 {% endblock %}
 {% block scripts %}
 <script>
+function monitorForm(opts){return {
+  mode: opts.mode || 'auto', login: !!opts.login, adv: !!opts.adv,
+  goal: '', busy: false, aiError: '',
+  // Friendly inline validation for "Set up with AI" (no native required popup).
+  aiGuard(e){
+    const url = (this.$el.querySelector('input[name=url]')?.value || '').trim();
+    if (!url){ e.preventDefault(); this.aiError = 'Enter a URL to watch first.'; return; }
+    if (!this.goal.trim()){ e.preventDefault(); this.aiError = 'Describe what you want to watch for.'; return; }
+    this.aiError = ''; this.busy = true;   // valid → let the form submit to /monitors/ai-create
+  },
+}}
 function aiSection(opts){return {
   ai: !!opts.ai, intent: opts.intent || '', monitorId: opts.monitorId || null,
   loading: false, error: '', suggestions: [],

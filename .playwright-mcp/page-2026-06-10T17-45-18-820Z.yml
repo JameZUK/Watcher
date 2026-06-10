@@ -1,0 +1,180 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e6]:
+      - link "Watcher" [ref=e7] [cursor=pointer]:
+        - /url: /
+        - img [ref=e9]
+        - generic [ref=e12]: Watcher
+      - navigation [ref=e13]:
+        - link "Dashboard" [ref=e14] [cursor=pointer]:
+          - /url: /
+        - link "Inbox" [ref=e15] [cursor=pointer]:
+          - /url: /inbox
+        - link "Settings" [ref=e16] [cursor=pointer]:
+          - /url: /settings
+      - generic [ref=e17]:
+        - link "New monitor" [ref=e18] [cursor=pointer]:
+          - /url: /monitors/new
+          - img [ref=e19]
+          - text: New monitor
+        - generic [ref=e22]: D
+        - button "Sign out" [ref=e24] [cursor=pointer]
+  - main [ref=e25]:
+    - generic [ref=e26]:
+      - generic [ref=e27]:
+        - heading "Edit monitor" [level=1] [ref=e28]
+        - link "Cancel" [ref=e29] [cursor=pointer]:
+          - /url: /monitors/3
+      - generic [ref=e30]:
+        - generic [ref=e31]:
+          - generic [ref=e32]: URL to watch
+          - textbox "https://example.com/page" [ref=e33]: https://uk.jbl.com/JBLBB3WIFIBLKUK-Z.html?bvstate=pg%3A2%2Fct%3Ar
+        - generic [ref=e34]:
+          - generic [ref=e36]:
+            - generic [ref=e37]:
+              - generic [ref=e38]: Name · optional
+              - textbox "Auto-detected from page title" [ref=e39]: JBL Boombox 3 Wifi
+            - generic [ref=e40]:
+              - generic [ref=e41]: Check every
+              - generic [ref=e42]:
+                - spinbutton [ref=e43]: "60"
+                - generic: minutes
+              - paragraph [ref=e44]: Minimum 15 min.
+            - generic [ref=e45]:
+              - generic [ref=e46]: Tags · comma-separated
+              - textbox "shopping, work" [ref=e47]
+            - generic [ref=e48]:
+              - checkbox "Adaptive interval (auto-tune cadence)" [ref=e49]
+              - text: Adaptive interval
+              - generic [ref=e50]: (auto-tune cadence)
+          - generic [ref=e51]:
+            - heading "What to watch for" [level=2] [ref=e52]
+            - generic [ref=e53]:
+              - generic [ref=e54] [cursor=pointer]:
+                - radio "Smart recommended Watches content & appearance together" [checked] [ref=e55]
+                - generic [ref=e56]:
+                  - generic [ref=e57]:
+                    - generic [ref=e58]: Smart
+                    - generic [ref=e59]: recommended
+                  - paragraph [ref=e60]: Watches content & appearance together
+              - generic [ref=e61] [cursor=pointer]:
+                - radio "Text Rendered visible text only" [ref=e62]
+                - generic [ref=e63]:
+                  - generic [ref=e65]: Text
+                  - paragraph [ref=e66]: Rendered visible text only
+              - generic [ref=e67] [cursor=pointer]:
+                - radio "Visual Screenshot pixel diff" [ref=e68]
+                - generic [ref=e69]:
+                  - generic [ref=e71]: Visual
+                  - paragraph [ref=e72]: Screenshot pixel diff
+              - generic [ref=e73] [cursor=pointer]:
+                - radio "Element A single CSS/XPath selector" [ref=e74]
+                - generic [ref=e75]:
+                  - generic [ref=e77]: Element
+                  - paragraph [ref=e78]: A single CSS/XPath selector
+              - generic [ref=e79] [cursor=pointer]:
+                - radio "HTML Raw HTML source" [ref=e80]
+                - generic [ref=e81]:
+                  - generic [ref=e83]: HTML
+                  - paragraph [ref=e84]: Raw HTML source
+              - generic [ref=e85] [cursor=pointer]:
+                - radio "JSON Parsed JSON response" [ref=e86]
+                - generic [ref=e87]:
+                  - generic [ref=e89]: JSON
+                  - paragraph [ref=e90]: Parsed JSON response
+            - generic [ref=e91]:
+              - generic [ref=e92]:
+                - generic [ref=e93]: Ignore selectors
+                - textbox ".ad, .timestamp — one per line" [ref=e94]
+              - generic [ref=e95]:
+                - generic [ref=e96]: Ignore patterns · regex
+                - 'textbox "\\d{2}:\\d{2}:\\d{2} — one per line" [ref=e97]'
+            - generic [ref=e98]:
+              - generic [ref=e99]:
+                - generic [ref=e100]: Minimum change threshold · %
+                - spinbutton [ref=e101]: "0.0"
+                - paragraph [ref=e102]: Ignore changes smaller than this.
+              - generic [ref=e103]:
+                - generic [ref=e104]:
+                  - checkbox "Normalize whitespace" [checked] [ref=e105]
+                  - text: Normalize whitespace
+                - generic [ref=e106]:
+                  - checkbox "Ignore number changes" [ref=e107]
+                  - text: Ignore number changes
+          - button "Rendering & advanced" [ref=e109] [cursor=pointer]:
+            - heading "Rendering & advanced" [level=2] [ref=e110]
+            - img [ref=e111]
+          - generic [ref=e114]:
+            - checkbox "This page requires login" [ref=e115]
+            - generic [ref=e116]: This page requires login
+          - button "Session cookies · bypass bot checks / reuse a logged-in session" [ref=e118] [cursor=pointer]:
+            - heading "Session cookies · bypass bot checks / reuse a logged-in session" [level=2] [ref=e119]
+            - img [ref=e121]
+          - generic [ref=e123]:
+            - generic [ref=e124]:
+              - checkbox "AI triage for this monitor" [checked] [ref=e125]
+              - generic [ref=e126]: AI triage for this monitor
+            - paragraph [ref=e127]:
+              - text: Writes a human headline for each change and rates importance. Needs the shared key set by an admin in
+              - link "Settings" [ref=e128] [cursor=pointer]:
+                - /url: /settings
+              - text: .
+            - generic [ref=e129]:
+              - generic [ref=e130]:
+                - generic [ref=e131]:
+                  - generic [ref=e132]: What to watch for · optional
+                  - button "AI suggest" [ref=e133] [cursor=pointer]:
+                    - img [ref=e134]
+                    - generic [ref=e136]: AI suggest
+                - textbox "e.g. Alert me if the price drops below £250, or if it comes back in stock" [ref=e137]: "- Product comes back in stock - Price drops from 263.99"
+                - paragraph [ref=e138]: The AI rates a change's importance against this — matching changes are flagged high, unrelated ones muted.
+              - generic [ref=e139]:
+                - generic [ref=e140]: Low-value changes
+                - combobox [ref=e141]:
+                  - option "Use global default" [selected]
+                  - option "Record, don't notify"
+                  - option "Notify, labelled low"
+                  - option "Drop entirely"
+          - generic [ref=e142]:
+            - generic [ref=e143]:
+              - checkbox "Track a numeric value" [checked] [ref=e144]
+              - generic [ref=e145]: Track a numeric value
+            - paragraph [ref=e146]: Captures a number (price, stock count, rating) every check and charts it over time. Uses the element selector if set, otherwise the AI reads it off the page.
+            - generic [ref=e147]:
+              - generic [ref=e148]: Alert me when the value is
+              - generic [ref=e149]:
+                - combobox [ref=e150]:
+                  - option "— no alert —"
+                  - option "below" [selected]
+                  - option "above"
+                - spinbutton [ref=e151]: "300.0"
+              - paragraph [ref=e152]: A crossing always notifies (high importance), even when other changes are muted.
+          - generic [ref=e153]:
+            - heading "Notify me via" [level=2] [ref=e154]
+            - generic [ref=e155]:
+              - generic [ref=e156] [cursor=pointer]:
+                - checkbox "In-app inbox" [checked] [ref=e157]
+                - generic [ref=e158]: In-app inbox
+              - generic [ref=e159] [cursor=pointer]:
+                - checkbox "Web Push" [ref=e160]
+                - generic [ref=e161]: Web Push
+              - generic [ref=e162] [cursor=pointer]:
+                - checkbox "Email" [ref=e163]
+                - generic [ref=e164]: Email
+              - generic [ref=e165] [cursor=pointer]:
+                - checkbox "Telegram" [ref=e166]
+                - generic [ref=e167]: Telegram
+              - generic [ref=e168] [cursor=pointer]:
+                - checkbox "Discord" [ref=e169]
+                - generic [ref=e170]: Discord
+              - generic [ref=e171] [cursor=pointer]:
+                - checkbox "ntfy" [ref=e172]
+                - generic [ref=e173]: ntfy
+              - generic [ref=e174] [cursor=pointer]:
+                - checkbox "Webhook" [ref=e175]
+                - generic [ref=e176]: Webhook
+          - generic [ref=e177]:
+            - generic [ref=e178]:
+              - checkbox "Enabled" [checked] [ref=e179]
+              - text: Enabled
+            - button "Save changes" [ref=e180] [cursor=pointer]

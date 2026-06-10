@@ -1,0 +1,40 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e6]:
+      - link "Watcher" [ref=e7] [cursor=pointer]:
+        - /url: /
+        - img [ref=e9]
+        - generic [ref=e12]: Watcher
+      - navigation [ref=e13]:
+        - link "Dashboard" [ref=e14] [cursor=pointer]:
+          - /url: /
+        - link "Inbox" [ref=e15] [cursor=pointer]:
+          - /url: /inbox
+        - link "Settings" [ref=e16] [cursor=pointer]:
+          - /url: /settings
+      - generic [ref=e17]:
+        - link "New monitor" [ref=e18] [cursor=pointer]:
+          - /url: /monitors/new
+          - img [ref=e19]
+          - text: New monitor
+        - generic [ref=e22]: D
+        - button "Sign out" [ref=e24] [cursor=pointer]
+  - main [ref=e25]:
+    - generic [ref=e26]:
+      - heading "New monitor" [level=1] [ref=e28]
+      - generic [ref=e29]:
+        - generic [ref=e30]:
+          - generic [ref=e31]: URL to watch
+          - textbox "https://example.com/page" [ref=e32]
+        - generic [ref=e33]:
+          - heading "Set up with AI" [level=2] [ref=e34]:
+            - img [ref=e35]
+            - text: Set up with AI
+          - paragraph [ref=e37]: Describe what you want to watch — the AI reviews the page above and configures everything (detection, interval, value tracking, alerts).
+          - textbox "e.g. Alert me if this product's price drops below £250, or if it goes out of stock" [ref=e38]
+          - paragraph [ref=e44]: Enter a URL to watch first.
+          - button "Set up with AI" [active] [ref=e39] [cursor=pointer]
+        - generic [ref=e40] [cursor=pointer]:
+          - checkbox "Advanced — skip the AI and configure every option by hand" [ref=e41]
+          - generic [ref=e42]: Advanced
+          - generic [ref=e43]: — skip the AI and configure every option by hand
