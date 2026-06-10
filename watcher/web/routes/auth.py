@@ -34,6 +34,7 @@ async def login(
             {"mode": "login", "error": "Invalid email or password.", "email": email},
             status_code=401,
         )
+    request.session.clear()  # rotate the session on auth (anti-fixation)
     request.session["user_id"] = user.id
     return RedirectResponse("/", status_code=303)
 
@@ -53,10 +54,10 @@ async def register(
     session: AsyncSession = Depends(get_session),
 ):
     email = email.strip().lower()
-    if len(password) < 8:
+    if not (8 <= len(password) <= 1024):  # upper bound guards against argon2 DoS
         return templates.TemplateResponse(
             request, "login.html",
-            {"mode": "register", "error": "Password must be at least 8 characters.", "email": email},
+            {"mode": "register", "error": "Password must be 8–1024 characters.", "email": email},
             status_code=400,
         )
     if await get_by_email(session, email):
@@ -66,6 +67,7 @@ async def register(
             status_code=400,
         )
     user = await create_user(session, email, password)
+    request.session.clear()  # rotate the session on auth (anti-fixation)
     request.session["user_id"] = user.id
     return RedirectResponse("/", status_code=303)
 

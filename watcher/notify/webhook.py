@@ -11,8 +11,14 @@ import httpx
 from ..config import settings
 
 
+# Derive a dedicated webhook-signing key so the cookie-signing secret is never
+# exposed to (user-controlled) webhook endpoints.
+def _webhook_key() -> bytes:
+    return hmac.new(settings.secret_key.encode(), b"watcher-webhook-signing", hashlib.sha256).digest()
+
+
 def _sign(body: bytes) -> str:
-    return hmac.new(settings.secret_key.encode(), body, hashlib.sha256).hexdigest()
+    return hmac.new(_webhook_key(), body, hashlib.sha256).hexdigest()
 
 
 async def send(url: str, payload: dict) -> bool:

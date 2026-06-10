@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     port: int = Field(default=8000)
     session_cookie: str = Field(default="watcher_session")
     session_max_age: int = Field(default=60 * 60 * 24 * 14)  # 14 days
+    secure_cookies: bool = Field(default=False)  # set true behind HTTPS
+
+    def secret_is_weak(self) -> bool:
+        return self.secret_key in (
+            "dev-insecure-change-me", "change-me-to-a-long-random-string", "",
+        )
 
     # --- Scheduling ---
     min_interval_seconds: int = Field(default=15 * 60)  # 15 min floor

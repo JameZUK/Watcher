@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import re
 from datetime import timedelta
+from urllib.parse import urljoin
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import defer, selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...ai import configure_monitor, suggest_watch_items, summarize_history
@@ -29,10 +30,14 @@ from ...models import (
     User,
     utcnow,
 )
+from ...netsec import validate_monitor_url, validate_public_url
 
 # How long a manually pasted cookie session is trusted before re-prompting.
 # Successful checks roll this forward via mark_session(), so it self-maintains.
 COOKIE_SESSION_TTL = timedelta(days=7)
+
+# Cap bulk import to avoid mass-creation / render-pool exhaustion.
+_IMPORT_CAP = 500
 from ...scheduler import reschedule_monitor, trigger_now, unschedule_monitor
 from ...storage import blobs
 from .. import templates
@@ -64,6 +69,18 @@ def _bool(form, key: str) -> bool:
     return form.get(key) in ("on", "true", "1", "yes")
 
 
+def _clamp_int(form, key: str, default: int, lo: int, hi: int) -> int:
+    """Parse a form int, falling back to default, clamped to [lo, hi].
+
+    Guards against both crashes (non-numeric input) and resource abuse
+    (absurd viewports/timeouts wedging a render slot)."""
+    try:
+        v = int(form.get(key) or default)
+    except (ValueError, TypeError):
+        v = default
+    return max(lo, min(hi, v))
+
+
 def _apply_form(monitor: Monitor, form) -> None:
     # Blank name → auto-populated from the page <title> on first render.
     monitor.name = (form.get("name") or "").strip()
@@ -77,14 +94,15 @@ def _apply_form(monitor: Monitor, form) -> None:
     monitor.min_change_threshold = float(form.get("min_change_threshold") or 0) / 100.0
     monitor.normalize_whitespace = _bool(form, "normalize_whitespace")
     monitor.normalize_numbers = _bool(form, "normalize_numbers")
-    monitor.wait_until = form.get("wait_until") or "networkidle"
+    monitor.wait_until = form.get("wait_until") if form.get("wait_until") in (
+        "load", "domcontentloaded", "networkidle", "commit") else "networkidle"
     monitor.wait_selector = (form.get("wait_selector") or "").strip() or None
-    monitor.wait_timeout_ms = int(form.get("wait_timeout_ms") or 15000)
-    monitor.viewport_width = int(form.get("viewport_width") or 1280)
-    monitor.viewport_height = int(form.get("viewport_height") or 800)
+    monitor.wait_timeout_ms = _clamp_int(form, "wait_timeout_ms", 15000, 1000, 120000)
+    monitor.viewport_width = _clamp_int(form, "viewport_width", 1280, 320, 3840)
+    monitor.viewport_height = _clamp_int(form, "viewport_height", 800, 320, 4320)
     monitor.proxy = (form.get("proxy") or "").strip() or None
 
-    minutes = max(int(form.get("interval_minutes") or 60), 1)
+    minutes = _clamp_int(form, "interval_minutes", 60, 1, 60 * 24 * 30)
     monitor.interval_seconds = max(minutes * 60, settings.min_interval_seconds)
     monitor.enabled = _bool(form, "enabled")
 
@@ -207,13 +225,26 @@ async def _page_text_for_suggest(session, user, url, monitor_id):
         ).scalar_one_or_none()
         if snap and (snap.rendered_text or "").strip():
             return snap.title, snap.rendered_text
+    # Server-side fetch of a user URL → guard against SSRF (private/metadata
+    # targets) and validate every redirect hop manually.
+    if validate_public_url(url):
+        return None, ""
     try:
         async with httpx.AsyncClient(
-            timeout=20, follow_redirects=True,
+            timeout=20, follow_redirects=False,
             headers={"User-Agent": "Mozilla/5.0 (compatible; WatcherBot/1.0)"},
         ) as c:
-            r = await c.get(url)
-        if r.status_code >= 400:
+            cur, r = url, None
+            for _ in range(4):
+                r = await c.get(cur)
+                loc = r.headers.get("location")
+                if r.status_code in (301, 302, 303, 307, 308) and loc:
+                    cur = urljoin(cur, loc)
+                    if validate_public_url(cur):
+                        return None, ""
+                    continue
+                break
+        if r is None or r.status_code >= 400:
             return None, ""
         return None, _html_to_text(r.text)[:12000]
     except Exception:
@@ -281,6 +312,9 @@ async def ai_create_monitor(
     goal = (form.get("goal") or "").strip()
     if not (url and goal):
         return _form_response(request, user, None, error="Enter a URL and a goal for AI setup.", status=400)
+    url_err = validate_monitor_url(url)
+    if url_err:
+        return _form_response(request, user, None, error=url_err, status=400)
     app = await get_app_settings(session)
     key = get_openrouter_key(app)
     if not key:
@@ -384,8 +418,10 @@ async def import_monitors(
         return RedirectResponse("/?import=error", status_code=303)
     items = parsed.get("monitors") if isinstance(parsed, dict) else parsed
     count = 0
-    for it in items or []:
+    for it in (items or [])[:_IMPORT_CAP]:   # bound mass-creation / render-pool abuse
         if not isinstance(it, dict) or not (it.get("url") or "").strip():
+            continue
+        if validate_monitor_url(it["url"].strip()):   # skip non-http(s) URLs
             continue
         try:
             eng = Engine(it.get("engine") or "chromium")
@@ -395,11 +431,14 @@ async def import_monitors(
             mode = DetectionMode(it.get("detection_mode") or "auto")
         except ValueError:
             mode = DetectionMode.auto
+        try:
+            interval = max(int(it.get("interval_seconds") or 3600), settings.min_interval_seconds)
+        except (ValueError, TypeError):
+            interval = 3600
         vdir = it.get("value_threshold_dir")
         m = Monitor(
             user_id=user.id, url=it["url"].strip()[:2048], name=(it.get("name") or it["url"])[:255],
-            engine=eng, detection_mode=mode,
-            interval_seconds=max(int(it.get("interval_seconds") or 3600), settings.min_interval_seconds),
+            engine=eng, detection_mode=mode, interval_seconds=interval,
             selector=it.get("selector") or None, selector_attr=it.get("selector_attr") or None,
             tags=it.get("tags") or [], ai_watch_intent=it.get("ai_watch_intent") or None,
             track_value=bool(it.get("track_value")), value_threshold=it.get("value_threshold"),
@@ -424,6 +463,9 @@ async def create_monitor(
     form = await request.form()
     monitor = Monitor(user_id=user.id)
     _apply_form(monitor, form)
+    url_err = validate_monitor_url(monitor.url)
+    if url_err:
+        return _form_response(request, user, None, error=url_err, status=400)
     try:
         flow = _build_login_flow(monitor, form)
     except ValueError as exc:
@@ -463,6 +505,9 @@ async def update_monitor(
     monitor = await _owned_monitor(session, user, monitor_id)
     form = await request.form()
     _apply_form(monitor, form)
+    url_err = validate_monitor_url(monitor.url)
+    if url_err:
+        return _form_response(request, user, monitor, error=url_err, status=400)
     try:
         flow = _build_login_flow(monitor, form)
     except ValueError as exc:
@@ -543,6 +588,8 @@ async def monitor_detail(
     snapshots = (
         await session.execute(
             select(Snapshot).where(Snapshot.monitor_id == monitor.id)
+            # rendered_text is large and unused by the detail template — don't load it.
+            .options(defer(Snapshot.rendered_text))
             .order_by(Snapshot.taken_at.desc()).limit(50)
         )
     ).scalars().all()
@@ -587,8 +634,27 @@ def _diff_payload(change: Change) -> dict:
             "has_visual_mobile": has_visual_mobile, "lines": lines}
 
 
+_IMG_CACHE = "public, max-age=31536000, immutable"
+
+
+def _serve_blob_image(request: Request, key: str | None):
+    """Serve a content-addressed image with an immutable ETag (key=sha256).
+    Streams off-thread via FileResponse; returns 304 on a matching If-None-Match."""
+    if not key:
+        raise HTTPException(404)
+    p = blobs.path(key)
+    if not p.exists():
+        raise HTTPException(404)
+    etag = f'"{key}"'
+    headers = {"ETag": etag, "Cache-Control": _IMG_CACHE}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
+    return FileResponse(p, media_type="image/png", headers=headers)
+
+
 @router.get("/monitors/{monitor_id}/snapshots/{snapshot_id}/image")
 async def snapshot_image(
+    request: Request,
     monitor_id: int,
     snapshot_id: int,
     v: str | None = None,  # "mobile" for the mobile-viewport capture
@@ -602,14 +668,12 @@ async def snapshot_image(
     # Prefer the requested variant; fall back to the desktop capture.
     key = snap.screenshot_mobile_blob if v == "mobile" else snap.screenshot_blob
     key = key or snap.screenshot_blob or snap.screenshot_mobile_blob
-    data = blobs.get_bytes(key) if key else None
-    if data is None:
-        raise HTTPException(404)
-    return Response(content=data, media_type="image/png")
+    return _serve_blob_image(request, key)
 
 
 @router.get("/monitors/{monitor_id}/changes/{change_id}/overlay")
 async def change_overlay(
+    request: Request,
     monitor_id: int,
     change_id: int,
     v: str | None = None,  # "mobile" for the mobile-viewport overlay
@@ -623,7 +687,4 @@ async def change_overlay(
     # Prefer the requested variant; fall back to the desktop overlay.
     key = change.visual_mobile_blob if v == "mobile" else change.visual_blob
     key = key or change.visual_blob or change.visual_mobile_blob
-    data = blobs.get_bytes(key) if key else None
-    if data is None:
-        raise HTTPException(404)
-    return Response(content=data, media_type="image/png")
+    return _serve_blob_image(request, key)

@@ -23,6 +23,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.ensure_dirs()
+    if settings.secret_is_weak():
+        logging.getLogger("watcher").critical(
+            "WATCHER_SECRET_KEY is unset/default — session cookies are forgeable and "
+            "stored secrets are decryptable. Set a strong WATCHER_SECRET_KEY before any real use."
+        )
     if settings.patch_playwright:
         from ._playwright_patch import apply as _patch_playwright
         logging.getLogger("watcher").info(_patch_playwright())
@@ -43,9 +48,23 @@ def create_app() -> FastAPI:
         session_cookie=settings.session_cookie,
         max_age=settings.session_max_age,
         same_site="lax",
-        https_only=False,
+        https_only=settings.secure_cookies,
     )
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+    @app.middleware("http")
+    async def _csrf_origin_guard(request: Request, call_next):
+        """CSRF defense for cookie-authed state changes: reject browser cross-
+        origin unsafe requests by Origin/Referer. The /api/* routes are token-
+        authed (no ambient cookie) so they're exempt; requests with no Origin/
+        Referer (curl, server-to-server) are allowed."""
+        if request.method in ("POST", "PUT", "PATCH", "DELETE") and not request.url.path.startswith("/api"):
+            from urllib.parse import urlparse
+            host = request.headers.get("host", "")
+            src = request.headers.get("origin") or request.headers.get("referer")
+            if src and urlparse(src).netloc != host:
+                return JSONResponse({"detail": "Cross-origin request blocked."}, status_code=403)
+        return await call_next(request)
 
     app.include_router(auth.router)
     app.include_router(dashboard.router)
