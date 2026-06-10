@@ -105,14 +105,26 @@ Controls: concurrency cap, per-render timeout, browser context reuse, optional p
 - **Text** — normalized visible-text diff (difflib unified/side-by-side); optional
   whitespace + number/date normalization
 - **Visual** — full-page screenshot pixel-diff (pixelmatch-style) → % changed +
-  highlighted-region overlay
+  highlighted-region overlay. Anti-aliased pixels are ignored, and a global
+  **visual noise floor** (`WATCHER_MIN_VISUAL_CHANGE`, default 0.5% of pixels)
+  is enforced as a lower bound on each monitor's threshold so render jitter /
+  lazy images / carousels don't produce phantom changes.
+- **Auto (Smart, default)** — text **and** visual together; surfaces whichever
+  moved, with a tabbed diff. Subject to the same visual noise floor.
 - **Element** — extract selector's text/attribute → exact compare; numeric values
   rendered as a trend chart
 - **HTML/JSON** — normalized DOM diff / DeepDiff for JSON
 
 **Noise control (key to usability):** per-monitor ignore selectors (strip
-ads/timestamps before diffing), regex ignore patterns, and a minimum-change
-threshold (% or char count) so trivial churn doesn't trigger alerts.
+ads/timestamps before diffing), ReDoS-safe regex ignore patterns, a per-monitor
+minimum-change threshold, and the global visual noise floor above — so trivial
+churn doesn't trigger alerts. Content (text) and tracked-value changes are exact
+and are not subject to the visual floor.
+
+**AI triage (optional):** detected changes can be triaged by an OpenRouter /
+OpenAI-compatible / Ollama model into a headline + category + importance, which
+mutes low-value churn. The model is instructed to report only what the supplied
+diff/image actually shows and never to invent values it cannot verify.
 
 ---
 

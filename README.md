@@ -21,15 +21,17 @@
 
 ## ✨ Features
 
-- **Smart detection (default)** — watches a page's **content (text) and appearance (visual) together**, and shows you both in a tabbed diff. Other modes available: rendered **text**, **visual** (screenshot), single **element** (CSS/XPath), raw **HTML**, and **JSON**.
-- **Real browser rendering** — Chromium / Firefox / WebKit via Playwright, plus **[Camoufox](https://github.com/daijro/camoufox)** (stealth Firefox) for anti-bot targets.
+- **Smart detection (default)** — watches a page's **content (text) and appearance (visual) together**, and shows you both in a tabbed diff. Other modes: rendered **text**, **visual** (screenshot), single **element** (CSS/XPath), raw **HTML**, and **JSON**.
+- **Real browser rendering** — Chromium / Firefox / WebKit via Playwright, plus **[Camoufox](https://github.com/daijro/camoufox)** (stealth Firefox) for anti-bot targets. Desktop **and** mobile previews are captured each check.
 - **Sees changes in place** — dashboard cards show live screenshot thumbnails; the diff viewer overlays **changed regions in red** on the actual page, with an interactive **before/after slider**.
-- **History time-machine** — scrub through every captured render over time with a slider.
-- **Auto-everything** — monitor names auto-populate from the page `<title>`; blocked / anti-bot challenge pages (DataDome, Cloudflare, PerimeterX, …) are detected and surfaced instead of silently failing.
-- **Authenticated sites** — record a login flow; credentials are **encrypted at rest** and the session is reused between checks.
-- **Noise control** — ignore selectors, regex ignore patterns, and a minimum-change threshold so trivial churn never alerts you.
-- **Notifications** — in-app inbox, **Web Push**, and **HMAC-signed webhooks**.
-- **Futuristic, fully-responsive UI** — dark glassmorphic design that works on desktop and mobile (with pinch-to-zoom snapshots).
+- **AI triage** *(optional)* — an OpenRouter-hosted model (or any OpenAI-compatible / **Ollama** endpoint) writes a one-line **headline**, classifies the change (price / stock / content / cosmetic …), and rates **importance** — so low-value churn is muted and only what matters interrupts you. It can also **auto-configure a monitor from a plain-English goal**, **suggest what to watch for**, and **summarise** a monitor's recent activity.
+- **Value tracking & trends** — extract a numeric value (price, stock count, rating) each check, chart it over time, and fire **threshold alerts** ("tell me when it drops below £300").
+- **Notifications** — in-app **inbox**, **Web Push**, **HMAC-signed webhooks**, **Email/SMTP**, **Telegram**, **Discord**, and **ntfy** — with **hourly digests** and **quiet hours** so non-urgent changes batch up instead of pinging you at 3am.
+- **Reliability** — per-check render/detect timeouts, retries, **auto-pause** after repeated failures (with a recovery alert), and **adaptive intervals** that speed up on active pages and back off on quiet ones.
+- **Anti-bot & authenticated sites** — Camoufox stealth rendering; blocked / challenge pages (DataDome, Cloudflare, PerimeterX, …) are detected and surfaced instead of silently failing; **paste Cookie Editor JSON** to reuse a logged-in session or clear a bot check; recorded **login flows** and **per-monitor proxies**. Credentials and sessions are **encrypted at rest**.
+- **Noise control** — ignore selectors, ReDoS-safe regex ignore patterns, a per-monitor minimum-change threshold, **and a global visual noise floor** that absorbs anti-aliasing, lazy-loaded images, and carousels so trivial pixel churn never alerts you.
+- **Organise & integrate** — **tags** + search, JSON **import/export**, a token-authed **REST API**, an **RSS** feed, and a **browser extension** to add the current tab in one click.
+- **Futuristic, fully-responsive UI** — dark glassmorphic design that works on desktop and mobile (pinch-to-zoom snapshots), with an **Auto / Full / Lite** effects toggle for devices without GPU acceleration.
 - **Single container** — SQLite + a content-addressed blob store. No Redis, no Postgres, no external services.
 
 ## 📸 Screenshots
@@ -74,13 +76,15 @@ uvicorn watcher.main:app --reload
 ## 🏗 How it works
 
 ```
-schedule (APScheduler)  →  render (Playwright / Camoufox)  →  snapshot
-        →  diff vs previous (detection)  →  store + notify (inbox / push / webhook)
+schedule (APScheduler) → render (Playwright / Camoufox) → snapshot
+   → diff vs previous (detection + noise floor) → AI triage (optional)
+   → store + notify (inbox / push / webhook / email / telegram / discord / ntfy)
 ```
 
 - **Engines** implement one `Renderer` contract, so detection is engine-agnostic.
-- Every render captures HTML, visible text, a full-page screenshot, and (for element mode) a selector value.
+- Every render captures HTML, visible text, desktop + mobile screenshots, and (for element/value modes) a selector or numeric value.
 - Snapshots are **content-addressed** on disk — identical (unchanged) pages are stored once.
+- AI triage and value extraction are **skipped on byte-identical pages** to save calls; non-urgent changes are deferred to the hourly **digest**.
 - A daily job prunes old snapshots but always preserves change-point snapshots, so diff history stays intact.
 
 See **[SPEC.md](SPEC.md)** for the full design.
@@ -95,7 +99,21 @@ All settings are environment variables prefixed `WATCHER_` (see [`.env.example`]
 | `WATCHER_ENCRYPTION_KEY` | *(derived)* | Fernet key for encrypting login credentials. Set explicitly in production. |
 | `WATCHER_DATA_DIR` | `data` | Where the SQLite DB and snapshot blobs live. |
 | `WATCHER_MIN_INTERVAL_SECONDS` | `900` | Floor on how often a monitor can check (15 min). |
+| `WATCHER_MIN_VISUAL_CHANGE` | `0.005` | Global **visual noise floor** (fraction of pixels). See below. |
+| `WATCHER_AUTO_PAUSE_AFTER_FAILURES` | `6` | Pause a monitor after this many consecutive failures (`0` disables). |
+| `WATCHER_RENDER_TIMEOUT_SECONDS` / `_DETECT_TIMEOUT_SECONDS` | `45` / `20` | Hard ceilings per render / per diff. |
 | `WATCHER_VAPID_PUBLIC_KEY` / `_PRIVATE_KEY` | — | Enable Web Push. Generate with `pip install py-vapid && vapid --gen`. |
+
+> **AI triage** and the **Email/SMTP, Telegram, and ntfy** credentials are configured in the **web UI** (Settings — global settings are admin-only) and stored **encrypted at rest**, not via environment variables.
+
+### Tuning detection sensitivity (avoiding phantom changes)
+
+Visual diffing on real sites is noisy — anti-aliasing, lazy-loaded images, ad/carousel rotation, and sub-pixel font rendering all shift a few pixels between otherwise-identical renders. Watcher suppresses that noise on two levels:
+
+- **`WATCHER_MIN_VISUAL_CHANGE`** (default `0.5%`) is a global floor: a visual change must move at least this fraction of the screenshot's pixels to count. Anti-aliased pixels are ignored entirely.
+- Each monitor's own **minimum-change threshold** (in its settings) raises that floor further for a specific, busy page.
+
+The *effective* visual threshold is `max(monitor threshold, WATCHER_MIN_VISUAL_CHANGE)`. Content (text) and tracked-value changes are exact and are **not** subject to this floor.
 
 ### Webhook verification
 
@@ -112,20 +130,25 @@ assert hmac.compare_digest(request.headers["X-Watcher-Signature"], expected)
 ```
 watcher/
   config.py, db.py, models.py, runner.py   # core (settings, ORM, the check pipeline)
+  netsec.py     SSRF guards (scheme + resolved-IP validation, per-redirect-hop)
   engines/      Playwright + Camoufox behind one interface
   detection/    text / visual / element / structured diffing + noise control
+  ai/           OpenRouter/Ollama triage, value extraction, auto-config, summaries
   auth/         users, password hashing (argon2), credential crypto, login flows
-  scheduler/    APScheduler jobs
-  notify/       push, webhook, inbox dispatch
+  scheduler/    APScheduler jobs (checks, prune, hourly digest, adaptive retune)
+  notify/       inbox, push, webhook, email, telegram, discord, ntfy + digests
   storage/      content-addressed blobs + retention
-  web/          FastAPI routes, Jinja2 templates, static assets
+  web/          FastAPI routes (incl. REST API + RSS), Jinja2 templates, assets
+extension/      one-click "add this tab" browser extension
 ```
 
 ## 🔒 Security notes
 
-- Set a strong `WATCHER_SECRET_KEY` in production (signs sessions + webhooks).
-- Login credentials are encrypted with Fernet; set `WATCHER_ENCRYPTION_KEY` explicitly rather than deriving it from the secret key.
-- Watcher fetches arbitrary user-supplied URLs by design — only expose it to trusted users, ideally behind a reverse proxy with TLS.
+- Set a strong `WATCHER_SECRET_KEY` in production (signs sessions + webhooks); Watcher logs a critical warning on startup if it's left at the dev placeholder.
+- Login credentials, session cookies, and global API keys (OpenRouter, SMTP, Telegram) are encrypted with Fernet; set `WATCHER_ENCRYPTION_KEY` explicitly rather than deriving it from the secret key.
+- Global app settings (the shared AI key, SMTP, etc.) are gated behind an **admin** role; the first registered user is bootstrapped as admin.
+- **SSRF**: user-supplied URLs are scheme-checked and their resolved IPs are validated (private / loopback / link-local / metadata ranges are blocked, re-checked on every redirect hop). **CSRF**: an Origin/Referer guard rejects cross-origin cookie-authed writes. User regex ignore-patterns run with a timeout (ReDoS-safe).
+- Watcher fetches arbitrary user-supplied URLs by design — only expose it to trusted users, ideally behind a reverse proxy with TLS (set `WATCHER_SECURE_COOKIES=true`).
 
 ## 📄 License
 
