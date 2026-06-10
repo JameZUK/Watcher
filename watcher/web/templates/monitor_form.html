@@ -194,6 +194,11 @@
           <label class="block text-sm font-medium text-slate-300 mb-1.5">Proxy <span class="text-slate-500 font-normal">· optional</span></label>
           {{ field('proxy', m.proxy if m else '', placeholder='http://host:port') }}
         </div>
+        <label class="flex items-center gap-2.5 self-end pb-2.5 text-sm text-slate-300 sm:col-span-2">
+          <input type="checkbox" name="block_annoyances" {{ 'checked' if (m.block_annoyances if m else true) else '' }} class="rounded bg-white/10 border-white/20 text-brand-500">
+          Block ads &amp; hide cookie banners
+          <span class="text-slate-500 text-xs">(cleaner screenshots, fewer false-positive changes)</span>
+        </label>
       </div>
     </section>
 

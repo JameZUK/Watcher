@@ -21,6 +21,7 @@ from ._common import (
     capture,
     do_wait,
     replay_login,
+    setup_blocking,
 )
 from .base import RenderResult
 
@@ -55,6 +56,7 @@ class CamoufoxRenderer:
                 context = await browser.new_context(**context_kwargs)
                 context.set_default_timeout(settings.render_timeout_seconds * 1000)
                 page = await context.new_page()
+                await setup_blocking(context, monitor)
 
                 if flow and flow.steps and not reuse_session:
                     await replay_login(page, monitor)
@@ -127,6 +129,7 @@ class CamoufoxRenderer:
             context = await browser.new_context(**ctx_kwargs)
             context.set_default_timeout(settings.render_timeout_seconds * 1000)
             page = await context.new_page()
+            await setup_blocking(context, monitor)
             await page.goto(
                 monitor.url, wait_until=monitor.wait_until, timeout=monitor.wait_timeout_ms
             )

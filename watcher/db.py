@@ -57,7 +57,7 @@ _ADDED_COLUMNS = {
         "track_value": "BOOLEAN DEFAULT 0", "value_threshold": "FLOAT", "value_threshold_dir": "VARCHAR(8)",
         "consecutive_failures": "INTEGER DEFAULT 0",
         "tags": "JSON", "adaptive_interval": "BOOLEAN DEFAULT 0",
-        "group_id": "INTEGER",
+        "group_id": "INTEGER", "block_annoyances": "BOOLEAN DEFAULT 1",
     },
     "groups": {
         "watch_intent": "TEXT", "kind": "VARCHAR(16) DEFAULT 'price'",

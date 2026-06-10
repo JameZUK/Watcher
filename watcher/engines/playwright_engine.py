@@ -7,7 +7,7 @@ import time
 from ..auth.login_flows import mark_session, session_is_valid
 from ..config import settings
 from ..models import Monitor
-from ._common import apply_actions, capture, do_wait, replay_login
+from ._common import apply_actions, capture, do_wait, replay_login, setup_blocking
 from .base import RenderResult
 
 
@@ -51,6 +51,7 @@ class PlaywrightRenderer:
                     context = await browser.new_context(**context_kwargs)
                 context.set_default_timeout(settings.render_timeout_seconds * 1000)
                 page = await context.new_page()
+                await setup_blocking(context, monitor)
 
                 if flow and flow.steps and not reuse_session:
                     await replay_login(page, monitor)

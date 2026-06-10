@@ -123,6 +123,7 @@ class Monitor(Base):
     viewport_height: Mapped[int] = mapped_column(Integer, default=800)
     actions: Mapped[list] = mapped_column(JSON, default=list)  # scroll/click/dismiss
     proxy: Mapped[str | None] = mapped_column(String(512), default=None)
+    block_annoyances: Mapped[bool] = mapped_column(Boolean, default=True)  # block ads + hide cookie banners
 
     # Scheduling
     interval_seconds: Mapped[int] = mapped_column(Integer, default=3600)
