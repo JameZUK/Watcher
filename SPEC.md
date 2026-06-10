@@ -38,8 +38,10 @@ schedule → render (chosen engine) → capture snapshot → diff vs last snapsh
 
 | Dimension | Decision |
 |---|---|
-| **Detection modes** | Rendered text, visual/screenshot, CSS/XPath element, raw HTML/JSON |
-| **Notifications** | In-app inbox + Web Push, Webhook (HMAC-signed) |
+| **Detection modes** | Smart (text+visual), text, visual/screenshot, CSS/XPath element, raw HTML/JSON |
+| **Groups** | Watch related pages together — price comparison (cheapest + combined chart + alert), back-in-stock, any-change, or custom AI intent |
+| **Notifications** | In-app inbox + Web Push, Webhook (HMAC-signed), Email/SMTP, Telegram, Discord, ntfy + digests |
+| **App auth** | Multi-user accounts (argon2), admin role + user management, optional/required TOTP 2FA |
 | **Scale / hosting** | Self-hosted, single box; **full user accounts** |
 | **Stack** | FastAPI + Jinja2 + HTMX + Alpine.js + Tailwind |
 | **Rendering** | Playwright (Chromium default; Firefox/WebKit) + Camoufox, common interface |

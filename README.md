@@ -26,21 +26,27 @@
 - **Smart detection (default)** — watches a page's **content (text) and appearance (visual) together**, and shows you both in a tabbed diff. Other modes: rendered **text**, **visual** (screenshot), single **element** (CSS/XPath), raw **HTML**, and **JSON**.
 - **Real browser rendering** — Chromium / Firefox / WebKit via Playwright, plus **[Camoufox](https://github.com/daijro/camoufox)** (stealth Firefox) for anti-bot targets. Desktop **and** mobile previews are captured each check.
 - **Sees changes in place** — dashboard cards show live screenshot thumbnails; the diff viewer overlays **changed regions in red** on the actual page, with an interactive **before/after slider**.
-- **AI triage** *(optional)* — an OpenRouter-hosted model (or any OpenAI-compatible / **Ollama** endpoint) writes a one-line **headline**, classifies the change (price / stock / content / cosmetic …), and rates **importance** — so low-value churn is muted and only what matters interrupts you. It can also **auto-configure a monitor from a plain-English goal**, **suggest what to watch for**, and **summarise** a monitor's recent activity.
+- **Group monitoring & price comparison** — group related pages (the **same product across retailers**) and watch them together: a side-by-side comparison with the **cheapest highlighted**, all prices on **one chart**, and a single group alert ("tell me when the cheapest drops below £X"). Groups aren't just for price — choose **back-in-stock**, **any-change**, or a **custom AI intent** that's combined with each page's own.
+- **AI triage & setup** *(optional)* — an OpenRouter-hosted model (or any OpenAI-compatible / **Ollama** endpoint) writes a one-line **headline**, classifies the change (price / stock / content / cosmetic …), and rates **importance** so low-value churn is muted. It also **builds monitors and groups from a plain-English goal** ("track this across these retailers and alert me under £250"), **suggests what to watch for**, and **summarises** recent activity.
 - **Value tracking & trends** — extract a numeric value (price, stock count, rating) each check, chart it over time, and fire **threshold alerts** ("tell me when it drops below £300").
 - **Notifications** — in-app **inbox**, **Web Push**, **HMAC-signed webhooks**, **Email/SMTP**, **Telegram**, **Discord**, and **ntfy** — with **hourly digests** and **quiet hours** so non-urgent changes batch up instead of pinging you at 3am.
 - **Reliability** — per-check render/detect timeouts, retries, **auto-pause** after repeated failures (with a recovery alert), and **adaptive intervals** that speed up on active pages and back off on quiet ones.
 - **Anti-bot & authenticated sites** — Camoufox stealth rendering; blocked / challenge pages (DataDome, Cloudflare, PerimeterX, …) are detected and surfaced instead of silently failing; **paste Cookie Editor JSON** to reuse a logged-in session or clear a bot check; recorded **login flows** and **per-monitor proxies**. Credentials and sessions are **encrypted at rest**.
 - **Noise control** — ignore selectors, ReDoS-safe regex ignore patterns, a per-monitor minimum-change threshold, **and a global visual noise floor** that absorbs anti-aliasing, lazy-loaded images, and carousels so trivial pixel churn never alerts you.
-- **Organise & integrate** — **tags** + search, JSON **import/export**, a token-authed **REST API**, an **RSS** feed, and a **browser extension** to add the current tab in one click.
+- **Accounts, 2FA & admin** — multi-user with self-service **profile / password** changes and **TOTP two-factor auth** (authenticator app), plus an **admin panel** to create/manage users, toggle self-service signup, and **require 2FA** for everyone.
+- **Organise & integrate** — **groups**, **tags** + search, three **dashboard views** (large / compact / list), JSON **import/export**, a token-authed **REST API**, an **RSS** feed, and a **browser extension** to add the current tab in one click.
 - **Futuristic, fully-responsive UI** — dark glassmorphic design that works on desktop and mobile (pinch-to-zoom snapshots), with an **Auto / Full / Lite** effects toggle for devices without GPU acceleration.
 - **Single container** — SQLite + a content-addressed blob store. No Redis, no Postgres, no external services.
 
 ## 📸 Screenshots
 
-| Dashboard | Monitor detail (diff + history) |
+| Dashboard — monitors & groups | Grouped price comparison |
 |---|---|
-| ![Dashboard](docs/screenshots/dashboard.png) | ![Monitor detail](docs/screenshots/detail.png) |
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Group price comparison](docs/screenshots/group-prices.png) |
+
+| Track trends across sources | AI-triaged change inbox |
+|---|---|
+| ![Combined price chart](docs/screenshots/group-trends.png) | ![Change inbox](docs/screenshots/inbox.png) |
 
 <p align="center"><img alt="Mobile" src="docs/screenshots/mobile.png" width="300"></p>
 
@@ -135,12 +141,12 @@ watcher/
   netsec.py     SSRF guards (scheme + resolved-IP validation, per-redirect-hop)
   engines/      Playwright + Camoufox behind one interface
   detection/    text / visual / element / structured diffing + noise control
-  ai/           OpenRouter/Ollama triage, value extraction, auto-config, summaries
-  auth/         users, password hashing (argon2), credential crypto, login flows
+  ai/           OpenRouter/Ollama triage, value extraction, monitor/group setup, summaries
+  auth/         users, argon2 hashing, credential crypto, TOTP 2FA, login flows
   scheduler/    APScheduler jobs (checks, prune, hourly digest, adaptive retune)
   notify/       inbox, push, webhook, email, telegram, discord, ntfy + digests
   storage/      content-addressed blobs + retention
-  web/          FastAPI routes (incl. REST API + RSS), Jinja2 templates, assets
+  web/          FastAPI routes — monitors, groups, account, admin, REST API + RSS
 extension/      one-click "add this tab" browser extension
 ```
 
@@ -149,7 +155,7 @@ extension/      one-click "add this tab" browser extension
 Watcher is built to be exposed to the public internet behind a TLS-terminating reverse proxy. Key controls:
 
 - **Secrets**: a strong `WATCHER_SECRET_KEY` is **required** — the app refuses to start with the dev placeholder (override in local dev only with `WATCHER_ALLOW_INSECURE=1`). Credentials, session state, and global API keys (OpenRouter/SMTP/Telegram) are encrypted at rest with Fernet (key HKDF-derived from the secret, or set `WATCHER_ENCRYPTION_KEY` explicitly in prod). API tokens are stored **hashed** (shown once on generation).
-- **Accounts**: self-registration is closed by default (`WATCHER_REGISTRATION_OPEN=false`) — only the first/bootstrap admin account can self-register; create further users as admin or open registration deliberately. Login/registration are **rate-limited** per IP. Global settings are gated behind an **admin** role.
+- **Accounts & 2FA**: multi-user with an **admin** role that gates global settings + the **user-management** panel (create/disable/delete users, reset passwords, reset a user's 2FA). Self-registration is **closed by default** (admins toggle it, or open it via `WATCHER_REGISTRATION_OPEN`); only the bootstrap account self-registers otherwise. Optional **TOTP two-factor auth** per user, which admins can **require for everyone**. Login/registration/2FA are **rate-limited** per IP; TOTP secrets are encrypted at rest.
 - **SSRF**: every render target, proxy, login URL, webhook, and ntfy/Discord destination is scheme-checked and its resolved IPs validated — private / loopback / link-local / CGNAT / metadata ranges (incl. IPv4-mapped & NAT64 forms) are blocked, re-checked just before each render. Set `WATCHER_ALLOW_PRIVATE_TARGETS=true` only on trusted networks that intentionally monitor internal hosts. A real browser re-resolves DNS, so for untrusted exposure **also place the renderer behind an egress firewall** that blocks internal ranges.
 - **Web hardening**: a fail-closed Origin/Referer **CSRF** guard on cookie-authed writes; **security headers** (X-Frame-Options, nosniff, Referrer-Policy, Permissions-Policy, HSTS when `WATCHER_SECURE_COOKIES=true`); request **body-size limit**; CDN scripts pinned with **SRI**; API docs (`/docs`) off by default (`WATCHER_ENABLE_DOCS`).
 - **Abuse / DoS**: per-user monitor cap, manual-check cooldown, ReDoS-safe regex (timeout), bounded screenshot diffing, capped change retention, and outbound timeouts on every notifier.

@@ -13,7 +13,7 @@
       <p class="text-sm text-slate-400 mt-1">
         <span class="pill">{{ kind_label.get(group.kind, group.kind) }}</span>
         {{ rows|length }} page{{ 's' if rows|length != 1 }}
-        {% if is_price and group.target_value is not none %}· alert when cheapest below {{ group.target_value|round(2) }}{% endif %}
+        {% if is_price and group.target_value is not none %}· alert when {{ 'cheapest' if group.target_dir != 'above' else 'best' }} {{ group.target_dir }} {{ group.target_value|round(2) }}{% endif %}
       </p>
     </div>
     {% if is_price and best is not none %}
