@@ -136,9 +136,14 @@ async def run_digests(session: AsyncSession) -> int:
                 body = f"{len(rows)} update(s) since your last digest:\n\n" + "\n".join(lines)
                 subject = f"Watcher digest — {len(rows)} update(s)"
 
+                # "Deliverable" must mirror the actual send guards (both the
+                # user destination AND the app-side transport config) — otherwise
+                # a partially-configured transport leaves changes un-consumed forever.
                 has_external = bool(
-                    (app.smtp_host and user.email) or user.telegram_chat_id
-                    or user.ntfy_topic or user.discord_webhook
+                    (app.smtp_host and app.smtp_from and user.email)
+                    or (get_telegram_token(app) and user.telegram_chat_id)
+                    or (app.ntfy_server and user.ntfy_topic)
+                    or user.discord_webhook
                 )
                 delivered = False
                 if app.smtp_host:

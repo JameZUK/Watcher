@@ -120,6 +120,17 @@ def test_netsec_url_guards():
     assert validate_public_url("http://10.0.0.5/")
 
 
+def test_ignore_pattern_redos_is_bounded():
+    import time
+    from watcher.detection.noise import normalize_text
+    t = time.time()
+    # A catastrophic-backtracking pattern must not hang (bounded by the regex timeout).
+    normalize_text("a" * 80 + "!", ignore_patterns=[r"(a+)+$"])
+    assert time.time() - t < 5.0
+    # invalid regex still falls back to literal removal (no crash)
+    assert "(this" not in normalize_text("keep (this stuff", ignore_patterns=["(this"])
+
+
 def test_safe_patterns():
     from watcher.web.routes.monitors import _safe_patterns
     assert _safe_patterns(["(a+", "valid.*", "x" * 300, "\\d{2}:\\d{2}"]) == ["valid.*", "\\d{2}:\\d{2}"]

@@ -4,6 +4,25 @@ from __future__ import annotations
 
 import re
 
+try:  # the `regex` module supports a per-call timeout — defuses ReDoS
+    import regex as _rx
+    _RX_TIMEOUT = 2.0
+except ImportError:  # graceful fallback (no interruptibility)
+    _rx = None
+    _RX_TIMEOUT = None
+
+
+def _apply_ignore(pattern: str, text: str) -> str:
+    """Apply a user ignore-regex with a time budget; on an invalid or
+    pathological pattern, fall back to literal substring removal (no backtrack)."""
+    try:
+        if _rx is not None:
+            return _rx.sub(pattern, "", text, timeout=_RX_TIMEOUT)
+        return re.sub(pattern, "", text)
+    except Exception:  # noqa: BLE001 — invalid regex or timeout
+        return text.replace(pattern, "")
+
+
 _WS = re.compile(r"[ \t\f\v]+")
 _BLANKLINES = re.compile(r"\n{3,}")
 # Loosely matches numbers, including currency/decimals/thousands separators.
@@ -22,11 +41,7 @@ def normalize_text(
     out = text
 
     for pat in ignore_patterns or []:
-        try:
-            out = re.sub(pat, "", out)
-        except re.error:
-            # Treat an invalid regex as a literal substring.
-            out = out.replace(pat, "")
+        out = _apply_ignore(pat, out)
 
     if numbers:
         out = _NUMBER.sub("#", out)

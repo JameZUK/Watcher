@@ -22,3 +22,6 @@ beautifulsoup4==4.12.3
 # stdlib html.parser if it is unavailable (e.g. on very new Python versions
 # without prebuilt wheels). Uncomment to enable.
 # lxml==5.3.0
+
+# Interruptible regex (per-call timeout) to defuse ReDoS in user ignore-patterns
+regex==2024.11.6
