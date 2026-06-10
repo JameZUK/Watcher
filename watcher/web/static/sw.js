@@ -5,8 +5,8 @@ self.addEventListener('push', (event) => {
   const title = data.title || 'Watcher';
   const options = {
     body: data.body || 'A monitored page changed.',
-    icon: '/static/icon.png',
-    badge: '/static/icon.png',
+    icon: '/static/icon.svg',
+    badge: '/static/icon.svg',
     data: { url: data.url || '/' },
   };
   event.waitUntil(self.registration.showNotification(title, options));
