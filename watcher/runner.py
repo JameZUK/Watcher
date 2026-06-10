@@ -17,12 +17,65 @@ from .db import SessionLocal
 from .detection import detect
 from .detection.value import parse_number
 from .engines import RenderResult, render_monitor
-from .models import Change, Monitor, Snapshot, SnapshotStatus, utcnow
+from .models import Change, DetectionMode, Group, Monitor, Snapshot, SnapshotStatus, utcnow
 from .notify import dispatch, notify_monitor_alert
 from .storage import blobs
 
 # Importance ratings the AI considers "low value" and subject to the gating policy.
 _LOW_VALUE = {"low", "noise"}
+
+
+async def _maybe_group_alert(session, monitor) -> None:
+    """If this monitor is in a price group with a target, re-evaluate the BEST
+    value across the group and fire one deduped alert when it crosses."""
+    if not monitor.group_id:
+        return
+    group = await session.get(Group, monitor.group_id)
+    if group is None or group.target_value is None or group.target_dir not in ("below", "above"):
+        return
+    below = group.target_dir == "below"
+
+    member_ids = (await session.execute(
+        select(Monitor.id).where(Monitor.group_id == group.id))).scalars().all()
+    best, best_id = None, None
+    for mid in member_ids:
+        v = (await session.execute(
+            select(Snapshot.numeric_value).where(
+                Snapshot.monitor_id == mid, Snapshot.numeric_value.is_not(None),
+                Snapshot.status == SnapshotStatus.ok)
+            .order_by(Snapshot.taken_at.desc()).limit(1))).scalar_one_or_none()
+        if v is None:
+            continue
+        if best is None or (below and v < best) or (not below and v > best):
+            best, best_id = v, mid
+    if best is None:
+        return
+
+    crossed = (below and best < group.target_value) or (not below and best > group.target_value)
+    if crossed and not group.alert_active:
+        group.alert_active = True
+        bestmon = await session.get(Monitor, best_id)
+        to_snap = (await session.execute(
+            select(Snapshot.id).where(Snapshot.monitor_id == best_id, Snapshot.status == SnapshotStatus.ok)
+            .order_by(Snapshot.taken_at.desc()).limit(1))).scalar_one_or_none()
+        label = (await session.execute(
+            select(Snapshot.value_label).where(
+                Snapshot.monitor_id == best_id, Snapshot.numeric_value.is_not(None))
+            .order_by(Snapshot.taken_at.desc()).limit(1))).scalar_one_or_none() or f"{best:g}"
+        word = "dropped below" if below else "rose above"
+        which = "cheapest" if below else "best"
+        msg = (f"{group.name}: {which} now {label} at {_host(bestmon.url)} — "
+               f"{word} your target of {group.target_value:g}.")
+        if to_snap and bestmon is not None:
+            ch = Change(monitor_id=best_id, to_snapshot_id=to_snap,
+                        change_type=DetectionMode.auto, summary=msg, ai_headline=msg,
+                        ai_category="price", ai_importance="high", magnitude=0.0)
+            session.add(ch)
+            bestmon.last_change_at = utcnow()
+            await session.flush()
+            await dispatch(session, bestmon, ch)
+    elif not crossed and group.alert_active:
+        group.alert_active = False   # recovered — re-arm for the next crossing
 
 
 def _target_block_reason(monitor) -> str | None:
@@ -393,6 +446,10 @@ async def check_monitor(monitor_id: int) -> None:
                 # "silent": record the change but don't push/webhook for low value.
                 if not (low_value and policy == "silent"):
                     await dispatch(session, monitor, change)
+
+            # Group-level alert: cheapest/best across the price group crosses target.
+            if monitor.track_value and monitor.group_id:
+                await _maybe_group_alert(session, monitor)
 
             if monitor.adaptive_interval:
                 _adapt_interval(monitor, bool(change_result.changed or threshold_msg))

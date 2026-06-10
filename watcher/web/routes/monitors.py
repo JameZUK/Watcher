@@ -151,6 +151,8 @@ def _apply_form(monitor: Monitor, form) -> None:
     # Organization
     monitor.tags = [t.strip() for t in (form.get("tags") or "").split(",") if t.strip()][:10]
     monitor.adaptive_interval = _bool(form, "adaptive_interval")
+    gid = form.get("group_id")
+    monitor.group_id = int(gid) if gid and str(gid).isdigit() else None
 
 
 def _validate_targets(monitor: Monitor) -> str | None:
@@ -169,6 +171,12 @@ def _validate_targets(monitor: Monitor) -> str | None:
     if (e := validate_proxy(monitor.proxy)):
         return f"Proxy — {e}"
     return None
+
+
+def _validate_group(monitor: Monitor, user: User, groups) -> None:
+    """Null out group_id unless it's one of the user's own groups (anti-IDOR)."""
+    if monitor.group_id is not None and monitor.group_id not in {g.id for g in groups}:
+        monitor.group_id = None
 
 
 def _build_login_flow(monitor: Monitor, form) -> LoginFlow | None:
@@ -312,18 +320,27 @@ async def _page_text_for_suggest(session, user, url, monitor_id):
 # --- routes ----------------------------------------------------------------
 
 
-def _form_response(request, user, monitor, *, error=None, cookies_json="", status=200):
+def _form_response(request, user, monitor, *, error=None, cookies_json="", status=200, groups=()):
     return templates.TemplateResponse(
         request, "monitor_form.html",
         {"user": user, "monitor": monitor, "engines": list(Engine),
-         "modes": list(DetectionMode), "error": error, "cookies_json": cookies_json},
+         "modes": list(DetectionMode), "error": error, "cookies_json": cookies_json,
+         "groups": groups},
         status_code=status,
     )
 
 
+async def _user_groups(session, user):
+    from ...models import Group
+    return (await session.execute(
+        select(Group).where(Group.user_id == user.id).order_by(Group.name)
+    )).scalars().all()
+
+
 @router.get("/monitors/new")
-async def new_monitor(request: Request, user: User = Depends(get_current_user)):
-    return _form_response(request, user, None)
+async def new_monitor(request: Request, user: User = Depends(get_current_user),
+                      session: AsyncSession = Depends(get_session)):
+    return _form_response(request, user, None, groups=await _user_groups(session, user))
 
 
 @router.post("/monitors/ai-suggest")
@@ -530,23 +547,25 @@ async def create_monitor(
     session: AsyncSession = Depends(get_session),
 ):
     form = await request.form()
+    groups = await _user_groups(session, user)
     cap = settings.max_monitors_per_user
     if cap:
         count = (await session.execute(
             select(func.count()).select_from(Monitor).where(Monitor.user_id == user.id)
         )).scalar_one()
         if count >= cap:
-            return _form_response(request, user, None,
+            return _form_response(request, user, None, groups=groups,
                                   error=f"Monitor limit reached ({cap}). Delete some first.", status=400)
     monitor = Monitor(user_id=user.id)
     _apply_form(monitor, form)
+    _validate_group(monitor, user, groups)
     url_err = _validate_targets(monitor)
     if url_err:
-        return _form_response(request, user, None, error=url_err, status=400)
+        return _form_response(request, user, None, error=url_err, status=400, groups=groups)
     try:
         flow = _build_login_flow(monitor, form)
     except ValueError as exc:
-        return _form_response(request, user, None, error=str(exc),
+        return _form_response(request, user, None, error=str(exc), groups=groups,
                               cookies_json=form.get("session_cookies_json", ""), status=400)
     session.add(monitor)
     await session.flush()
@@ -569,7 +588,7 @@ async def edit_monitor(
     session: AsyncSession = Depends(get_session),
 ):
     monitor = await _owned_monitor(session, user, monitor_id)
-    return _form_response(request, user, monitor)
+    return _form_response(request, user, monitor, groups=await _user_groups(session, user))
 
 
 @router.post("/monitors/{monitor_id}")
@@ -581,15 +600,17 @@ async def update_monitor(
 ):
     monitor = await _owned_monitor(session, user, monitor_id)
     form = await request.form()
+    groups = await _user_groups(session, user)
     _apply_form(monitor, form)
+    _validate_group(monitor, user, groups)
     url_err = _validate_targets(monitor)
     if url_err:
-        return _form_response(request, user, monitor, error=url_err, status=400)
+        return _form_response(request, user, monitor, error=url_err, status=400, groups=groups)
     try:
         flow = _build_login_flow(monitor, form)
     except ValueError as exc:
         # Don't commit the in-memory edits; re-render with the submitted values.
-        return _form_response(request, user, monitor, error=str(exc),
+        return _form_response(request, user, monitor, error=str(exc), groups=groups,
                               cookies_json=form.get("session_cookies_json", ""), status=400)
     if flow is not None and flow.monitor_id is None:
         flow.monitor_id = monitor.id

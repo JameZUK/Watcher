@@ -80,6 +80,16 @@
           <label class="block text-sm font-medium text-slate-300 mb-1.5">Tags <span class="text-slate-500 font-normal">· comma-separated</span></label>
           {{ field('tags', (m.tags|join(', ')) if m and m.tags else '', placeholder='shopping, work') }}
         </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-1.5">Group <span class="text-slate-500 font-normal">· optional</span></label>
+          <select name="group_id" class="field">
+            <option value="">— none —</option>
+            {% for g in groups %}
+            <option value="{{ g.id }}" {{ 'selected' if m and m.group_id==g.id else '' }}>{{ g.name }}</option>
+            {% endfor %}
+          </select>
+          <p class="text-xs text-slate-500 mt-1">Compare prices across a group. Create groups from the dashboard.</p>
+        </div>
         <label class="flex items-center gap-2.5 self-end pb-2.5 text-sm text-slate-300">
           <input type="checkbox" name="adaptive_interval" {{ 'checked' if m and m.adaptive_interval else '' }} class="rounded bg-white/10 border-white/20 text-brand-500">
           Adaptive interval <span class="text-slate-500 text-xs">(auto-tune cadence)</span>

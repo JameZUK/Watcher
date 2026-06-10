@@ -55,6 +55,7 @@ _ADDED_COLUMNS = {
         "track_value": "BOOLEAN DEFAULT 0", "value_threshold": "FLOAT", "value_threshold_dir": "VARCHAR(8)",
         "consecutive_failures": "INTEGER DEFAULT 0",
         "tags": "JSON", "adaptive_interval": "BOOLEAN DEFAULT 0",
+        "group_id": "INTEGER",
     },
     "app_settings": {
         "smtp_host": "VARCHAR(255)", "smtp_port": "INTEGER DEFAULT 587", "smtp_user": "VARCHAR(255)",

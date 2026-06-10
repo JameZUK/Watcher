@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}{{ group.name }} · Watcher{% endblock %}
+{% block content %}
+<div class="max-w-4xl mx-auto">
+  <a href="/" class="inline-flex items-center gap-1 text-sm text-slate-400 hover:text-white mb-4">
+    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>Dashboard
+  </a>
+
+  <div class="flex flex-wrap items-end justify-between gap-3 mb-6">
+    <div>
+      <h1 class="text-2xl sm:text-3xl font-bold tracking-tight text-white">{{ group.name }}</h1>
+      <p class="text-sm text-slate-400 mt-1">
+        {{ rows|length }} page{{ 's' if rows|length != 1 }}
+        {% if group.target_value is not none %}· alert when {{ 'cheapest' if group.target_dir != 'above' else 'best' }} {{ group.target_dir }} {{ group.target_value|round(2) }}{% endif %}
+      </p>
+    </div>
+    {% if best is not none %}
+    {% set hit = group.target_value is not none and ((group.target_dir=='below' and best < group.target_value) or (group.target_dir=='above' and best > group.target_value)) %}
+    <div class="text-right">
+      <div class="text-[11px] uppercase tracking-wide text-slate-500">{{ 'cheapest' if group.target_dir != 'above' else 'best' }} right now</div>
+      <div class="text-3xl font-bold {{ 'text-emerald-400' if hit else 'text-white' }}">
+        {% for r in rows %}{% if r.monitor.id == best_id %}{{ r.label }}{% endif %}{% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Comparison table -->
+  <section class="glass rounded-2xl overflow-hidden mb-5">
+    <table class="w-full text-sm">
+      <thead class="text-xs text-slate-500 uppercase tracking-wide">
+        <tr class="border-b border-white/5">
+          <th class="text-left font-medium px-4 py-3">Source</th>
+          <th class="text-left font-medium px-4 py-3">Price</th>
+          <th class="text-left font-medium px-4 py-3 hidden sm:table-cell">Updated</th>
+          <th class="px-4 py-3"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}{% set m = r.monitor %}
+        <tr class="border-b border-white/5 last:border-0 {{ 'bg-emerald-500/[.06]' if best_id==m.id and r.value is not none else '' }}">
+          <td class="px-4 py-3">
+            <a href="/monitors/{{ m.id }}" class="inline-flex items-center gap-2 hover:underline">
+              <span class="dot {{ 'dot-live' if m.enabled else 'dot-paused' }} shrink-0"></span>
+              <span class="font-medium text-brand-300">{{ m.url|url_host }}</span>
+            </a>
+            <div class="text-xs text-slate-500 truncate max-w-[16rem] ml-4">{{ m.name }}</div>
+          </td>
+          <td class="px-4 py-3">
+            <span class="font-semibold text-white">{{ r.label or '—' }}</span>
+            {% if best_id==m.id and r.value is not none %}<span class="pill pill-amber ml-1.5">best</span>{% endif %}
+          </td>
+          <td class="px-4 py-3 text-slate-500 hidden sm:table-cell">{{ r.at|timeago if r.at else 'never' }}</td>
+          <td class="px-4 py-3 text-right">
+            <form method="post" action="/groups/{{ group.id }}/remove" onsubmit="return confirm('Remove this page from the group?')">
+              <input type="hidden" name="monitor_id" value="{{ m.id }}">
+              <button class="text-xs text-slate-500 hover:text-red-300">Remove</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+        {% if not rows %}
+        <tr><td colspan="4" class="px-4 py-8 text-center text-sm text-slate-500">No pages in this group yet — add one below.</td></tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Add a page -->
+  {% if others %}
+  <form method="post" action="/groups/{{ group.id }}/add" class="flex flex-wrap items-center gap-2 mb-6">
+    <select name="monitor_id" required class="field !py-2 flex-1 min-w-[12rem]">
+      <option value="">Add a page to this group…</option>
+      {% for m in others %}<option value="{{ m.id }}">{{ m.name or m.url }} ({{ m.url|url_host }})</option>{% endfor %}
+    </select>
+    <button class="btn btn-ghost text-sm">Add</button>
+  </form>
+  {% endif %}
+
+  <!-- Combined price chart (rendered server-side) -->
+  {% if chart %}
+  <section class="glass rounded-2xl p-5 mb-5">
+    <h2 class="font-semibold text-white mb-3">Price over time</h2>
+    <svg viewBox="0 0 800 220" class="w-full" style="height:240px" preserveAspectRatio="none">
+      {% for s in chart %}
+      <polyline points="{{ s.points }}" stroke="{{ s.color }}" fill="none" stroke-width="2" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>
+      {% for d in s.dots %}<circle cx="{{ d[0] }}" cy="{{ d[1] }}" r="2.5" fill="{{ s.color }}"/>{% endfor %}
+      {% endfor %}
+    </svg>
+    <div class="flex flex-wrap gap-x-4 gap-y-1.5 mt-3 text-xs">
+      {% for s in chart %}
+      <span class="inline-flex items-center gap-1.5 text-slate-400">
+        <span class="inline-block h-2.5 w-2.5 rounded-full" style="background:{{ s.color }}"></span>{{ s.name }}
+      </span>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <!-- Settings: rename + alert target + delete -->
+  <section class="glass rounded-2xl p-5">
+    <h2 class="font-semibold text-white mb-4">Group settings</h2>
+    <form method="post" action="/groups/{{ group.id }}" class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-slate-300 mb-1.5">Name</label>
+        <input name="name" value="{{ group.name }}" required class="field">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-300 mb-1.5">Alert me when the {{ 'cheapest' if group.target_dir != 'above' else 'best' }} price is</label>
+        <div class="flex flex-wrap items-center gap-2">
+          <select name="target_dir" class="field !w-auto">
+            <option value="">— no group alert —</option>
+            <option value="below" {{ 'selected' if group.target_dir=='below' else '' }}>below</option>
+            <option value="above" {{ 'selected' if group.target_dir=='above' else '' }}>above</option>
+          </select>
+          <input type="number" step="any" name="target_value" value="{{ group.target_value if group.target_value is not none else '' }}" placeholder="250" class="field !w-32">
+        </div>
+        <p class="text-xs text-slate-500 mt-1.5">Fires once (high importance) when the best price across the group crosses this, and re-arms when it recovers.</p>
+      </div>
+      <button class="btn btn-primary text-sm">Save group</button>
+    </form>
+    <form method="post" action="/groups/{{ group.id }}/delete" class="mt-4 pt-4 border-t border-white/5"
+          onsubmit="return confirm('Delete this group? The pages stay, just ungrouped.')">
+      <button class="text-sm text-red-400 hover:text-red-300">Delete group</button>
+    </form>
+  </section>
+</div>
+{% endblock %}

@@ -100,5 +100,11 @@ async def dashboard(
             "all_tags": all_tags,
             "active_tag": tag,
             "query": q or "",
+            "groups": await _group_summaries(session, user),
         },
     )
+
+
+async def _group_summaries(session, user):
+    from .groups import list_groups
+    return await list_groups(session, user)

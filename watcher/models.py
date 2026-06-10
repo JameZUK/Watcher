@@ -142,6 +142,8 @@ class Monitor(Base):
     # Organization
     tags: Mapped[list] = mapped_column(JSON, default=list)
     adaptive_interval: Mapped[bool] = mapped_column(Boolean, default=False)  # auto-tune cadence
+    group_id: Mapped[int | None] = mapped_column(
+        ForeignKey("groups.id", ondelete="SET NULL"), default=None, index=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
@@ -158,6 +160,30 @@ class Monitor(Base):
     )
     login_flow: Mapped["LoginFlow | None"] = relationship(
         back_populates="monitor", cascade="all, delete-orphan", uselist=False
+    )
+    group: Mapped["Group | None"] = relationship(back_populates="monitors")
+
+
+class Group(Base):
+    """A collection of monitors watched together — e.g. the same product across
+    several retailers for price comparison + a single group-level alert."""
+
+    __tablename__ = "groups"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(255))
+    kind: Mapped[str] = mapped_column(String(16), default="price")
+    # Group-level threshold: alert when the BEST value across members crosses it
+    # ("below" → cheapest drops below target; "above" → highest rises above).
+    target_value: Mapped[float | None] = mapped_column(Float, default=None)
+    target_dir: Mapped[str | None] = mapped_column(String(8), default=None)  # below|above
+    alert_active: Mapped[bool] = mapped_column(Boolean, default=False)       # dedup: armed/fired
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    user: Mapped["User"] = relationship()
+    monitors: Mapped[list["Monitor"]] = relationship(
+        back_populates="group", order_by="Monitor.name",
     )
 
 
