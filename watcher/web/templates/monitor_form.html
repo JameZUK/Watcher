@@ -48,8 +48,17 @@
     <!-- Basics -->
     <section class="glass rounded-2xl p-5 sm:p-6 space-y-4">
       <div>
-        <label class="block text-sm font-medium text-slate-300 mb-1.5">URL to watch</label>
+        <div class="flex items-center justify-between gap-2 mb-1.5">
+          <label class="block text-sm font-medium text-slate-300">URL to watch</label>
+          <button type="button" @click="$dispatch('ai-suggest-url')"
+                  class="btn btn-ghost !py-1 !px-2.5 text-xs inline-flex items-center gap-1.5"
+                  title="Let the AI review this page and suggest what to watch for">
+            <svg viewBox="0 0 24 24" class="h-3.5 w-3.5 text-brand-400" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg>
+            AI suggest
+          </button>
+        </div>
         {{ field('url', m.url if m else (request.query_params.get('url') or ''), type='url', placeholder='https://example.com/page') }}
+        <p class="text-xs text-slate-500 mt-1">Enter a URL, then “AI suggest” reviews the page and proposes what to watch for.</p>
       </div>
       <div class="grid sm:grid-cols-2 gap-4">
         <div>
@@ -238,8 +247,9 @@
     </section>
 
     <!-- AI triage -->
-    <section class="glass rounded-2xl p-5 sm:p-6 space-y-4"
-             x-data='aiSection({ ai: {{ "true" if (m.ai_enabled if m else true) else "false" }}, intent: {{ (m.ai_watch_intent if m and m.ai_watch_intent else "")|tojson }}, monitorId: {{ m.id if m else "null" }} })'>
+    <section id="ai-triage" class="glass rounded-2xl p-5 sm:p-6 space-y-4"
+             x-data='aiSection({ ai: {{ "true" if (m.ai_enabled if m else true) else "false" }}, intent: {{ (m.ai_watch_intent if m and m.ai_watch_intent else "")|tojson }}, monitorId: {{ m.id if m else "null" }} })'
+             @ai-suggest-url.window="ai = true; $nextTick(() => generate(true))">
       <label class="flex items-center gap-2.5">
         <input type="checkbox" name="ai_enabled" x-model="ai" class="rounded bg-white/10 border-white/20 text-brand-500">
         <span class="font-semibold text-white">AI triage for this monitor</span>
@@ -345,9 +355,10 @@ function aiSection(opts){return {
       this.intent = (this.intent.trim() ? this.intent.trim() + '\n' : '') + l;
     }
   },
-  async generate(){
+  async generate(fromUrl){
     const url = (document.querySelector('input[name=url]')?.value || '').trim();
     if (!url){ this.error = 'Enter a URL to watch first.'; return; }
+    if (fromUrl) this.$el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     this.loading = true; this.error = ''; this.suggestions = [];
     try {
       const r = await fetch('/monitors/ai-suggest', {
@@ -355,7 +366,13 @@ function aiSection(opts){return {
         body: JSON.stringify({ url, monitor_id: this.monitorId }),
       });
       const d = await r.json();
-      if (d.ok) { this.suggestions = d.suggestions || []; if (!this.suggestions.length) this.error = 'No suggestions came back.'; }
+      if (d.ok) {
+        this.suggestions = d.suggestions || [];
+        if (!this.suggestions.length) this.error = 'No suggestions came back.';
+        // Prefill the name from the page title if the user left it blank.
+        const nameEl = document.querySelector('input[name=name]');
+        if (d.title && nameEl && !nameEl.value.trim()) nameEl.value = d.title;
+      }
       else this.error = d.error || 'Failed to generate suggestions.';
     } catch (e) { this.error = 'Request failed.'; }
     this.loading = false;

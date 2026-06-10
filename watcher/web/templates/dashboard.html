@@ -85,7 +85,7 @@
         <span class="dot {{ 'dot-err' if m.id in blocked else ('dot-live' if m.enabled else 'dot-paused') }} mt-1.5 shrink-0"></span>
         <div class="min-w-0">
           <h3 class="font-semibold text-white truncate group-hover:text-brand-400 transition">{{ name }}</h3>
-          <p class="text-xs text-slate-500 truncate">{{ m.url }}</p>
+          <p class="text-xs truncate" title="{{ m.url }}"><span class="text-slate-400">{{ m.url|url_host }}</span><span class="text-slate-600">{{ m.url|url_path_short(28) }}</span></p>
         </div>
       </div>
       <div class="mt-auto flex items-center justify-between text-xs text-slate-500">

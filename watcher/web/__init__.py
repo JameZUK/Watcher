@@ -42,6 +42,35 @@ def _interval(seconds: int) -> str:
     return f"{seconds // 60}m"
 
 
+def _url_host(url: str | None) -> str:
+    """The bare hostname (no scheme, no www.) — the most pertinent bit of a URL."""
+    from urllib.parse import urlparse
+    try:
+        host = (urlparse((url or "").strip()).hostname or "").removeprefix("www.")
+    except ValueError:
+        host = ""
+    return host or (url or "")
+
+
+def _url_path_short(url: str | None, max_len: int = 40) -> str:
+    """A compact path/query tail to pair with the host, e.g. '/JBLBB3WIFI.html?…'.
+    Empty for a bare domain. Long paths are middle-ellipsised."""
+    from urllib.parse import urlparse
+    try:
+        p = urlparse((url or "").strip())
+    except ValueError:
+        return ""
+    path = p.path or ""
+    if path in ("", "/"):
+        return "?…" if p.query else ""
+    if len(path) > max_len:
+        head, tail = path[: max_len // 2], path[-(max_len // 2 - 1):]
+        path = f"{head}…{tail}"
+    return path + ("?…" if p.query else "")
+
+
 templates.env.filters["timeago"] = _timeago
 templates.env.filters["pct"] = _pct
 templates.env.filters["interval"] = _interval
+templates.env.filters["url_host"] = _url_host
+templates.env.filters["url_path_short"] = _url_path_short

@@ -345,7 +345,7 @@ async def ai_suggest_watch(
     suggestions = await suggest_watch_items(api_key=key, model=app.ai_model, base_url=app.ai_base_url, url=url, title=title, page_text=text)
     if not suggestions:
         return JSONResponse({"ok": False, "error": "No suggestions came back — try again."}, status_code=502)
-    return JSONResponse({"ok": True, "suggestions": suggestions})
+    return JSONResponse({"ok": True, "suggestions": suggestions, "title": (title or "").strip()})
 
 
 @router.post("/monitors/ai-create")
