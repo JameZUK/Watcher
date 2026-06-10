@@ -72,14 +72,11 @@
         <defs><linearGradient id="vgrad" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stop-color="rgba(129,140,248,.35)"/><stop offset="100%" stop-color="rgba(129,140,248,0)"/>
         </linearGradient></defs>
-        <template x-if="thresholdY !== null">
-          <line x1="0" :y1="thresholdY" x2="600" :y2="thresholdY" stroke="rgba(248,113,113,.7)" stroke-width="1" stroke-dasharray="5 4" vector-effect="non-scaling-stroke"/>
-        </template>
+        <!-- threshold line (hidden via opacity when unset — avoids x-if inside SVG) -->
+        <line x1="0" x2="600" :y1="thresholdY === null ? -100 : thresholdY" :y2="thresholdY === null ? -100 : thresholdY"
+              :opacity="thresholdY === null ? 0 : 1" stroke="rgba(248,113,113,.7)" stroke-width="1" stroke-dasharray="5 4" vector-effect="non-scaling-stroke"/>
         <polygon :points="areaPoly" fill="url(#vgrad)"/>
         <polyline :points="poly" fill="none" stroke="#818cf8" stroke-width="2" vector-effect="non-scaling-stroke"/>
-        <template x-for="(p,i) in points" :key="i">
-          <circle :cx="p.cx" :cy="p.cy" r="2" fill="#c7d2fe"/>
-        </template>
       </svg>
       <div class="flex justify-between text-xs text-slate-500 mt-1">
         <span x-text="'min ' + min.toFixed(2)"></span>
