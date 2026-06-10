@@ -304,8 +304,19 @@ async def check_monitor(monitor_id: int) -> None:
                     monitor, baseline, snap.numeric_value, snap.value_label,
                 )
 
-            # Diffing (PIL/pixelmatch + blob reads) is CPU/IO heavy — off-thread.
-            change_result = await asyncio.to_thread(detect, monitor, prev, result)
+            # Diffing (PIL/pixelmatch + blob reads + user-supplied ignore regex)
+            # is CPU/IO heavy and could hang on a pathological pattern — off-thread
+            # with a hard ceiling so it can't pin the pipeline.
+            try:
+                change_result = await asyncio.wait_for(
+                    asyncio.to_thread(detect, monitor, prev, result),
+                    timeout=settings.detect_timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                logging.getLogger("watcher").warning(
+                    "detect() timed out for monitor %s (check ignore_patterns)", monitor.id)
+                await session.commit()  # keep the captured snapshot; skip change detection
+                return
             if change_result.changed or threshold_msg:
                 # AI triage only when there's a real content change to summarise.
                 triage = await _maybe_triage(app, monitor, change_result, result) if change_result.changed else None

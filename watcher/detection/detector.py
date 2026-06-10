@@ -77,7 +77,9 @@ def detect(monitor: Monitor, prev: Snapshot | None, current: RenderResult) -> Ch
         after = current.html or ""
         td = structured.diff_html(before, after)
     elif mode == DetectionMode.json:
-        before = blobs.get_text(prev.html_blob) if prev.html_blob else (prev.rendered_text or "")
+        # Both sides must be the canonical (normalized, sorted) JSON text — for a
+        # JSON endpoint that's rendered_text, not the browser-wrapped html_blob.
+        before = prev.rendered_text or ""
         after = current.rendered_text or current.html or ""
         td = structured.diff_json(before, after)
     else:  # text

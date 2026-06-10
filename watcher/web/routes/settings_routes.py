@@ -199,9 +199,12 @@ async def push_subscribe(
     session: AsyncSession = Depends(get_session),
 ):
     data = await request.json()
-    endpoint = data.get("endpoint")
-    keys = data.get("keys", {})
-    if not endpoint or "p256dh" not in keys or "auth" not in keys:
+    endpoint = (data.get("endpoint") or "").strip()
+    keys = data.get("keys", {}) if isinstance(data.get("keys"), dict) else {}
+    # Push endpoints are always https URLs; bound the length (column is 2048).
+    if (not endpoint.startswith("https://") or len(endpoint) > 2048
+            or not keys.get("p256dh") or not keys.get("auth")
+            or len(str(keys.get("p256dh"))) > 255 or len(str(keys.get("auth"))) > 255):
         return JSONResponse({"ok": False, "error": "invalid subscription"}, status_code=400)
 
     existing = (

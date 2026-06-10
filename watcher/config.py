@@ -52,6 +52,7 @@ class Settings(BaseSettings):
     render_retries: int = Field(default=1)              # extra render attempts on transient failure
     retry_backoff_seconds: float = Field(default=3.0)
     auto_pause_after_failures: int = Field(default=6)   # 0 disables auto-pause
+    detect_timeout_seconds: int = Field(default=20)     # ceiling on diffing (regex-DoS guard)
 
     # Screenshot quality / device emulation.
     screenshot_scale: int = Field(default=2)        # device pixel ratio (retina-crisp)

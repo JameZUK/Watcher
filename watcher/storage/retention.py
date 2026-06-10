@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import timedelta
+from datetime import timedelta, timezone
 
 from sqlalchemy import delete, select
 
@@ -51,7 +51,11 @@ async def prune() -> int:
             for idx, (sid, taken_at) in enumerate(rows):
                 if sid in referenced:
                     continue
-                if taken_at < cutoff or idx >= settings.retention_max_snapshots:
+                # SQLite can hand back naive datetimes — treat as UTC so the
+                # comparison against the tz-aware cutoff doesn't raise.
+                if taken_at is not None and taken_at.tzinfo is None:
+                    taken_at = taken_at.replace(tzinfo=timezone.utc)
+                if (taken_at is not None and taken_at < cutoff) or idx >= settings.retention_max_snapshots:
                     to_delete.append(sid)
 
         if to_delete:

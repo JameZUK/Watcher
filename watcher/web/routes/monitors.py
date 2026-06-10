@@ -69,6 +69,21 @@ def _bool(form, key: str) -> bool:
     return form.get(key) in ("on", "true", "1", "yes")
 
 
+def _safe_patterns(patterns: list[str]) -> list[str]:
+    """Keep only valid, bounded regexes — drop ones that don't compile or are
+    pathologically long, to limit ReDoS risk from user-supplied ignore_patterns."""
+    out: list[str] = []
+    for p in patterns[:25]:
+        if len(p) > 200:
+            continue
+        try:
+            re.compile(p)
+        except re.error:
+            continue
+        out.append(p)
+    return out
+
+
 def _clamp_int(form, key: str, default: int, lo: int, hi: int) -> int:
     """Parse a form int, falling back to default, clamped to [lo, hi].
 
@@ -89,9 +104,12 @@ def _apply_form(monitor: Monitor, form) -> None:
     monitor.detection_mode = DetectionMode(form.get("detection_mode") or "text")
     monitor.selector = (form.get("selector") or "").strip() or None
     monitor.selector_attr = (form.get("selector_attr") or "").strip() or None
-    monitor.ignore_selectors = _lines(form.get("ignore_selectors", ""))
-    monitor.ignore_patterns = _lines(form.get("ignore_patterns", ""))
-    monitor.min_change_threshold = float(form.get("min_change_threshold") or 0) / 100.0
+    monitor.ignore_selectors = _lines(form.get("ignore_selectors", ""))[:50]
+    monitor.ignore_patterns = _safe_patterns(_lines(form.get("ignore_patterns", "")))
+    try:
+        monitor.min_change_threshold = max(0.0, min(1.0, float(form.get("min_change_threshold") or 0) / 100.0))
+    except (ValueError, TypeError):
+        monitor.min_change_threshold = 0.0
     monitor.normalize_whitespace = _bool(form, "normalize_whitespace")
     monitor.normalize_numbers = _bool(form, "normalize_numbers")
     monitor.wait_until = form.get("wait_until") if form.get("wait_until") in (

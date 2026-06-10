@@ -58,7 +58,7 @@ def create_app() -> FastAPI:
         origin unsafe requests by Origin/Referer. The /api/* routes are token-
         authed (no ambient cookie) so they're exempt; requests with no Origin/
         Referer (curl, server-to-server) are allowed."""
-        if request.method in ("POST", "PUT", "PATCH", "DELETE") and not request.url.path.startswith("/api"):
+        if request.method in ("POST", "PUT", "PATCH", "DELETE") and not request.url.path.startswith("/api/"):
             from urllib.parse import urlparse
             host = request.headers.get("host", "")
             src = request.headers.get("origin") or request.headers.get("referer")

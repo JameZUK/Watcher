@@ -94,6 +94,9 @@ class CamoufoxRenderer:
                 except Exception:
                     pass
 
+            if result is None:  # defensive — capture() never returns None today
+                return RenderResult(ok=False, error="No content captured",
+                                    render_ms=int((time.monotonic() - start) * 1000))
             result.render_ms = int((time.monotonic() - start) * 1000)
             return result
         except Exception as exc:  # noqa: BLE001
