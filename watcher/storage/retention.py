@@ -7,14 +7,20 @@ diff history stays intact. Orphaned blobs are garbage-collected afterwards.
 
 from __future__ import annotations
 
+import asyncio
+import time
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from ..config import settings
 from ..db import SessionLocal
 from ..models import Change, Monitor, Snapshot, utcnow
-from . import blobs
+from . import blobs  # noqa: F401  (kept for callers/back-compat)
+
+# Don't GC a blob written in the last hour — guards against deleting a blob a
+# concurrent check just stored but whose referencing row we read before it.
+_GC_GRACE_SECONDS = 3600
 
 
 async def prune() -> int:
@@ -29,28 +35,32 @@ async def prune() -> int:
         referenced: set[int] = set()
         for col in (Change.from_snapshot_id, Change.to_snapshot_id):
             referenced.update(
-                (await session.execute(select(col))).scalars().all()
+                k for k in (await session.execute(select(col))).scalars().all() if k is not None
             )
 
+        to_delete: list[int] = []
         for mid in monitor_ids:
-            snaps = (
+            # Only id + taken_at — avoid materialising large text/blob columns.
+            rows = (
                 await session.execute(
-                    select(Snapshot)
+                    select(Snapshot.id, Snapshot.taken_at)
                     .where(Snapshot.monitor_id == mid)
                     .order_by(Snapshot.taken_at.desc())
                 )
-            ).scalars().all()
-
-            for idx, snap in enumerate(snaps):
-                if snap.id in referenced:
+            ).all()
+            for idx, (sid, taken_at) in enumerate(rows):
+                if sid in referenced:
                     continue
-                too_old = snap.taken_at < cutoff
-                over_count = idx >= settings.retention_max_snapshots
-                if too_old or over_count:
-                    await session.delete(snap)
-                    removed += 1
+                if taken_at < cutoff or idx >= settings.retention_max_snapshots:
+                    to_delete.append(sid)
 
-        await session.commit()
+        if to_delete:
+            # Bulk delete in chunks (SQLite caps bound parameters).
+            for i in range(0, len(to_delete), 500):
+                chunk = to_delete[i:i + 500]
+                await session.execute(delete(Snapshot).where(Snapshot.id.in_(chunk)))
+                removed += len(chunk)
+            await session.commit()
 
     await _gc_blobs()
     return removed
@@ -69,9 +79,23 @@ async def _gc_blobs() -> None:
                 k for k in (await session.execute(select(col))).scalars().all() if k
             )
 
-    for shard in settings.blobs_dir.iterdir() if settings.blobs_dir.exists() else []:
-        if not shard.is_dir():
-            continue
-        for f in shard.iterdir():
-            if f.name not in live:
-                f.unlink(missing_ok=True)
+    def _sweep() -> None:
+        now = time.time()
+        root = settings.blobs_dir
+        if not root.exists():
+            return
+        for shard in root.iterdir():
+            if not shard.is_dir():
+                continue
+            for f in shard.iterdir():
+                if f.name in live:
+                    continue
+                try:
+                    if now - f.stat().st_mtime < _GC_GRACE_SECONDS:
+                        continue  # too fresh — may be a just-written, referenced blob
+                    f.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+    # Filesystem walk + unlinks are blocking — run off the event loop.
+    await asyncio.to_thread(_sweep)

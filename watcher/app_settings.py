@@ -9,12 +9,20 @@ from .models import AppSetting
 
 
 async def get_app_settings(session: AsyncSession) -> AppSetting:
-    """Return the singleton settings row, creating it on first access."""
+    """Return the singleton settings row, creating it on first access.
+
+    Tolerates a concurrent create (two sessions racing on first run)."""
+    from sqlalchemy.exc import IntegrityError
+
     s = await session.get(AppSetting, 1)
     if s is None:
         s = AppSetting(id=1)
         session.add(s)
-        await session.flush()
+        try:
+            await session.flush()
+        except IntegrityError:
+            await session.rollback()
+            s = await session.get(AppSetting, 1)
     return s
 
 

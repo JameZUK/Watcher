@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -15,7 +16,7 @@ from .config import settings
 from .db import SessionLocal
 from .detection import detect
 from .detection.value import parse_number
-from .engines import render_monitor
+from .engines import RenderResult, render_monitor
 from .models import Change, Monitor, Snapshot, SnapshotStatus, utcnow
 from .notify import dispatch, notify_monitor_alert
 from .storage import blobs
@@ -64,10 +65,22 @@ def _adapt_interval(monitor, changed: bool) -> None:
     if new != cur:
         monitor.interval_seconds = new
         try:  # lazy import to avoid a scheduler<->runner import cycle
-            from .scheduler import reschedule_monitor
-            reschedule_monitor(monitor)
+            from .scheduler import retune_interval
+            retune_interval(monitor.id, new)   # in-place; safe from inside the job
         except Exception:
-            pass
+            logging.getLogger("watcher").warning("adaptive retune failed for monitor %s", monitor.id)
+
+
+async def _render(monitor) -> RenderResult:
+    """Render with a hard ceiling so a hung browser can't pin a concurrency slot.
+
+    Cancellation propagates into the engine's `async with`, tearing the browser
+    down on timeout."""
+    try:
+        return await asyncio.wait_for(render_monitor(monitor),
+                                      timeout=settings.render_timeout_seconds + 30)
+    except asyncio.TimeoutError:
+        return RenderResult(ok=False, error="Render timed out", http_status=None)
 
 
 def _is_transient(result) -> bool:
@@ -194,13 +207,13 @@ async def check_monitor(monitor_id: int) -> None:
                 )
             ).scalar_one_or_none()
 
-            result = await render_monitor(monitor)
+            result = await _render(monitor)
             # Retry transient render failures (driver crash / network / 5xx) with backoff.
             attempt = 0
             while (not result.ok) and _is_transient(result) and attempt < settings.render_retries:
                 attempt += 1
                 await asyncio.sleep(settings.retry_backoff_seconds * attempt)
-                result = await render_monitor(monitor)
+                result = await _render(monitor)
 
             snap = Snapshot(monitor_id=monitor.id, render_ms=result.render_ms)
             monitor.last_checked_at = utcnow()
@@ -268,15 +281,31 @@ async def check_monitor(monitor_id: int) -> None:
             # threshold alerts (e.g. price drops below a target).
             threshold_msg = None
             if monitor.track_value:
-                extracted = await _extract_value(app, monitor, result)
-                if extracted:
-                    snap.numeric_value, snap.value_label = extracted
+                # Reuse the prior value when the page is byte-identical (skips a
+                # per-check AI extraction call on unchanged pages).
+                if (prev is not None and prev.numeric_value is not None
+                        and snap.content_hash and snap.content_hash == prev.content_hash):
+                    snap.numeric_value, snap.value_label = prev.numeric_value, prev.value_label
+                else:
+                    extracted = await _extract_value(app, monitor, result)
+                    if extracted:
+                        snap.numeric_value, snap.value_label = extracted
+                # Baseline = the last snapshot that actually had a value, so
+                # intermittent extraction doesn't re-fire the same crossing.
+                baseline = prev.numeric_value if (prev and prev.numeric_value is not None) else None
+                if baseline is None:
+                    baseline = (await session.execute(
+                        select(Snapshot.numeric_value)
+                        .where(Snapshot.monitor_id == monitor.id,
+                               Snapshot.numeric_value.is_not(None), Snapshot.id != snap.id)
+                        .order_by(Snapshot.id.desc()).limit(1)
+                    )).scalar_one_or_none()
                 threshold_msg = _threshold_crossing(
-                    monitor, prev.numeric_value if prev else None,
-                    snap.numeric_value, snap.value_label,
+                    monitor, baseline, snap.numeric_value, snap.value_label,
                 )
 
-            change_result = detect(monitor, prev, result)
+            # Diffing (PIL/pixelmatch + blob reads) is CPU/IO heavy — off-thread.
+            change_result = await asyncio.to_thread(detect, monitor, prev, result)
             if change_result.changed or threshold_msg:
                 # AI triage only when there's a real content change to summarise.
                 triage = await _maybe_triage(app, monitor, change_result, result) if change_result.changed else None

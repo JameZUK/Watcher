@@ -72,6 +72,18 @@ def unschedule_monitor(monitor_id: int) -> None:
         scheduler.remove_job(jid)
 
 
+def retune_interval(monitor_id: int, interval_seconds: int) -> None:
+    """Change a job's interval in place (safe to call from within the running
+    job — unlike remove+add)."""
+    jid = _job_id(monitor_id)
+    if scheduler.get_job(jid):
+        scheduler.reschedule_job(
+            jid,
+            trigger=IntervalTrigger(seconds=interval_seconds,
+                                    jitter=settings.schedule_jitter_seconds),
+        )
+
+
 def trigger_now(monitor_id: int) -> None:
     """Fire a one-off immediate check (does not disturb the recurring job)."""
     scheduler.add_job(_run_check, args=[monitor_id], id=f"now-{monitor_id}",

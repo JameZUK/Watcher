@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -28,14 +29,17 @@ def _titles(monitor: Monitor, change: Change) -> tuple[str, str]:
     return f"Change: {monitor.name}", change.summary
 
 
-async def _deliver(session, app, monitor, user, change) -> None:
-    """Fan a single change out to the monitor's channels + user destinations."""
+async def _deliver(session, app, monitor, user, change) -> bool:
+    """Fan a single change out to the monitor's channels. Returns True if it was
+    delivered somewhere — "inbox" always counts (the Change IS the inbox entry)
+    so it can't be lost; external channels count only on success."""
     channels = set(monitor.notify_channels or ["inbox"])
     title, body = _titles(monitor, change)
     click = f"/monitors/{monitor.id}"
+    delivered = "inbox" in channels
 
     if "webhook" in channels and monitor.webhook_url:
-        await webhook.send(monitor.webhook_url, {
+        delivered |= await webhook.send(monitor.webhook_url, {
             "monitor_id": monitor.id, "monitor_name": monitor.name, "url": monitor.url,
             "change_id": change.id, "change_type": change.change_type.value,
             "summary": change.summary, "magnitude": round(change.magnitude, 4),
@@ -47,16 +51,17 @@ async def _deliver(session, app, monitor, user, change) -> None:
         subs = (await session.execute(
             select(PushSubscription).where(PushSubscription.user_id == monitor.user_id)
         )).scalars().all()
-        await push.send_to_all(subs, title=title, body=body, url=click)
+        delivered |= await push.send_to_all(subs, title=title, body=body, url=click)
     if user is not None:
         if "email" in channels:
-            await email.send(app, user.email, subject=title, body=f"{body}\n\n{monitor.url}")
+            delivered |= await email.send(app, user.email, subject=title, body=f"{body}\n\n{monitor.url}")
         if "telegram" in channels:
-            await telegram.send(get_telegram_token(app), user.telegram_chat_id, title=title, body=f"{body}\n{monitor.url}")
+            delivered |= await telegram.send(get_telegram_token(app), user.telegram_chat_id, title=title, body=f"{body}\n{monitor.url}")
         if "discord" in channels:
-            await discord.send(user.discord_webhook, title=title, body=body, url=monitor.url)
+            delivered |= await discord.send(user.discord_webhook, title=title, body=body, url=monitor.url)
         if "ntfy" in channels:
-            await ntfy.send(app.ntfy_server, user.ntfy_topic, title=title, body=body, url=monitor.url)
+            delivered |= await ntfy.send(app.ntfy_server, user.ntfy_topic, title=title, body=body, url=monitor.url)
+    return delivered
 
 
 async def notify_monitor_alert(session: AsyncSession, monitor: Monitor, title: str, body: str) -> None:
@@ -96,8 +101,10 @@ async def dispatch(session: AsyncSession, monitor: Monitor, change: Change) -> N
     if not high and user is not None and (user.digest_enabled or _in_quiet_hours(user)):
         return  # change.notified stays False → swept into the next digest
 
-    await _deliver(session, app, monitor, user, change)
-    change.notified = True
+    # Only mark notified if actually delivered; otherwise leave it for the
+    # digest sweep to retry (so a transient channel outage can't drop alerts).
+    if await _deliver(session, app, monitor, user, change):
+        change.notified = True
 
 
 async def run_digests(session: AsyncSession) -> int:
@@ -109,24 +116,33 @@ async def run_digests(session: AsyncSession) -> int:
     for user in users:
         if _in_quiet_hours(user):
             continue
-        rows = (await session.execute(
-            select(Change, Monitor)
-            .join(Monitor, Monitor.id == Change.monitor_id)
-            .where(Monitor.user_id == user.id, Change.notified.is_(False))
-            .order_by(Change.detected_at.desc()).limit(50)
-        )).all()
-        if not rows:
-            continue
-        lines = [f"• {m.name}: {c.ai_headline or c.summary}" for c, m in rows]
-        body = f"{len(rows)} update(s) since your last digest:\n\n" + "\n".join(lines)
-        subject = f"Watcher digest — {len(rows)} update(s)"
-        if app.smtp_host:
-            await email.send(app, user.email, subject=subject, body=body)
-        await telegram.send(get_telegram_token(app), user.telegram_chat_id, title=subject, body=body)
-        await ntfy.send(app.ntfy_server, user.ntfy_topic, title=subject, body=body, url=None)
-        await discord.send(user.discord_webhook, title=subject, body=body, url=None)
-        for c, _m in rows:
-            c.notified = True
-        sent += 1
-    await session.commit()
+        try:
+            # Oldest-first, generous cap so a backlog beyond a page isn't lost.
+            rows = (await session.execute(
+                select(Change, Monitor)
+                .join(Monitor, Monitor.id == Change.monitor_id)
+                .where(Monitor.user_id == user.id, Change.notified.is_(False))
+                .order_by(Change.detected_at.asc()).limit(200)
+            )).all()
+            if not rows:
+                continue
+            lines = [f"• {m.name}: {c.ai_headline or c.summary}" for c, m in rows]
+            body = f"{len(rows)} update(s) since your last digest:\n\n" + "\n".join(lines)
+            subject = f"Watcher digest — {len(rows)} update(s)"
+            delivered = False
+            if app.smtp_host:
+                delivered |= await email.send(app, user.email, subject=subject, body=body)
+            delivered |= await telegram.send(get_telegram_token(app), user.telegram_chat_id, title=subject, body=body)
+            delivered |= await ntfy.send(app.ntfy_server, user.ntfy_topic, title=subject, body=body, url=None)
+            delivered |= await discord.send(user.discord_webhook, title=subject, body=body, url=None)
+            # Mark notified only if the digest actually went somewhere; commit
+            # per-user so one failing user can't roll back others' progress.
+            if delivered:
+                for c, _m in rows:
+                    c.notified = True
+                sent += 1
+            await session.commit()
+        except Exception:  # noqa: BLE001
+            await session.rollback()
+            logging.getLogger("watcher.notify").exception("digest failed for user %s", user.id)
     return sent

@@ -11,9 +11,10 @@ from email.message import EmailMessage
 logger = logging.getLogger("watcher.notify.email")
 
 
-async def send(app, to_addr: str, *, subject: str, body: str) -> None:
+async def send(app, to_addr: str, *, subject: str, body: str) -> bool:
+    """Send an email; return True only if it was actually delivered."""
     if not (app.smtp_host and app.smtp_from and to_addr):
-        return
+        return False
     from ..app_settings import get_smtp_password
     pw = get_smtp_password(app)
 
@@ -31,5 +32,7 @@ async def send(app, to_addr: str, *, subject: str, body: str) -> None:
 
     try:
         await asyncio.to_thread(_send)
+        return True
     except Exception as exc:  # noqa: BLE001
         logger.warning("SMTP send failed: %s", exc)
+        return False

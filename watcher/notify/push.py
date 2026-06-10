@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Iterable
 
@@ -15,26 +16,30 @@ def enabled() -> bool:
 
 async def send_to_all(
     subs: Iterable[PushSubscription], *, title: str, body: str, url: str
-) -> None:
+) -> bool:
+    """Push to all subscriptions; return True if at least one was delivered."""
     if not enabled():
-        return
+        return False
     from pywebpush import WebPushException, webpush
 
     data = json.dumps({"title": title, "body": body, "url": url})
-    for sub in subs:
-        subscription_info = {
-            "endpoint": sub.endpoint,
-            "keys": {"p256dh": sub.p256dh, "auth": sub.auth},
-        }
+
+    def _one(sub) -> bool:
         try:
             webpush(
-                subscription_info=subscription_info,
+                subscription_info={"endpoint": sub.endpoint,
+                                   "keys": {"p256dh": sub.p256dh, "auth": sub.auth}},
                 data=data,
                 vapid_private_key=settings.vapid_private_key,
                 vapid_claims={"sub": settings.vapid_subject},
             )
-        except WebPushException:
-            # Subscription may be expired/invalid; ignore for now.
-            continue
-        except Exception:
-            continue
+            return True
+        except (WebPushException, Exception):
+            return False  # expired/invalid subscription — ignore
+
+    # webpush() is a blocking network call — run off the event loop.
+    delivered = False
+    for sub in subs:
+        if await asyncio.to_thread(_one, sub):
+            delivered = True
+    return delivered

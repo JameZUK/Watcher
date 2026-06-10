@@ -1,5 +1,6 @@
 from .jobs import (
     reschedule_monitor,
+    retune_interval,
     schedule_all,
     scheduler,
     start_scheduler,
@@ -14,6 +15,7 @@ __all__ = [
     "stop_scheduler",
     "schedule_all",
     "reschedule_monitor",
+    "retune_interval",
     "unschedule_monitor",
     "trigger_now",
 ]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -15,6 +16,14 @@ from .config import settings
 engine = create_async_engine(settings.database_url, echo=False, future=True)
 
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+
+@event.listens_for(engine.sync_engine, "connect")
+def _enable_sqlite_fk(dbapi_conn, _record):
+    """Enforce foreign keys on EVERY pooled connection (PRAGMA is per-connection)."""
+    cur = dbapi_conn.cursor()
+    cur.execute("PRAGMA foreign_keys=ON")
+    cur.close()
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
@@ -82,3 +91,11 @@ async def init_db() -> None:
             await conn.exec_driver_sql(
                 "UPDATE users SET is_admin=1 WHERE id=(SELECT MIN(id) FROM users)"
             )
+        # Composite indexes for the hot query shapes (idempotent; covers DBs
+        # created before these indexes existed).
+        for ddl in (
+            "CREATE INDEX IF NOT EXISTS ix_snap_monitor_taken ON snapshots(monitor_id, taken_at)",
+            "CREATE INDEX IF NOT EXISTS ix_change_monitor_detected ON changes(monitor_id, detected_at)",
+            "CREATE INDEX IF NOT EXISTS ix_change_monitor_acked ON changes(monitor_id, acknowledged)",
+        ):
+            await conn.exec_driver_sql(ddl)
