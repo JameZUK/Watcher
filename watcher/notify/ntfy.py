@@ -15,7 +15,7 @@ async def send(server: str | None, topic: str | None, *, title: str, body: str, 
     # Header values must be latin-1 safe (ntfy reads Title/Click from headers).
     headers = {"Title": title.encode("ascii", "replace").decode()}
     if url:
-        headers["Click"] = url
+        headers["Click"] = url.encode("ascii", "replace").decode()
     try:
         async with httpx.AsyncClient(timeout=15) as c:
             r = await c.post(f"{server.rstrip('/')}/{topic}", content=body.encode("utf-8"), headers=headers)

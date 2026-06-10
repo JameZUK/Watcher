@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
@@ -51,9 +52,13 @@ async def _run_check(monitor_id: int) -> None:
 def reschedule_monitor(monitor: Monitor) -> None:
     """Add/update/remove a monitor's job to match its current state."""
     jid = _job_id(monitor.id)
-    scheduler.remove_job(jid) if scheduler.get_job(jid) else None
     if not monitor.enabled:
+        try:
+            scheduler.remove_job(jid)
+        except JobLookupError:
+            pass
         return
+    # add_job(replace_existing=True) handles both the add and update cases.
     scheduler.add_job(
         _run_check,
         trigger=IntervalTrigger(seconds=_effective_interval(monitor)),
@@ -67,21 +72,23 @@ def reschedule_monitor(monitor: Monitor) -> None:
 
 
 def unschedule_monitor(monitor_id: int) -> None:
-    jid = _job_id(monitor_id)
-    if scheduler.get_job(jid):
-        scheduler.remove_job(jid)
+    try:
+        scheduler.remove_job(_job_id(monitor_id))
+    except JobLookupError:
+        pass
 
 
 def retune_interval(monitor_id: int, interval_seconds: int) -> None:
     """Change a job's interval in place (safe to call from within the running
     job — unlike remove+add)."""
-    jid = _job_id(monitor_id)
-    if scheduler.get_job(jid):
+    try:
         scheduler.reschedule_job(
-            jid,
+            _job_id(monitor_id),
             trigger=IntervalTrigger(seconds=interval_seconds,
                                     jitter=settings.schedule_jitter_seconds),
         )
+    except JobLookupError:
+        pass
 
 
 def trigger_now(monitor_id: int) -> None:

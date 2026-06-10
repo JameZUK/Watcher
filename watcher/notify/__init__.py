@@ -109,40 +109,54 @@ async def dispatch(session: AsyncSession, monitor: Monitor, change: Change) -> N
 
 async def run_digests(session: AsyncSession) -> int:
     """Send each user a batched digest of their un-notified changes (skipping
-    those in quiet hours). Returns the number of users notified."""
-    app = await get_app_settings(session)
-    users = (await session.execute(select(User).where(User.is_active))).scalars().all()
+    those in quiet hours). Returns the number of users with a digest processed.
+
+    Each user runs in its OWN fresh session so a failure (or a rollback) can't
+    poison the others via expired ORM state."""
+    from ..db import SessionLocal
+
+    user_ids = (await session.execute(select(User.id).where(User.is_active))).scalars().all()
     sent = 0
-    for user in users:
-        if _in_quiet_hours(user):
-            continue
+    for uid in user_ids:
         try:
-            # Oldest-first, generous cap so a backlog beyond a page isn't lost.
-            rows = (await session.execute(
-                select(Change, Monitor)
-                .join(Monitor, Monitor.id == Change.monitor_id)
-                .where(Monitor.user_id == user.id, Change.notified.is_(False))
-                .order_by(Change.detected_at.asc()).limit(200)
-            )).all()
-            if not rows:
-                continue
-            lines = [f"• {m.name}: {c.ai_headline or c.summary}" for c, m in rows]
-            body = f"{len(rows)} update(s) since your last digest:\n\n" + "\n".join(lines)
-            subject = f"Watcher digest — {len(rows)} update(s)"
-            delivered = False
-            if app.smtp_host:
-                delivered |= await email.send(app, user.email, subject=subject, body=body)
-            delivered |= await telegram.send(get_telegram_token(app), user.telegram_chat_id, title=subject, body=body)
-            delivered |= await ntfy.send(app.ntfy_server, user.ntfy_topic, title=subject, body=body, url=None)
-            delivered |= await discord.send(user.discord_webhook, title=subject, body=body, url=None)
-            # Mark notified only if the digest actually went somewhere; commit
-            # per-user so one failing user can't roll back others' progress.
-            if delivered:
-                for c, _m in rows:
-                    c.notified = True
-                sent += 1
-            await session.commit()
+            async with SessionLocal() as s:
+                user = await s.get(User, uid)
+                if user is None or _in_quiet_hours(user):
+                    continue
+                app = await get_app_settings(s)
+                rows = (await s.execute(
+                    select(Change, Monitor)
+                    .join(Monitor, Monitor.id == Change.monitor_id)
+                    .where(Monitor.user_id == uid, Change.notified.is_(False))
+                    .order_by(Change.detected_at.asc()).limit(200)
+                )).all()
+                if not rows:
+                    continue
+                lines = [f"• {m.name}: {c.ai_headline or c.summary}" for c, m in rows]
+                body = f"{len(rows)} update(s) since your last digest:\n\n" + "\n".join(lines)
+                subject = f"Watcher digest — {len(rows)} update(s)"
+
+                has_external = bool(
+                    (app.smtp_host and user.email) or user.telegram_chat_id
+                    or user.ntfy_topic or user.discord_webhook
+                )
+                delivered = False
+                if app.smtp_host:
+                    delivered |= await email.send(app, user.email, subject=subject, body=body)
+                delivered |= await telegram.send(get_telegram_token(app), user.telegram_chat_id, title=subject, body=body)
+                delivered |= await ntfy.send(app.ntfy_server, user.ntfy_topic, title=subject, body=body, url=None)
+                delivered |= await discord.send(user.discord_webhook, title=subject, body=body, url=None)
+
+                # Mark consumed when delivered OR when the user has no external
+                # transport at all (they rely on the inbox — don't accumulate a
+                # backlog and re-list the same items every hour).
+                if delivered or not has_external:
+                    for c, _m in rows:
+                        c.notified = True
+                    await s.commit()
+                    if delivered:
+                        sent += 1
+                # else: leave un-notified to retry next sweep (transient outage).
         except Exception:  # noqa: BLE001
-            await session.rollback()
-            logging.getLogger("watcher.notify").exception("digest failed for user %s", user.id)
+            logging.getLogger("watcher.notify").exception("digest failed for user %s", uid)
     return sent
