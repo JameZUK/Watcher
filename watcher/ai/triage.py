@@ -423,6 +423,68 @@ async def configure_monitor(
         return None
 
 
+_GROUP_SCHEMA = {
+    "name": "group_config",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "name": {"type": "string", "description": "Short product/group name."},
+            "target_value": {"type": "number", "description": "Price target to alert on, or 0 if none."},
+            "target_dir": {"type": "string", "enum": ["below", "above", "none"]},
+        },
+        "required": ["name", "target_value", "target_dir"],
+    },
+}
+
+_GROUP_SYSTEM = (
+    "You set up a price-comparison group of web pages from the user's goal. Give a "
+    "short, human group name (usually the product). If the user named a price to be "
+    "alerted on, set target_value + target_dir ('below 250' → 250/below; 'above 100' "
+    "→ 100/above); otherwise 0 / 'none'. Respond ONLY with the JSON."
+)
+
+
+async def configure_group(
+    *, api_key: str, model: str, base_url: str | None = None, goal: str,
+    urls: list[str], timeout: float = 30.0,
+) -> dict | None:
+    """Derive a group name + price target from a plain-English goal. None on failure."""
+    if not api_key or not (goal or "").strip():
+        return None
+    user = f'User goal: "{goal.strip()}"\n\nPages in the group:\n' + "\n".join(urls[:20])
+    body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _GROUP_SYSTEM},
+            {"role": "user", "content": user},
+        ],
+        "temperature": 0.2,
+        "max_tokens": 200,
+        "response_format": {"type": "json_schema", "json_schema": _GROUP_SCHEMA},
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(base_url or OPENROUTER_URL, json=body, headers=headers)
+        if resp.status_code != 200:
+            logger.warning("OpenRouter group config failed: HTTP %s %s", resp.status_code, resp.text[:200])
+            return None
+        content = resp.json()["choices"][0]["message"]["content"]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("OpenRouter group config error: %s", exc)
+        return None
+    txt = (content or "").strip()
+    s, e = txt.find("{"), txt.rfind("}")
+    if s == -1 or e == -1:
+        return None
+    try:
+        return json.loads(txt[s:e + 1])
+    except json.JSONDecodeError:
+        return None
+
+
 async def summarize_history(
     *, api_key: str, model: str, base_url: str | None = None, name: str, lines: list[str],
     timeout: float = 40.0,

@@ -9,12 +9,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from ...ai import configure_group
+from ...app_settings import get_app_settings, get_openrouter_key
 from ...auth.users import get_current_user
+from ...config import settings
 from ...db import get_session
-from ...models import Group, Monitor, Snapshot, SnapshotStatus, User
+from ...models import DetectionMode, Group, Monitor, Snapshot, SnapshotStatus, User
+from ...netsec import validate_monitor_url, validate_public_url
+from ...scheduler import reschedule_monitor, trigger_now
 from .. import templates
 
 router = APIRouter()
+
+_MAX_GROUP_URLS = 20
 
 
 def _clean_target(form):
@@ -93,6 +100,65 @@ async def create_group(
             m.group_id = g.id
     await session.commit()
     return RedirectResponse(f"/groups/{g.id}", status_code=303)
+
+
+@router.post("/groups/ai-create")
+async def ai_create_group(
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Build a price-comparison group from a goal + a list of retailer URLs: the
+    AI names it + sets a target, and a price-tracking monitor is created per URL."""
+    form = await request.form()
+    goal = (form.get("goal") or "").strip()
+    urls = [u.strip() for u in (form.get("urls") or "").splitlines() if u.strip()][:_MAX_GROUP_URLS]
+    if not goal or not urls:
+        return RedirectResponse("/?group=ai_missing", status_code=303)
+
+    # Keep only http(s) + public URLs (SSRF).
+    valid = []
+    for u in urls:
+        if validate_monitor_url(u):
+            continue
+        if not settings.allow_private_targets and validate_public_url(u):
+            continue
+        valid.append(u[:2048])
+    if not valid:
+        return RedirectResponse("/?group=ai_badurls", status_code=303)
+
+    # Respect the per-user monitor cap.
+    cap = settings.max_monitors_per_user
+    if cap:
+        have = (await session.execute(
+            select(func.count()).select_from(Monitor).where(Monitor.user_id == user.id))).scalar_one()
+        valid = valid[:max(0, cap - have)]
+        if not valid:
+            return RedirectResponse("/?group=cap", status_code=303)
+
+    app = await get_app_settings(session)
+    key = get_openrouter_key(app)
+    cfg = await configure_group(api_key=key, model=app.ai_model, base_url=app.ai_base_url,
+                                goal=goal, urls=valid) if key else None
+    name = ((cfg or {}).get("name") or goal)[:255] or "New group"
+    tv = (cfg or {}).get("target_value") or 0
+    td = (cfg or {}).get("target_dir")
+    group = Group(user_id=user.id, name=name,
+                  target_value=float(tv) if tv else None,
+                  target_dir=td if td in ("below", "above") else None)
+    session.add(group)
+    await session.flush()
+
+    for u in valid:
+        m = Monitor(user_id=user.id, url=u, name="", detection_mode=DetectionMode.auto,
+                    interval_seconds=max(3600, settings.min_interval_seconds),
+                    track_value=True, ai_enabled=True, enabled=True, group_id=group.id)
+        session.add(m)
+        await session.flush()
+        reschedule_monitor(m)
+        trigger_now(m.id)
+    await session.commit()
+    return RedirectResponse(f"/groups/{group.id}", status_code=303)
 
 
 @router.get("/groups/{group_id}")

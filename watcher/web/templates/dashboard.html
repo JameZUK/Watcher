@@ -64,22 +64,40 @@
     <h2 class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Groups</h2>
     <button type="button" @click="newg=!newg" class="btn btn-ghost text-xs">+ New group</button>
   </div>
-  <form x-show="newg" x-cloak method="post" action="/groups" class="glass rounded-2xl p-4 mb-3 flex flex-wrap items-end gap-3">
-    <div class="flex-1 min-w-[10rem]">
-      <label class="block text-xs text-slate-400 mb-1">Group name</label>
-      <input name="name" required placeholder="e.g. JBL Boombox 3" class="field !py-2">
-    </div>
-    <div>
-      <label class="block text-xs text-slate-400 mb-1">Alert when the best price is</label>
-      <div class="flex items-center gap-2">
-        <select name="target_dir" class="field !py-2 !w-auto">
-          <option value="">— no alert —</option><option value="below">below</option><option value="above">above</option>
-        </select>
-        <input type="number" step="any" name="target_value" placeholder="250" class="field !py-2 !w-28">
+  <div x-show="newg" x-cloak x-data="groupForm()" class="glass rounded-2xl p-4 mb-3 border border-brand-500/30">
+    <!-- AI-first: describe it + paste URLs -->
+    <form x-show="!adv" method="post" action="/groups/ai-create" @submit="busy = true" class="space-y-3">
+      <h3 class="font-semibold text-white flex items-center gap-2 text-sm">
+        <svg viewBox="0 0 24 24" class="h-4 w-4 text-brand-400" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg>
+        Build a price group with AI
+      </h3>
+      <textarea name="goal" x-model="goal" rows="2" placeholder="e.g. Track the JBL Boombox 3 and alert me if it drops below £250" class="field text-sm"></textarea>
+      <textarea name="urls" x-model="urls" rows="3" placeholder="One product URL per line — the same item on Amazon, JBL.com, Argos…" class="field font-mono text-xs"></textarea>
+      <p class="text-xs text-red-300" x-show="aiError" x-cloak x-text="aiError"></p>
+      <div class="flex items-center gap-3">
+        <button type="submit" @click="aiGuard($event)" :disabled="busy" class="btn btn-primary text-sm" x-text="busy ? 'Building the group…' : 'Build group with AI'"></button>
+        <button type="button" @click="adv = true" class="text-xs text-slate-400 hover:text-white">manual setup</button>
       </div>
-    </div>
-    <button class="btn btn-primary text-sm">Create group</button>
-  </form>
+    </form>
+    <!-- Manual: name + target only (add pages later) -->
+    <form x-show="adv" x-cloak method="post" action="/groups" class="flex flex-wrap items-end gap-3">
+      <div class="flex-1 min-w-[10rem]">
+        <label class="block text-xs text-slate-400 mb-1">Group name</label>
+        <input name="name" required placeholder="e.g. JBL Boombox 3" class="field !py-2">
+      </div>
+      <div>
+        <label class="block text-xs text-slate-400 mb-1">Alert when the best price is</label>
+        <div class="flex items-center gap-2">
+          <select name="target_dir" class="field !py-2 !w-auto">
+            <option value="">— no alert —</option><option value="below">below</option><option value="above">above</option>
+          </select>
+          <input type="number" step="any" name="target_value" placeholder="250" class="field !py-2 !w-28">
+        </div>
+      </div>
+      <button class="btn btn-primary text-sm">Create group</button>
+      <button type="button" @click="adv = false" class="text-xs text-slate-400 hover:text-white self-center">use AI instead</button>
+    </form>
+  </div>
   {% if groups %}
   <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
     {% for gi in groups %}{% set g = gi.group %}
@@ -161,6 +179,16 @@
 {% endblock %}
 {% block scripts %}
 <script>
+function groupForm(){return {
+  adv: false, goal: '', urls: '', busy: false, aiError: '',
+  // Friendly inline validation (busy is set on the form's @submit, not here, so
+  // disabling the button can't cancel the native submit).
+  aiGuard(e){
+    if (!this.goal.trim()){ e.preventDefault(); this.aiError = 'Describe what to track in this group.'; return; }
+    if (!this.urls.trim()){ e.preventDefault(); this.aiError = 'Add at least one page URL (one per line).'; return; }
+    this.aiError = '';
+  },
+}}
 function dashView(){return {
   view: document.documentElement.classList.contains('view-list') ? 'list'
       : document.documentElement.classList.contains('view-small') ? 'small' : 'large',

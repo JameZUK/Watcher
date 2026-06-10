@@ -2,6 +2,7 @@
 
 from .triage import (
     Triage,
+    configure_group,
     configure_monitor,
     extract_value,
     suggest_watch_items,
@@ -11,5 +12,5 @@ from .triage import (
 
 __all__ = [
     "Triage", "triage_change", "suggest_watch_items", "extract_value",
-    "configure_monitor", "summarize_history",
+    "configure_monitor", "configure_group", "summarize_history",
 ]
