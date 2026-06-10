@@ -10,13 +10,14 @@ from sqlalchemy.orm import selectinload
 
 from .ai import extract_value, triage_change
 from .app_settings import get_app_settings, get_openrouter_key
+from .auth.login_flows import session_is_valid
 from .config import settings
 from .db import SessionLocal
 from .detection import detect
 from .detection.value import parse_number
 from .engines import render_monitor
 from .models import Change, Monitor, Snapshot, SnapshotStatus, utcnow
-from .notify import dispatch
+from .notify import dispatch, notify_monitor_alert
 from .storage import blobs
 
 # Importance ratings the AI considers "low value" and subject to the gating policy.
@@ -53,6 +54,47 @@ async def _extract_value(app, monitor, result):
                 title=result.title, page_text=result.rendered_text,
             )
     return None
+
+
+def _is_transient(result) -> bool:
+    """A render failure worth retrying — driver/network/5xx, not a clean block."""
+    return result.http_status is None or result.http_status >= 500
+
+
+async def _fail(session, monitor, snap, *, error, http_status, title=None) -> None:
+    """Record an error snapshot, bump the failure streak, and alert / auto-pause."""
+    flow = monitor.login_flow
+    if flow and flow.session_state and not session_is_valid(flow):
+        error = (error or "Check failed") + (
+            " · stored session has expired — re-paste cookies in this monitor's Session cookies section"
+        )
+    snap.status = SnapshotStatus.error
+    snap.error = error
+    snap.http_status = http_status
+    snap.title = title
+    session.add(snap)
+    prev = monitor.consecutive_failures or 0
+    monitor.consecutive_failures = prev + 1
+    await session.commit()
+
+    n = monitor.consecutive_failures
+    threshold = settings.auto_pause_after_failures
+    if threshold and n >= threshold and monitor.enabled:
+        monitor.enabled = False
+        await session.commit()
+        try:  # lazy import to avoid a scheduler<->runner import cycle
+            from .scheduler import unschedule_monitor
+            unschedule_monitor(monitor.id)
+        except Exception:
+            pass
+        await notify_monitor_alert(
+            session, monitor, f"Paused: {monitor.name}",
+            f"Auto-paused after {n} consecutive failures.\n{error}",
+        )
+    elif prev == 0:
+        await notify_monitor_alert(
+            session, monitor, f"Monitor failing: {monitor.name}", error or "Check failed",
+        )
 
 
 def _threshold_crossing(monitor, prev_val, new_val, label):
@@ -139,41 +181,43 @@ async def check_monitor(monitor_id: int) -> None:
             ).scalar_one_or_none()
 
             result = await render_monitor(monitor)
+            # Retry transient render failures (driver crash / network / 5xx) with backoff.
+            attempt = 0
+            while (not result.ok) and _is_transient(result) and attempt < settings.render_retries:
+                attempt += 1
+                await asyncio.sleep(settings.retry_backoff_seconds * attempt)
+                result = await render_monitor(monitor)
 
             snap = Snapshot(monitor_id=monitor.id, render_ms=result.render_ms)
             monitor.last_checked_at = utcnow()
 
             if not result.ok:
-                snap.status = SnapshotStatus.error
-                snap.error = result.error
-                snap.http_status = result.http_status
-                session.add(snap)
-                await session.commit()
+                await _fail(session, monitor, snap, error=result.error, http_status=result.http_status)
                 return
 
             # Surface anti-bot blocks / challenge pages as errors rather than
             # silently storing an empty "ok" snapshot.
             blocked = _blocked_reason(result)
             if blocked:
-                snap.status = SnapshotStatus.error
-                snap.error = blocked
-                snap.http_status = result.http_status
-                snap.title = result.title
-                session.add(snap)
-                await session.commit()
+                await _fail(session, monitor, snap, error=blocked,
+                            http_status=result.http_status, title=result.title)
                 return
 
             # A render that yielded no usable artifacts (e.g. the browser/driver
             # crashed mid-capture) is a failure, not a healthy empty snapshot.
             if not any((result.html, result.rendered_text, result.extracted_value,
                         result.screenshot_png)):
-                snap.status = SnapshotStatus.error
-                snap.error = "Empty render — the browser returned no content (engine/driver crash or block)"
-                snap.http_status = result.http_status
-                snap.title = result.title
-                session.add(snap)
-                await session.commit()
+                await _fail(session, monitor, snap,
+                            error="Empty render — the browser returned no content (engine/driver crash or block)",
+                            http_status=result.http_status, title=result.title)
                 return
+
+            # Success — clear any failure streak (and announce a recovery).
+            if monitor.consecutive_failures:
+                if monitor.consecutive_failures >= 2:
+                    await notify_monitor_alert(session, monitor,
+                                               f"Recovered: {monitor.name}", "The monitor is working again.")
+                monitor.consecutive_failures = 0
 
             # Persist artifacts to the content-addressed blob store.
             snap.status = SnapshotStatus.ok

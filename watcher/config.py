@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     max_render_concurrency: int = Field(default=3)
     render_timeout_seconds: int = Field(default=45)
 
+    # --- Reliability ---
+    render_retries: int = Field(default=1)              # extra render attempts on transient failure
+    retry_backoff_seconds: float = Field(default=3.0)
+    auto_pause_after_failures: int = Field(default=6)   # 0 disables auto-pause
+
     # Screenshot quality / device emulation.
     screenshot_scale: int = Field(default=2)        # device pixel ratio (retina-crisp)
     mobile_viewport_width: int = Field(default=390)   # iPhone-class logical width

@@ -59,6 +59,29 @@ async def _deliver(session, app, monitor, user, change) -> None:
             await ntfy.send(app.ntfy_server, user.ntfy_topic, title=title, body=body, url=monitor.url)
 
 
+async def notify_monitor_alert(session: AsyncSession, monitor: Monitor, title: str, body: str) -> None:
+    """Send an operational alert (failure/recovery/expiry) — not tied to a Change.
+    Delivered immediately via push + the user's personal channels."""
+    user = await session.get(User, monitor.user_id)
+    app = await get_app_settings(session)
+    channels = set(monitor.notify_channels or ["inbox"])
+    click = f"/monitors/{monitor.id}"
+    if "push" in channels:
+        subs = (await session.execute(
+            select(PushSubscription).where(PushSubscription.user_id == monitor.user_id)
+        )).scalars().all()
+        await push.send_to_all(subs, title=title, body=body, url=click)
+    if user is not None:
+        if "email" in channels:
+            await email.send(app, user.email, subject=title, body=f"{body}\n\n{monitor.url}")
+        if "telegram" in channels:
+            await telegram.send(get_telegram_token(app), user.telegram_chat_id, title=title, body=body)
+        if "discord" in channels:
+            await discord.send(user.discord_webhook, title=title, body=body, url=monitor.url)
+        if "ntfy" in channels:
+            await ntfy.send(app.ntfy_server, user.ntfy_topic, title=title, body=body, url=monitor.url)
+
+
 async def dispatch(session: AsyncSession, monitor: Monitor, change: Change) -> None:
     """Deliver a detected change now, or defer it to the digest.
 

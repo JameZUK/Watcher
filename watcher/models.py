@@ -134,6 +134,9 @@ class Monitor(Base):
     value_threshold: Mapped[float | None] = mapped_column(Float, default=None)
     value_threshold_dir: Mapped[str | None] = mapped_column(String(8), default=None)  # below|above
 
+    # Reliability
+    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     last_change_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
