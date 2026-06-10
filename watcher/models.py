@@ -67,6 +67,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     monitors: Mapped[list["Monitor"]] = relationship(
@@ -114,6 +115,11 @@ class Monitor(Base):
     # Notification channels (list of "inbox" | "push" | "webhook")
     notify_channels: Mapped[list] = mapped_column(JSON, default=lambda: ["inbox"])
     webhook_url: Mapped[str | None] = mapped_column(String(2048), default=None)
+
+    # AI triage (honoured only when global AI triage is enabled + a key is set)
+    ai_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    ai_watch_intent: Mapped[str | None] = mapped_column(Text, default=None)   # "what to watch for"
+    ai_policy: Mapped[str | None] = mapped_column(String(16), default=None)   # silent|label|drop; null = inherit global
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
@@ -199,8 +205,14 @@ class Change(Base):
     summary: Mapped[str] = mapped_column(Text, default="")
     magnitude: Mapped[float] = mapped_column(Float, default=0.0)
     diff_blob: Mapped[str | None] = mapped_column(String(64), default=None)    # unified text diff
-    visual_blob: Mapped[str | None] = mapped_column(String(64), default=None)  # screenshot overlay
+    visual_blob: Mapped[str | None] = mapped_column(String(64), default=None)  # screenshot overlay (desktop)
+    visual_mobile_blob: Mapped[str | None] = mapped_column(String(64), default=None)  # screenshot overlay (mobile)
     acknowledged: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+
+    # AI triage results (null when triage is off or failed)
+    ai_headline: Mapped[str | None] = mapped_column(Text, default=None)
+    ai_category: Mapped[str | None] = mapped_column(String(32), default=None)   # price|stock|content|availability|cosmetic|other
+    ai_importance: Mapped[str | None] = mapped_column(String(16), default=None)  # high|medium|low|noise
 
     monitor: Mapped["Monitor"] = relationship(back_populates="changes")
 
@@ -217,3 +229,16 @@ class PushSubscription(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     user: Mapped["User"] = relationship(back_populates="push_subscriptions")
+
+
+class AppSetting(Base):
+    """Global, app-wide settings — a single row with id=1."""
+
+    __tablename__ = "app_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    # AI triage (OpenRouter). Key is Fernet-encrypted at rest.
+    ai_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    openrouter_key_enc: Mapped[str | None] = mapped_column(Text, default=None)
+    ai_model: Mapped[str] = mapped_column(String(128), default="google/gemini-2.5-flash-lite")
+    ai_low_value_policy: Mapped[str] = mapped_column(String(16), default="silent")  # silent|label|drop

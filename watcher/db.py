@@ -26,8 +26,15 @@ async def get_session() -> AsyncIterator[AsyncSession]:
 # Columns added after the initial release. SQLite's create_all won't ALTER an
 # existing table, so we add any missing ones idempotently on startup.
 _ADDED_COLUMNS = {
+    "users": {"is_admin": "BOOLEAN DEFAULT 0"},
     "snapshots": {"title": "VARCHAR(512)", "screenshot_mobile_blob": "VARCHAR(64)"},
-    "changes": {"visual_blob": "VARCHAR(64)"},
+    "changes": {
+        "visual_blob": "VARCHAR(64)", "visual_mobile_blob": "VARCHAR(64)",
+        "ai_headline": "TEXT", "ai_category": "VARCHAR(32)", "ai_importance": "VARCHAR(16)",
+    },
+    "monitors": {
+        "ai_enabled": "BOOLEAN DEFAULT 1", "ai_watch_intent": "TEXT", "ai_policy": "VARCHAR(16)",
+    },
 }
 
 
@@ -50,3 +57,10 @@ async def init_db() -> None:
         await conn.exec_driver_sql("PRAGMA foreign_keys=ON;")
         await conn.run_sync(Base.metadata.create_all)
         await _add_missing_columns(conn)
+        # Ensure an admin exists: if none, promote the earliest account so the
+        # global settings aren't locked out (covers DBs created pre-admin).
+        admins = (await conn.exec_driver_sql("SELECT COUNT(*) FROM users WHERE is_admin")).scalar()
+        if not admins:
+            await conn.exec_driver_sql(
+                "UPDATE users SET is_admin=1 WHERE id=(SELECT MIN(id) FROM users)"
+            )
