@@ -19,7 +19,9 @@ from ._common import (
     _settle_for_content,
     apply_actions,
     capture,
+    click_consent,
     do_wait,
+    hide_banners,
     replay_login,
     setup_blocking,
 )
@@ -135,6 +137,8 @@ class CamoufoxRenderer:
             )
             await do_wait(page, monitor)
             await _settle_for_content(page)
+            await click_consent(page, monitor)
+            await hide_banners(page, monitor)
 
             # Don't store a blocked/empty challenge page as the "mobile" preview.
             try:

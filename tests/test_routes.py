@@ -480,3 +480,40 @@ def test_auto_pause_after_failures():
         return True
 
     assert _run(_t)
+
+
+# --- consent / annoyance-blocking form wiring ------------------------------
+
+def test_consent_clicks_and_block_annoyances_persist():
+    """The manual consent_clicks override + block_annoyances toggle round-trip
+    through the create form into the Monitor row."""
+    async def _t():
+        from watcher.config import settings
+        from watcher.main import create_app
+        from watcher.models import Monitor
+        settings.registration_open = True
+        app = create_app()
+        transport = httpx.ASGITransport(app=app)
+        email = _email()
+        async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                     headers={"Origin": "http://t"}, follow_redirects=True) as c:
+            await c.post("/register", data={"email": email, "password": "password123"})
+            await c.post("/login", data={"email": email, "password": "password123"})
+
+            # block_annoyances omitted (checkbox unchecked) + two manual selectors
+            r = await c.post("/monitors", data={
+                "url": "https://example.com", "engine": "chromium", "detection_mode": "text",
+                "interval_minutes": "60", "wait_until": "load", "notify_channels": "inbox",
+                "name": "Consent Monitor",
+                "consent_clicks": "#accept-cookies\nbutton.close-modal\n  \n",
+            })
+            assert r.status_code == 200
+
+        async with SessionLocal() as s:
+            m = (await s.execute(
+                select(Monitor).where(Monitor.name == "Consent Monitor"))).scalar_one()
+            assert m.block_annoyances is False               # unchecked => off
+            assert m.consent_clicks == ["#accept-cookies", "button.close-modal"]  # blanks stripped
+        return True
+
+    assert _run(_t)

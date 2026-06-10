@@ -125,6 +125,9 @@ def _apply_form(monitor: Monitor, form) -> None:
     proxy_scheme = proxy.split("://", 1)[0].lower() if "://" in proxy else ""
     monitor.proxy = proxy if proxy_scheme in ("http", "https", "socks5", "socks5h", "socks4") else None
     monitor.block_annoyances = _bool(form, "block_annoyances")
+    # Optional manual override: extra selectors to click after load (accept a
+    # cookie wall, close a modal, tick a captcha box). Applied in order, best-effort.
+    monitor.consent_clicks = _lines(form.get("consent_clicks", ""))[:15]
 
     minutes = _clamp_int(form, "interval_minutes", 60, 1, 60 * 24 * 30)
     monitor.interval_seconds = max(minutes * 60, settings.min_interval_seconds)

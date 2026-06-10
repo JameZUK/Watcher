@@ -45,10 +45,108 @@ _COOKIE_CSS = (
     ".fc-consent-root,.fc-dialog-overlay,"
     ".cc-window,.cookie-consent,.cookie-banner,.cookie-notice,.cookie-popup,"
     "#cookie-banner,#cookie-notice,#cookieConsent,#cookie-law-info-bar,"
-    "#gdpr-consent,#gdpr-cookie-message,.gdpr-banner,[class*=\"CookieConsent\"]"
+    "#gdpr-consent,#gdpr-cookie-message,.gdpr-banner,[class*=\"CookieConsent\"],"
+    "[class*=\"ConsentBanner\"],[class*=\"consent-banner\" i],[class*=\"cookie-banner\" i],"
+    "[data-testid*=\"cookie\" i],[data-testid*=\"consent\" i],[data-nosnippet][class*=\"consent\" i]"
     "{display:none !important;visibility:hidden !important;}"
     "html,body{overflow:auto !important;position:static !important;}"
 )
+
+# GENERIC, site-agnostic consent handler (no per-site selectors): find overlay
+# elements that look like a cookie/consent prompt, click their accept/agree
+# button (so the banner closes properly and any gated content loads), and hide
+# whatever remains. Restores the scroll-lock such banners impose. Returns counts.
+_BANNER_HEURISTIC_JS = r"""() => {
+  const out = { clicked: 0, hidden: 0 };
+  const consentRx = /(cookie|consent|gdpr|ccpa|we value your privacy|your privacy|tracking technolog|privacy|opt[- ]?out|data protection)/i;
+  const acceptRx  = /^(accept|agree|allow|got it|ok|okay|yes|i (accept|agree|understand)|understood|continue|enable all|allow all|accept all|i'?m ok|save.*accept|agree.*(close|continue))\b/i;
+  // Dismiss/close actions for non-blocking bars and post-accept confirmation
+  // toasts (e.g. GOV.UK's "Hide cookie message"). Only used inside a banner.
+  const dismissRx = /^(hide( this)?( message| cookie message)?|close|dismiss|no thanks|continue to (the )?(site|website)|×|✕|✖)$/i;
+  const rejectRx  = /(reject|decline|deny|do not|don'?t|manage|customi[sz]|more option|preferenc|settings|necessary only|essential only|learn more|why)/i;
+  const vis = (el) => {
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity || '1') === 0) return false;
+    const r = el.getBoundingClientRect();
+    return r.width >= 80 && r.height >= 28 && r.bottom > 0 && r.top < (innerHeight + r.height);
+  };
+  const findBtn = (c, rx, exclude) => {
+    for (const b of c.querySelectorAll('button,a[href],[role="button"],input[type="button"],input[type="submit"]')) {
+      const br = b.getBoundingClientRect();
+      if (br.width < 4 || br.height < 4) continue;   // skip hidden/zero-size (e.g. a post-accept display:none button)
+      const bt = ((b.innerText || b.value || b.getAttribute('aria-label') || '')).trim();
+      if (!bt || bt.length > 40) continue;
+      if (rx.test(bt) && !(exclude && exclude.test(bt))) return b;
+    }
+    return null;
+  };
+  // 1) candidate banners. Two shapes qualify:
+  //    (a) positioned overlays (fixed/sticky/high-z absolute), OR
+  //    (b) wide bars anchored to the top/bottom edge that carry an accept or
+  //        dismiss button — the button is what distinguishes a real cookie bar
+  //        (e.g. GOV.UK's static top banner) from ordinary page content that
+  //        merely mentions "cookies"/"privacy".
+  const cands = [];
+  const sel = 'div,section,aside,dialog,form,[role="dialog"],[role="alertdialog"],'
+            + '[data-module*="cookie" i],[class*="cookie" i],[class*="consent" i],[id*="cookie" i],[id*="consent" i]';
+  for (const el of document.querySelectorAll(sel)) {
+    let cs; try { cs = getComputedStyle(el); } catch (e) { continue; }
+    if (!vis(el)) continue;
+    const t = (el.innerText || '');
+    if (t.length < 8 || t.length > 2200) continue;
+    if (!consentRx.test(t)) continue;
+    const r = el.getBoundingClientRect();
+    const positioned = cs.position === 'fixed' || cs.position === 'sticky'
+                       || (cs.position === 'absolute' && (parseInt(cs.zIndex || '0', 10) >= 50));
+    const accept  = findBtn(el, acceptRx, rejectRx);
+    const dismiss = accept ? null : findBtn(el, dismissRx, null);
+    const wide = r.width >= innerWidth * 0.55;
+    // a real cookie *bar* hugs an edge, spans the width, and is short — not a
+    // full-height content wrapper that merely contains the word "cookie".
+    const edged = (r.top <= 12 || r.bottom >= innerHeight - 12)
+                  && r.top < innerHeight && wide && r.height <= innerHeight * 0.5;
+    if (!positioned && !(edged && (accept || dismiss))) continue;
+    el.__btn = accept || dismiss;
+    cands.push(el);
+  }
+  // keep only outermost candidates (avoid acting on nested copies)
+  const overlays = cands.filter((el) => !cands.some((o) => o !== el && o.contains(el)));
+  for (const c of overlays.slice(0, 8)) {
+    const btn = c.__btn || findBtn(c, acceptRx, rejectRx) || findBtn(c, dismissRx, null);
+    if (btn) { try { btn.click(); out.clicked++; continue; } catch (e) {} }
+    try { c.style.setProperty('display', 'none', 'important'); out.hidden++; } catch (e) {}
+  }
+  // 2) generic interstitial modals (sign-in promos, newsletter/app nags, etc.)
+  // that aren't consent banners. Universal & content-safe: only TRUE modals
+  // (role=dialog / aria-modal) are considered, and we only ever click an
+  // explicit close affordance — never blind-hide — so real content modals
+  // (lightboxes, age gates, required dialogs) are left untouched.
+  const closeRx = /^(close|no thanks|no,? thanks|not now|maybe later|dismiss|skip|×|✕|✖|⨯|✗)$/i;
+  const ariaCloseRx = /\b(close|dismiss|no thanks)\b/i;
+  for (const el of document.querySelectorAll('[role="dialog"],[aria-modal="true"]')) {
+    let cs; try { cs = getComputedStyle(el); } catch (e) { continue; }
+    if (!vis(el)) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width < 200 || r.height < 120) continue;          // tooltips/popovers: skip
+    let closeBtn = null;
+    for (const b of el.querySelectorAll('button,a[href],[role="button"]')) {
+      const br = b.getBoundingClientRect();
+      if (br.width < 4 || br.height < 4) continue;
+      const txt = ((b.innerText || b.value || '')).trim();
+      const aria = (b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('title') || '');
+      if ((txt && txt.length <= 20 && closeRx.test(txt)) || ariaCloseRx.test(aria)) { closeBtn = b; break; }
+    }
+    if (closeBtn) { try { closeBtn.click(); out.clicked++; } catch (e) {} }
+  }
+  // undo scroll-lock the banner may have applied
+  document.documentElement.style.setProperty('overflow', 'auto', 'important');
+  if (document.body) {
+    document.body.style.setProperty('overflow', 'auto', 'important');
+    if (getComputedStyle(document.body).position === 'fixed')
+      document.body.style.setProperty('position', 'static', 'important');
+  }
+  return out;
+}"""
 
 async def setup_blocking(context, monitor: Monitor) -> None:
     """Abort ad/tracker network requests for this render (set up on the context
@@ -76,25 +174,74 @@ async def setup_blocking(context, monitor: Monitor) -> None:
         pass
 
 
+async def click_consent(page, monitor: Monitor) -> None:
+    """Click the monitor's configured consent/dismiss selectors in order (accept
+    a cookie banner, close a modal, tick a captcha checkbox, …). Best-effort:
+    a missing/un-clickable selector is skipped. Runs in the main frame and any
+    child frame that contains the selector (consent dialogs are often iframed)."""
+    for sel in getattr(monitor, "consent_clicks", None) or []:
+        sel = (sel or "").strip()
+        if not sel:
+            continue
+        clicked = False
+        try:
+            await page.click(sel, timeout=2500)
+            clicked = True
+        except Exception:
+            for frame in page.frames:
+                if frame is page.main_frame:
+                    continue
+                try:
+                    await frame.click(sel, timeout=1500)
+                    clicked = True
+                    break
+                except Exception:
+                    pass
+        if clicked:
+            try:
+                await page.wait_for_timeout(500)   # let the next step settle
+            except Exception:
+                pass
+
+
 async def hide_banners(page, monitor: Monitor) -> None:
     """Inject the consent-banner-hiding CSS AFTER load (reliable, unlike a
     document-start init script) so banners are gone from both the text and the
     screenshot. Re-applied to child frames where they exist."""
     if not getattr(monitor, "block_annoyances", True):
         return
-    try:
-        await page.add_style_tag(content=_COOKIE_CSS)
-    except Exception:
-        pass
-    # Most consent platforms inject an iframe inside a main-DOM container (which
-    # the CSS above hides); some render the banner inside their own frame too.
-    for frame in page.frames:
-        if frame is page.main_frame:
-            continue
+
+    async def _sweep():
         try:
-            await frame.add_style_tag(content=_COOKIE_CSS)
+            await page.add_style_tag(content=_COOKIE_CSS)
         except Exception:
             pass
+        try:
+            await page.evaluate(_BANNER_HEURISTIC_JS)
+        except Exception:
+            pass
+        # Consent dialogs are frequently rendered inside their own iframe; run the
+        # same generic handler + CSS inside every child frame.
+        for frame in page.frames:
+            if frame is page.main_frame:
+                continue
+            try:
+                await frame.evaluate(_BANNER_HEURISTIC_JS)
+            except Exception:
+                pass
+            try:
+                await frame.add_style_tag(content=_COOKIE_CSS)
+            except Exception:
+                pass
+
+    # Two passes: a second consent layer (or post-accept toast) can appear after
+    # the first is dismissed.
+    await _sweep()
+    try:
+        await page.wait_for_timeout(400)
+    except Exception:
+        pass
+    await _sweep()
 
 
 async def replay_login(page, monitor: Monitor) -> None:
@@ -192,8 +339,10 @@ async def capture(page, response, monitor: Monitor, mobile: bool = True) -> Rend
     # real page via JS a moment after load, as well as late client rendering.
     await _settle_for_content(page)
 
-    # Hide cookie/consent banners now (post-load) so they pollute neither the
-    # captured text nor the screenshot / visual diff.
+    # Accept/dismiss via configured clicks first (reveals content behind hard
+    # consent walls), then hide whatever banners remain — so they pollute neither
+    # the captured text nor the screenshot / visual diff.
+    await click_consent(page, monitor)
     await hide_banners(page, monitor)
 
     try:

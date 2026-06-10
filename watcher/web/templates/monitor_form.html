@@ -199,6 +199,11 @@
           Block ads &amp; hide cookie banners
           <span class="text-slate-500 text-xs">(cleaner screenshots, fewer false-positive changes)</span>
         </label>
+        <div class="sm:col-span-2">
+          <label class="block text-sm font-medium text-slate-300 mb-1.5">Consent / dismiss clicks <span class="text-slate-500 font-normal">· optional override</span></label>
+          <textarea name="consent_clicks" rows="2" placeholder="#accept-cookies&#10;button.close-modal — one CSS selector per line, clicked in order after load" class="field font-mono">{{ '\n'.join(m.consent_clicks) if m and m.consent_clicks else '' }}</textarea>
+          <p class="text-xs text-slate-500 mt-1">Automatic banner handling usually covers this. Add selectors only for stubborn cookie walls, modals, or a captcha checkbox the auto-handler misses.</p>
+        </div>
       </div>
     </section>
 

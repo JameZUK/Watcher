@@ -124,6 +124,7 @@ class Monitor(Base):
     actions: Mapped[list] = mapped_column(JSON, default=list)  # scroll/click/dismiss
     proxy: Mapped[str | None] = mapped_column(String(512), default=None)
     block_annoyances: Mapped[bool] = mapped_column(Boolean, default=True)  # block ads + hide cookie banners
+    consent_clicks: Mapped[list] = mapped_column(JSON, default=list)  # CSS selectors to click after load (accept/dismiss)
 
     # Scheduling
     interval_seconds: Mapped[int] = mapped_column(Integer, default=3600)
