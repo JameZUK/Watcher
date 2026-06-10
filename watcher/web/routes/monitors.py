@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...ai import suggest_watch_items
+from ...ai import configure_monitor, suggest_watch_items, summarize_history
 from ...app_settings import get_app_settings, get_openrouter_key
 from ...auth.login_flows import build_secret_map, cookie_editor_to_storage_state
 from ...auth.users import get_current_user
@@ -263,6 +263,86 @@ async def ai_suggest_watch(
     if not suggestions:
         return JSONResponse({"ok": False, "error": "No suggestions came back — try again."}, status_code=502)
     return JSONResponse({"ok": True, "suggestions": suggestions})
+
+
+@router.post("/monitors/ai-create")
+async def ai_create_monitor(
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Configure + create a monitor from a plain-English goal."""
+    form = await request.form()
+    url = (form.get("url") or "").strip()
+    goal = (form.get("goal") or "").strip()
+    if not (url and goal):
+        return _form_response(request, user, None, error="Enter a URL and a goal for AI setup.", status=400)
+    app = await get_app_settings(session)
+    key = get_openrouter_key(app)
+    if not key:
+        return _form_response(request, user, None, error="AI isn’t configured — an admin must set an OpenRouter key in Settings.", status=400)
+    title, text = await _page_text_for_suggest(session, user, url, None)
+    if not (text or "").strip():
+        return _form_response(request, user, None, error="Couldn’t read that page — check the URL.", status=400)
+    cfg = await configure_monitor(api_key=key, model=app.ai_model, url=url, title=title, page_text=text, goal=goal)
+    if not cfg:
+        return _form_response(request, user, None, error="AI setup failed — try the manual form below.", status=502)
+
+    try:
+        mode = DetectionMode(cfg.get("detection_mode") or "auto")
+    except ValueError:
+        mode = DetectionMode.auto
+    minutes = max(int(cfg.get("interval_minutes") or 60), 1)
+    vdir = cfg.get("value_threshold_dir")
+    vthr = cfg.get("value_threshold") or 0
+    monitor = Monitor(
+        user_id=user.id, url=url, name=(cfg.get("name") or "").strip()[:255] or url,
+        detection_mode=mode, selector=(cfg.get("selector") or "").strip() or None,
+        interval_seconds=max(minutes * 60, settings.min_interval_seconds),
+        ai_enabled=True, ai_watch_intent=(cfg.get("ai_watch_intent") or "").strip() or None,
+        track_value=bool(cfg.get("track_value")),
+        value_threshold=float(vthr) if vthr else None,
+        value_threshold_dir=vdir if vdir in ("below", "above") else None,
+        enabled=True,
+    )
+    session.add(monitor)
+    await session.commit()
+    await session.refresh(monitor)
+    reschedule_monitor(monitor)
+    trigger_now(monitor.id)
+    return RedirectResponse(f"/monitors/{monitor.id}", status_code=303)
+
+
+@router.post("/monitors/{monitor_id}/ai-summary")
+async def ai_summary(
+    monitor_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Summarise a monitor's recent activity with the AI."""
+    monitor = await _owned_monitor(session, user, monitor_id)
+    app = await get_app_settings(session)
+    key = get_openrouter_key(app)
+    if not key:
+        return JSONResponse({"ok": False, "error": "AI isn’t configured."}, status_code=400)
+    rows = (await session.execute(
+        select(Change).where(Change.monitor_id == monitor.id)
+        .order_by(Change.detected_at.desc()).limit(40)
+    )).scalars().all()
+    snaps = (await session.execute(
+        select(Snapshot).where(Snapshot.monitor_id == monitor.id, Snapshot.numeric_value.is_not(None))
+        .order_by(Snapshot.taken_at.desc()).limit(40)
+    )).scalars().all()
+    lines = [f"{c.detected_at:%Y-%m-%d %H:%M}: {c.ai_headline or c.summary}" for c in rows]
+    if snaps:
+        vals = [s.value_label or f"{s.numeric_value:g}" for s in snaps]
+        lines.append("Recent tracked values: " + ", ".join(vals[:20]))
+    if not lines:
+        return JSONResponse({"ok": False, "error": "Nothing to summarise yet."}, status_code=400)
+    text = await summarize_history(api_key=key, model=app.ai_model, name=monitor.name, lines=lines)
+    if not text:
+        return JSONResponse({"ok": False, "error": "Summary failed — try again."}, status_code=502)
+    return JSONResponse({"ok": True, "summary": text})
 
 
 @router.post("/monitors")

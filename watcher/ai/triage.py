@@ -333,3 +333,106 @@ async def extract_value(
         return None
     label = (str(data.get("label") or "").strip() or str(val))[:64]
     return val, label
+
+
+_CONFIG_SCHEMA = {
+    "name": "monitor_config",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "name": {"type": "string"},
+            "detection_mode": {"type": "string", "enum": ["auto", "text", "visual", "element"]},
+            "selector": {"type": "string", "description": "CSS selector for 'element' mode, else empty."},
+            "interval_minutes": {"type": "integer"},
+            "ai_watch_intent": {"type": "string"},
+            "track_value": {"type": "boolean"},
+            "value_threshold": {"type": "number", "description": "0 if none."},
+            "value_threshold_dir": {"type": "string", "enum": ["below", "above", "none"]},
+        },
+        "required": ["name", "detection_mode", "selector", "interval_minutes",
+                     "ai_watch_intent", "track_value", "value_threshold", "value_threshold_dir"],
+    },
+}
+
+_CONFIG_SYSTEM = (
+    "You configure a website-change monitor from the user's goal and the page. "
+    "Choose: a short descriptive name; detection_mode (auto = text+appearance, "
+    "text, visual, or element for one CSS value); selector = a CSS selector ONLY "
+    "for 'element' mode, else empty; interval_minutes (>=15, larger for slow-"
+    "moving pages); ai_watch_intent restating what to alert on in one line; "
+    "track_value true if the goal involves a number (price/stock/rating); "
+    "value_threshold + value_threshold_dir if the user named a target (else 0 / "
+    "'none'). Respond ONLY with the JSON."
+)
+
+
+async def configure_monitor(
+    *, api_key: str, model: str, url: str, title: str | None, page_text: str, goal: str,
+    timeout: float = 40.0,
+) -> dict | None:
+    """Produce a monitor config dict from a plain-English goal. None on failure."""
+    if not api_key or not (page_text or "").strip():
+        return None
+    text = page_text.strip()[:7000]
+    user = (f"URL: {url}\n" + (f"Title: {title}\n" if title else "")
+            + f'User goal: "{goal}"\n\nPage content:\n{text}')
+    body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _CONFIG_SYSTEM},
+            {"role": "user", "content": user},
+        ],
+        "temperature": 0.2,
+        "max_tokens": 400,
+        "response_format": {"type": "json_schema", "json_schema": _CONFIG_SCHEMA},
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(OPENROUTER_URL, json=body, headers=headers)
+        if resp.status_code != 200:
+            logger.warning("OpenRouter configure failed: HTTP %s %s", resp.status_code, resp.text[:200])
+            return None
+        content = resp.json()["choices"][0]["message"]["content"]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("OpenRouter configure error: %s", exc)
+        return None
+    txt = (content or "").strip()
+    s, e = txt.find("{"), txt.rfind("}")
+    if s == -1 or e == -1:
+        return None
+    try:
+        return json.loads(txt[s:e + 1])
+    except json.JSONDecodeError:
+        return None
+
+
+async def summarize_history(
+    *, api_key: str, model: str, name: str, lines: list[str], timeout: float = 40.0,
+) -> str | None:
+    """One-paragraph narrative of a monitor's recent changes/values. None on failure."""
+    if not api_key or not lines:
+        return None
+    user = (f"Monitor: {name}\nRecent changes (newest first):\n"
+            + "\n".join(f"- {ln}" for ln in lines[:60]))
+    body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": "Summarise this website monitor's recent activity in 2-4 plain sentences a person can skim — trends, notable changes, and current state. No preamble."},
+            {"role": "user", "content": user},
+        ],
+        "temperature": 0.3,
+        "max_tokens": 300,
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(OPENROUTER_URL, json=body, headers=headers)
+        if resp.status_code != 200:
+            return None
+        return (resp.json()["choices"][0]["message"]["content"] or "").strip() or None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("OpenRouter summarize error: %s", exc)
+        return None

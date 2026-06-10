@@ -60,7 +60,11 @@ async def _gc_blobs() -> None:
     """Delete blob files no longer referenced by any snapshot or change."""
     async with SessionLocal() as session:
         live: set[str] = set()
-        for col in (Snapshot.html_blob, Snapshot.screenshot_blob, Change.diff_blob):
+        blob_cols = (
+            Snapshot.html_blob, Snapshot.screenshot_blob, Snapshot.screenshot_mobile_blob,
+            Change.diff_blob, Change.visual_blob, Change.visual_mobile_blob,
+        )
+        for col in blob_cols:
             live.update(
                 k for k in (await session.execute(select(col))).scalars().all() if k
             )
