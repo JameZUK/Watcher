@@ -29,6 +29,7 @@
   {% set c = it.change %}
   <div class="flex items-center gap-3 sm:gap-4 px-4 sm:px-5 py-4 hover:bg-white/[.03] transition">
     <span class="shrink-0 pill {{ 'pill-amber' if not c.acknowledged else '' }}">{{ mode_label.get(c.change_type.value, c.change_type.value) }}</span>
+    {% if c.ai_category %}<span class="shrink-0 pill hidden sm:inline {{ 'pill-amber' if c.ai_importance == 'high' else '' }}">{{ c.ai_category }}{% if c.ai_importance in ['low','noise'] %} · {{ c.ai_importance }}{% endif %}</span>{% endif %}
     <a href="/monitors/{{ c.monitor_id }}?change={{ c.id }}" class="min-w-0 flex-1 select-none">
       <p class="font-medium text-white truncate">{{ it.monitor_name or 'Monitor' }}</p>
       <p class="text-sm text-slate-400 truncate">{{ c.summary }}</p>

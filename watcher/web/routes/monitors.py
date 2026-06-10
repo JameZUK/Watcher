@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import re
+from datetime import timedelta
+
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...auth.login_flows import build_secret_map
+from ...ai import suggest_watch_items
+from ...app_settings import get_app_settings, get_openrouter_key
+from ...auth.login_flows import build_secret_map, cookie_editor_to_storage_state
 from ...auth.users import get_current_user
 from ...config import settings
 from ...db import get_session
@@ -19,8 +25,14 @@ from ...models import (
     LoginFlow,
     Monitor,
     Snapshot,
+    SnapshotStatus,
     User,
+    utcnow,
 )
+
+# How long a manually pasted cookie session is trusted before re-prompting.
+# Successful checks roll this forward via mark_session(), so it self-maintains.
+COOKIE_SESSION_TTL = timedelta(days=7)
 from ...scheduler import reschedule_monitor, trigger_now, unschedule_monitor
 from ...storage import blobs
 from .. import templates
@@ -80,47 +92,168 @@ def _apply_form(monitor: Monitor, form) -> None:
     monitor.notify_channels = channels or ["inbox"]
     monitor.webhook_url = (form.get("webhook_url") or "").strip() or None
 
+    # AI triage (per-monitor)
+    monitor.ai_enabled = _bool(form, "ai_enabled")
+    monitor.ai_watch_intent = (form.get("ai_watch_intent") or "").strip() or None
+    policy = (form.get("ai_policy") or "").strip()
+    monitor.ai_policy = policy if policy in ("silent", "label", "drop") else None
+
 
 def _build_login_flow(monitor: Monitor, form) -> LoginFlow | None:
-    if not _bool(form, "login_enabled"):
-        return None
-    steps = []
+    """Reconcile a monitor's LoginFlow from the form.
+
+    Two orthogonal capabilities live on a flow: replayed login *steps* (the
+    "requires login" section) and an injected/captured *session* (pasted Cookie
+    Editor JSON). Either, both, or neither may be present. Returns the flow to
+    persist, or None when nothing remains (caller deletes any existing flow).
+
+    Raises ValueError if the pasted cookie JSON is malformed.
+    """
+    # --- Step-based login (only when the "requires login" box is ticked) ---
+    steps: list[dict] = []
     secrets_plain: dict[str, str] = {}
-    if form.get("login_url"):
-        steps.append({"action": "goto", "url": form["login_url"].strip()})
-    if form.get("login_user_selector"):
-        secrets_plain["username"] = form.get("login_username", "")
-        steps.append({"action": "fill", "selector": form["login_user_selector"].strip(),
-                      "secret": "username"})
-    if form.get("login_pass_selector"):
-        secrets_plain["password"] = form.get("login_password", "")
-        steps.append({"action": "fill", "selector": form["login_pass_selector"].strip(),
-                      "secret": "password"})
-    if form.get("login_submit_selector"):
-        steps.append({"action": "click", "selector": form["login_submit_selector"].strip()})
-    if form.get("login_success_selector"):
-        steps.append({"action": "wait", "selector": form["login_success_selector"].strip()})
-    if not steps:
-        return None
+    login_enabled = _bool(form, "login_enabled")
+    if login_enabled:
+        if form.get("login_url"):
+            steps.append({"action": "goto", "url": form["login_url"].strip()})
+        if form.get("login_user_selector"):
+            secrets_plain["username"] = form.get("login_username", "")
+            steps.append({"action": "fill", "selector": form["login_user_selector"].strip(),
+                          "secret": "username"})
+        if form.get("login_pass_selector"):
+            secrets_plain["password"] = form.get("login_password", "")
+            steps.append({"action": "fill", "selector": form["login_pass_selector"].strip(),
+                          "secret": "password"})
+        if form.get("login_submit_selector"):
+            steps.append({"action": "click", "selector": form["login_submit_selector"].strip()})
+        if form.get("login_success_selector"):
+            steps.append({"action": "wait", "selector": form["login_success_selector"].strip()})
+
+    # --- Pasted Cookie Editor JSON (independent of the login checkbox) ---
+    cookies = cookie_editor_to_storage_state(form.get("session_cookies_json", ""))  # may raise
+    clear_session = _bool(form, "session_cookies_clear")
+
     flow = monitor.login_flow or LoginFlow(monitor_id=monitor.id)
+
+    # Steps mirror the login section exactly: unticking the box removes them.
     flow.steps = steps
-    # Preserve previously stored secrets if a password field was left blank.
-    new_secrets = build_secret_map({k: v for k, v in secrets_plain.items() if v})
-    flow.encrypted_secrets = {**(flow.encrypted_secrets or {}), **new_secrets}
-    flow.session_state = None  # force re-login after a flow change
-    flow.session_valid_until = None
+    if login_enabled:
+        new_secrets = build_secret_map({k: v for k, v in secrets_plain.items() if v})
+        flow.encrypted_secrets = {**(flow.encrypted_secrets or {}), **new_secrets}
+        if steps:
+            # Newly configured steps invalidate any stale captured session,
+            # unless the same submit also pastes a fresh cookie set (below).
+            flow.session_state = None
+            flow.session_valid_until = None
+    else:
+        flow.encrypted_secrets = {}
+
+    # Session cookies take precedence and are applied last.
+    if cookies is not None:
+        flow.session_state = cookies
+        flow.session_valid_until = utcnow() + COOKIE_SESSION_TTL
+    if clear_session:
+        flow.session_state = None
+        flow.session_valid_until = None
+
+    # Nothing left to do → drop the flow entirely.
+    if not flow.steps and not flow.session_state:
+        return None
     return flow
+
+
+_TAG_BLOCK_RE = re.compile(r"<(script|style|noscript)\b[^>]*>.*?</\1>", re.I | re.S)
+_TAG_RE = re.compile(r"<[^>]+>")
+_WS_RE = re.compile(r"\s+")
+
+
+def _html_to_text(html: str) -> str:
+    """Crude HTML → visible text for feeding the suggestion model."""
+    html = _TAG_BLOCK_RE.sub(" ", html or "")
+    text = _TAG_RE.sub(" ", html)
+    for a, b in (("&nbsp;", " "), ("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&#39;", "'"), ("&quot;", '"')):
+        text = text.replace(a, b)
+    return _WS_RE.sub(" ", text).strip()
+
+
+async def _page_text_for_suggest(session, user, url, monitor_id):
+    """(title, text) for AI suggestions: prefer a recent capture, else fetch raw."""
+    if monitor_id:
+        snap = (
+            await session.execute(
+                select(Snapshot)
+                .join(Monitor, Monitor.id == Snapshot.monitor_id)
+                .where(
+                    Snapshot.monitor_id == monitor_id,
+                    Monitor.user_id == user.id,
+                    Snapshot.status == SnapshotStatus.ok,
+                )
+                .order_by(Snapshot.id.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if snap and (snap.rendered_text or "").strip():
+            return snap.title, snap.rendered_text
+    try:
+        async with httpx.AsyncClient(
+            timeout=20, follow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; WatcherBot/1.0)"},
+        ) as c:
+            r = await c.get(url)
+        if r.status_code >= 400:
+            return None, ""
+        return None, _html_to_text(r.text)[:12000]
+    except Exception:
+        return None, ""
 
 
 # --- routes ----------------------------------------------------------------
 
 
-@router.get("/monitors/new")
-async def new_monitor(request: Request, user: User = Depends(get_current_user)):
+def _form_response(request, user, monitor, *, error=None, cookies_json="", status=200):
     return templates.TemplateResponse(
         request, "monitor_form.html",
-        {"user": user, "monitor": None, "engines": list(Engine), "modes": list(DetectionMode)},
+        {"user": user, "monitor": monitor, "engines": list(Engine),
+         "modes": list(DetectionMode), "error": error, "cookies_json": cookies_json},
+        status_code=status,
     )
+
+
+@router.get("/monitors/new")
+async def new_monitor(request: Request, user: User = Depends(get_current_user)):
+    return _form_response(request, user, None)
+
+
+@router.post("/monitors/ai-suggest")
+async def ai_suggest_watch(
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Suggest 'what to watch for' items by reviewing the page with the AI."""
+    data = await request.json()
+    url = (data.get("url") or "").strip()
+    raw_id = data.get("monitor_id")
+    monitor_id = int(raw_id) if str(raw_id).isdigit() else None
+    if not url:
+        return JSONResponse({"ok": False, "error": "Enter a URL to watch first."}, status_code=400)
+    app = await get_app_settings(session)
+    key = get_openrouter_key(app)
+    if not key:
+        return JSONResponse(
+            {"ok": False, "error": "AI isn’t configured — an admin must set an OpenRouter key in Settings."},
+            status_code=400,
+        )
+    title, text = await _page_text_for_suggest(session, user, url, monitor_id)
+    if not (text or "").strip():
+        return JSONResponse(
+            {"ok": False, "error": "Couldn’t read this page. Save the monitor and run a check, then try again."},
+            status_code=502,
+        )
+    suggestions = await suggest_watch_items(api_key=key, model=app.ai_model, url=url, title=title, page_text=text)
+    if not suggestions:
+        return JSONResponse({"ok": False, "error": "No suggestions came back — try again."}, status_code=502)
+    return JSONResponse({"ok": True, "suggestions": suggestions})
 
 
 @router.post("/monitors")
@@ -132,9 +265,13 @@ async def create_monitor(
     form = await request.form()
     monitor = Monitor(user_id=user.id)
     _apply_form(monitor, form)
+    try:
+        flow = _build_login_flow(monitor, form)
+    except ValueError as exc:
+        return _form_response(request, user, None, error=str(exc),
+                              cookies_json=form.get("session_cookies_json", ""), status=400)
     session.add(monitor)
     await session.flush()
-    flow = _build_login_flow(monitor, form)
     if flow is not None:
         flow.monitor_id = monitor.id
         session.add(flow)
@@ -154,10 +291,7 @@ async def edit_monitor(
     session: AsyncSession = Depends(get_session),
 ):
     monitor = await _owned_monitor(session, user, monitor_id)
-    return templates.TemplateResponse(
-        request, "monitor_form.html",
-        {"user": user, "monitor": monitor, "engines": list(Engine), "modes": list(DetectionMode)},
-    )
+    return _form_response(request, user, monitor)
 
 
 @router.post("/monitors/{monitor_id}")
@@ -170,7 +304,12 @@ async def update_monitor(
     monitor = await _owned_monitor(session, user, monitor_id)
     form = await request.form()
     _apply_form(monitor, form)
-    flow = _build_login_flow(monitor, form)
+    try:
+        flow = _build_login_flow(monitor, form)
+    except ValueError as exc:
+        # Don't commit the in-memory edits; re-render with the submitted values.
+        return _form_response(request, user, monitor, error=str(exc),
+                              cookies_json=form.get("session_cookies_json", ""), status=400)
     if flow is not None and flow.monitor_id is None:
         flow.monitor_id = monitor.id
         session.add(flow)
@@ -272,10 +411,12 @@ def _diff_payload(change: Change) -> dict:
     """Prepare diff display data: text lines and/or a visual overlay."""
     has_text = bool(change.diff_blob)
     has_visual = bool(change.visual_blob)
+    has_visual_mobile = bool(change.visual_mobile_blob)
     lines: list[str] = []
     if has_text:
         lines = (blobs.get_text(change.diff_blob) or "").splitlines()
-    return {"has_text": has_text, "has_visual": has_visual, "lines": lines}
+    return {"has_text": has_text, "has_visual": has_visual,
+            "has_visual_mobile": has_visual_mobile, "lines": lines}
 
 
 @router.get("/monitors/{monitor_id}/snapshots/{snapshot_id}/image")
@@ -303,14 +444,18 @@ async def snapshot_image(
 async def change_overlay(
     monitor_id: int,
     change_id: int,
+    v: str | None = None,  # "mobile" for the mobile-viewport overlay
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
     await _owned_monitor(session, user, monitor_id)
     change = await session.get(Change, change_id)
-    if not change or change.monitor_id != monitor_id or not change.visual_blob:
+    if not change or change.monitor_id != monitor_id:
         raise HTTPException(404)
-    data = blobs.get_bytes(change.visual_blob)
+    # Prefer the requested variant; fall back to the desktop overlay.
+    key = change.visual_mobile_blob if v == "mobile" else change.visual_blob
+    key = key or change.visual_blob or change.visual_mobile_blob
+    data = blobs.get_bytes(key) if key else None
     if data is None:
         raise HTTPException(404)
     return Response(content=data, media_type="image/png")

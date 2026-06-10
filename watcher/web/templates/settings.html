@@ -9,6 +9,79 @@
     <p class="text-sm text-slate-400">Signed in as <span class="font-medium text-slate-200">{{ user.email }}</span></p>
   </section>
 
+  <section class="glass rounded-2xl p-5 sm:p-6" x-data>
+    <div class="flex flex-wrap items-start justify-between gap-4">
+      <div class="min-w-0">
+        <h2 class="font-semibold text-white">Visual effects</h2>
+        <p class="text-sm text-slate-400 mt-0.5 max-w-md">Lite mode drops blur, glows and animations for smoother
+          scrolling on devices without graphics acceleration. <span class="text-slate-300">Auto</span> picks for you
+          and remembers per device.</p>
+      </div>
+      <div class="flex p-0.5 rounded-lg bg-white/5 border border-white/10 text-sm shrink-0">
+        {% for opt in ['auto','full','lite'] %}
+        <button type="button" @click="$store.perf.set('{{ opt }}')"
+                :class="$store.perf.mode==='{{ opt }}' ? 'bg-white/15 text-white' : 'text-slate-400'"
+                class="px-3 py-1.5 rounded-md transition capitalize">{{ opt }}</button>
+        {% endfor %}
+      </div>
+    </div>
+    <p class="text-xs text-slate-500 mt-3" x-show="$store.perf.mode==='auto'" x-cloak>
+      <template x-if="$store.perf.probing">‍<span>Detecting your device…</span></template>
+      <template x-if="!$store.perf.probing">
+        <span>Auto-detected: <span class="text-slate-300 capitalize" x-text="$store.perf.detected || 'pending'"></span>.
+          <button type="button" @click="$store.perf.redetect()" class="text-brand-400 hover:underline">Re-check</button></span>
+      </template>
+    </p>
+  </section>
+
+  {% if is_admin %}
+  <section class="glass rounded-2xl p-5 sm:p-6" x-data="aiTest()">
+    <div class="flex items-center justify-between gap-3">
+      <h2 class="font-semibold text-white">AI change triage <span class="pill pill-amber">admin</span></h2>
+      <span class="text-xs px-2 py-0.5 rounded-full {{ 'bg-emerald-500/15 text-emerald-300' if ai_key_set else 'bg-white/10 text-slate-400' }}">{{ 'key set' if ai_key_set else 'no key' }}</span>
+    </div>
+    <p class="text-sm text-slate-400 mt-1 max-w-xl">Triage detected changes with an OpenRouter model — writes a human headline
+      (e.g. <span class="text-slate-300">“Price dropped £299 → £263.99”</span>), categorises them, and mutes noise. The key is
+      encrypted at rest, used server-side only, and shared across all monitors. <span class="text-slate-500">Page content is sent to OpenRouter for analysis.</span></p>
+
+    <form method="post" action="/settings/ai" class="mt-4 space-y-4">
+      <label class="flex items-center gap-2.5">
+        <input type="checkbox" name="ai_enabled" {{ 'checked' if ai_enabled else '' }} class="rounded bg-white/10 border-white/20 text-brand-500">
+        <span class="text-sm text-slate-200">Enable AI triage</span>
+      </label>
+      <div class="grid sm:grid-cols-2 gap-4">
+        <div class="sm:col-span-2">
+          <label class="block text-sm font-medium text-slate-300 mb-1.5">OpenRouter API key</label>
+          <input type="password" name="openrouter_key" autocomplete="off"
+                 placeholder="{{ '•••••••••••• (leave blank to keep)' if ai_key_set else 'sk-or-…' }}" class="field">
+          {% if ai_key_set %}
+          <label class="flex items-center gap-2 mt-2 text-xs text-slate-400">
+            <input type="checkbox" name="openrouter_key_clear" class="rounded bg-white/10 border-white/20 text-brand-500"> Clear the stored key
+          </label>
+          {% endif %}
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-1.5">Model</label>
+          <input type="text" name="ai_model" value="{{ ai_model }}" placeholder="google/gemini-2.5-flash-lite" class="field font-mono text-xs">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-1.5">Low-value changes</label>
+          <select name="ai_low_value_policy" class="field">
+            <option value="silent" {{ 'selected' if ai_policy=='silent' else '' }}>Record, don't notify</option>
+            <option value="label"  {{ 'selected' if ai_policy=='label'  else '' }}>Notify, labelled low</option>
+            <option value="drop"   {{ 'selected' if ai_policy=='drop'   else '' }}>Drop entirely</option>
+          </select>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <button class="btn btn-primary text-sm">Save</button>
+        <button type="button" @click="run()" :disabled="busy" class="btn btn-ghost text-sm" x-text="busy ? 'Testing…' : 'Test key'"></button>
+        <span x-show="msg" x-cloak class="text-xs" :class="ok ? 'text-emerald-300' : 'text-red-300'" x-text="msg"></span>
+      </div>
+    </form>
+  </section>
+  {% endif %}
+
   <section class="glass rounded-2xl p-5 sm:p-6" x-data="pushManager()" x-init="init()">
     <div class="flex items-start justify-between gap-4">
       <div>
@@ -50,6 +123,19 @@
 {% endblock %}
 {% block scripts %}
 <script>
+function aiTest(){return {
+  busy:false, ok:false, msg:'',
+  async run(){
+    this.busy=true; this.msg='';
+    try{
+      const r=await fetch('/settings/ai/test',{method:'POST'});
+      const d=await r.json();
+      this.ok=!!d.ok;
+      this.msg = d.ok ? `OK — “${d.headline}” [${d.category}/${d.importance}]` : (d.error||'Failed');
+    }catch(e){ this.ok=false; this.msg='Request failed'; }
+    this.busy=false;
+  },
+}}
 const VAPID_PUBLIC_KEY = "{{ vapid_public_key }}";
 function urlB64ToUint8Array(b64){const pad='='.repeat((4-b64.length%4)%4);const s=(b64+pad).replace(/-/g,'+').replace(/_/g,'/');const raw=atob(s);return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));}
 function pushManager(){return {

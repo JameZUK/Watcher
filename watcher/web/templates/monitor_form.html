@@ -22,6 +22,13 @@
         x-data="{ mode: '{{ m.detection_mode.value if m else 'auto' }}', login: {{ 'true' if m and m.login_flow else 'false' }} }"
         class="space-y-5">
 
+    {% if error %}
+    <div class="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 flex items-start gap-3">
+      <svg viewBox="0 0 24 24" class="h-5 w-5 text-red-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+      <p class="text-sm text-red-200">{{ error }}</p>
+    </div>
+    {% endif %}
+
     <!-- Basics -->
     <section class="glass rounded-2xl p-5 sm:p-6 space-y-4">
       <div>
@@ -165,6 +172,93 @@
       </div>
     </section>
 
+    <!-- Session cookies (Cookie Editor JSON) -->
+    {% set sess = (m.login_flow.session_state if m and m.login_flow else None) %}
+    <section class="glass rounded-2xl p-5 sm:p-6"
+             x-data="{ open: {{ 'true' if (sess and sess.cookies) or error else 'false' }} }">
+      <button type="button" @click="open=!open" class="flex w-full items-center justify-between">
+        <h2 class="font-semibold text-white">Session cookies
+          <span class="text-slate-500 font-normal text-sm">· bypass bot checks / reuse a logged-in session</span>
+        </h2>
+        <div class="flex items-center gap-2.5">
+          {% if sess and sess.cookies %}<span class="pill">{{ sess.cookies|length }} stored</span>{% endif %}
+          <svg viewBox="0 0 24 24" class="h-5 w-5 text-slate-400 transition" :class="open && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+        </div>
+      </button>
+      <div x-show="open" x-cloak x-transition class="mt-4 space-y-3">
+        <p class="text-xs text-slate-500 leading-relaxed">
+          Paste a JSON export from the
+          <a href="https://cookie-editor.com/" target="_blank" class="text-brand-400 hover:underline">Cookie&nbsp;Editor</a>
+          extension (open it on the target site → <span class="text-slate-400">Export → JSON</span>). Watcher attaches these
+          cookies on every check, so it can ride a clearance you already passed in your own browser
+          (e.g. DataDome / Cloudflare) or reuse a logged-in session. Successful checks roll the cookies
+          forward automatically, so the session keeps itself fresh.
+        </p>
+        {% if sess and sess.cookies %}
+        <p class="text-xs text-slate-400">
+          {{ sess.cookies|length }} cookie(s) stored{% if m.login_flow.session_valid_until %} ·
+          trusted until {{ m.login_flow.session_valid_until.strftime('%Y-%m-%d %H:%M UTC') }}{% endif %}.
+          Paste below to replace them.
+        </p>
+        {% endif %}
+        <textarea name="session_cookies_json" rows="5"
+                  placeholder='[{"name":"datadome","value":"…","domain":".example.com","path":"/","secure":true}]'
+                  class="field font-mono text-xs">{{ cookies_json or '' }}</textarea>
+        {% if sess and sess.cookies %}
+        <label class="flex items-center gap-2.5 text-sm text-slate-300">
+          <input type="checkbox" name="session_cookies_clear" class="rounded bg-white/10 border-white/20 text-brand-500">
+          Clear the stored cookies for this monitor
+        </label>
+        {% endif %}
+      </div>
+    </section>
+
+    <!-- AI triage -->
+    <section class="glass rounded-2xl p-5 sm:p-6 space-y-4"
+             x-data='aiSection({ ai: {{ "true" if (m.ai_enabled if m else true) else "false" }}, intent: {{ (m.ai_watch_intent if m and m.ai_watch_intent else "")|tojson }}, monitorId: {{ m.id if m else "null" }} })'>
+      <label class="flex items-center gap-2.5">
+        <input type="checkbox" name="ai_enabled" x-model="ai" class="rounded bg-white/10 border-white/20 text-brand-500">
+        <span class="font-semibold text-white">AI triage for this monitor</span>
+      </label>
+      <p class="text-xs text-slate-500 -mt-2">Writes a human headline for each change and rates importance. Needs the shared key set by an admin in <a href="/settings" class="text-brand-400 hover:underline">Settings</a>.</p>
+      <div x-show="ai" x-cloak x-transition class="space-y-4">
+        <div>
+          <div class="flex items-center justify-between gap-2 mb-1.5">
+            <label class="block text-sm font-medium text-slate-300">What to watch for <span class="text-slate-500 font-normal">· optional</span></label>
+            <button type="button" @click="generate()" :disabled="loading"
+                    class="btn btn-ghost !py-1 !px-2.5 text-xs inline-flex items-center gap-1.5 disabled:opacity-50">
+              <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg>
+              <span x-text="loading ? 'Reviewing page…' : 'AI suggest'"></span>
+            </button>
+          </div>
+          <textarea name="ai_watch_intent" x-model="intent" rows="3" placeholder="e.g. Alert me if the price drops below £250, or if it comes back in stock" class="field"></textarea>
+          <p class="text-xs text-red-300 mt-1" x-show="error" x-cloak x-text="error"></p>
+          <div x-show="suggestions.length" x-cloak class="mt-2.5">
+            <p class="text-xs text-slate-500 mb-1.5">Tap to add to the box:</p>
+            <div class="flex flex-wrap gap-2">
+              <template x-for="s in suggestions" :key="s">
+                <button type="button" @click="toggle(s)"
+                        :class="has(s) ? 'border-brand-500 bg-brand-500/15 text-white' : 'border-white/10 bg-white/[.03] text-slate-300 hover:border-white/25'"
+                        class="text-xs px-3 py-1.5 rounded-xl border transition inline-flex items-center gap-1.5 text-left max-w-full">
+                  <span x-text="has(s) ? '✓' : '+'" class="opacity-70 shrink-0"></span><span x-text="s"></span>
+                </button>
+              </template>
+            </div>
+          </div>
+          <p class="text-xs text-slate-500 mt-1.5">The AI rates a change's importance against this — matching changes are flagged high, unrelated ones muted.</p>
+        </div>
+        <div class="max-w-xs">
+          <label class="block text-sm font-medium text-slate-300 mb-1.5">Low-value changes</label>
+          <select name="ai_policy" class="field">
+            <option value="" {{ 'selected' if not (m and m.ai_policy) else '' }}>Use global default</option>
+            <option value="silent" {{ 'selected' if m and m.ai_policy=='silent' else '' }}>Record, don't notify</option>
+            <option value="label"  {{ 'selected' if m and m.ai_policy=='label'  else '' }}>Notify, labelled low</option>
+            <option value="drop"   {{ 'selected' if m and m.ai_policy=='drop'   else '' }}>Drop entirely</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
     <!-- Notifications -->
     <section class="glass rounded-2xl p-5 sm:p-6 space-y-4" x-data="{ channels: {{ (m.notify_channels if m else ['inbox'])|tojson }} }">
       <h2 class="font-semibold text-white">Notify me via</h2>
@@ -190,4 +284,37 @@
     </div>
   </form>
 </div>
+{% endblock %}
+{% block scripts %}
+<script>
+function aiSection(opts){return {
+  ai: !!opts.ai, intent: opts.intent || '', monitorId: opts.monitorId || null,
+  loading: false, error: '', suggestions: [],
+  _line(s){ return '- ' + s; },
+  has(s){ const l = this._line(s); return this.intent.split('\n').some(x => x.trim() === l); },
+  toggle(s){
+    const l = this._line(s);
+    if (this.has(s)) {
+      this.intent = this.intent.split('\n').filter(x => x.trim() !== l).join('\n').trim();
+    } else {
+      this.intent = (this.intent.trim() ? this.intent.trim() + '\n' : '') + l;
+    }
+  },
+  async generate(){
+    const url = (document.querySelector('input[name=url]')?.value || '').trim();
+    if (!url){ this.error = 'Enter a URL to watch first.'; return; }
+    this.loading = true; this.error = ''; this.suggestions = [];
+    try {
+      const r = await fetch('/monitors/ai-suggest', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, monitor_id: this.monitorId }),
+      });
+      const d = await r.json();
+      if (d.ok) { this.suggestions = d.suggestions || []; if (!this.suggestions.length) this.error = 'No suggestions came back.'; }
+      else this.error = d.error || 'Failed to generate suggestions.';
+    } catch (e) { this.error = 'Request failed.'; }
+    this.loading = false;
+  },
+}}
+</script>
 {% endblock %}
