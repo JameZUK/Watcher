@@ -124,6 +124,61 @@ def test_dispatch_digest_routing():
     assert _run(_t)
 
 
+# --- CSRF origin guard -----------------------------------------------------
+
+def test_csrf_origin_guard():
+    async def _t():
+        from watcher.main import create_app
+        transport = httpx.ASGITransport(app=create_app())
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            # cross-origin unsafe request is blocked before reaching the handler
+            r = await c.post("/changes/ack-all", headers={"Origin": "http://evil.test"})
+            assert r.status_code == 403
+            # same-origin passes the guard (then 401 for being unauthenticated)
+            r = await c.post("/changes/ack-all", headers={"Origin": "http://t"})
+            assert r.status_code != 403
+            # no Origin (e.g. curl) passes the guard too
+            r = await c.post("/changes/ack-all")
+            assert r.status_code != 403
+        return True
+
+    assert _run(_t)
+
+
+# --- delivery: notified only when actually delivered -----------------------
+
+def test_dispatch_notified_only_when_delivered():
+    async def _t():
+        from watcher.auth.security import hash_password
+        from watcher.models import Change, DetectionMode, Monitor, Snapshot, User
+        from watcher.notify import dispatch
+        async with SessionLocal() as s:
+            u = User(email=_email(), password_hash=hash_password("x"))  # digest off
+            s.add(u); await s.flush()
+            # external-only channel with no destination configured → can't deliver
+            m_ext = Monitor(user_id=u.id, url="https://x.test", name="E", notify_channels=["telegram"])
+            m_inbox = Monitor(user_id=u.id, url="https://y.test", name="I", notify_channels=["inbox"])
+            s.add_all([m_ext, m_inbox]); await s.flush()
+            snap = Snapshot(monitor_id=m_ext.id); s.add(snap); await s.flush()
+
+            ext = Change(monitor_id=m_ext.id, to_snapshot_id=snap.id, change_type=DetectionMode.auto,
+                         summary="s", ai_importance="high")
+            s.add(ext); await s.flush()
+            await dispatch(s, m_ext, ext)
+            assert ext.notified is False    # nothing delivered → retry via digest
+
+            snap2 = Snapshot(monitor_id=m_inbox.id); s.add(snap2); await s.flush()
+            ib = Change(monitor_id=m_inbox.id, to_snapshot_id=snap2.id, change_type=DetectionMode.auto,
+                        summary="s", ai_importance="high")
+            s.add(ib); await s.flush()
+            await dispatch(s, m_inbox, ib)
+            assert ib.notified is True       # inbox always counts as delivered
+            await s.rollback()
+        return True
+
+    assert _run(_t)
+
+
 # --- reliability: auto-pause after N failures ------------------------------
 
 def test_auto_pause_after_failures():

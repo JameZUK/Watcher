@@ -72,10 +72,10 @@ def test_threshold_crossing():
 
 def test_adapt_interval():
     from watcher.runner import _adapt_interval
-    fast = N(interval_seconds=3600, adaptive_interval=True)
+    fast = N(id=1, interval_seconds=3600, adaptive_interval=True)
     _adapt_interval(fast, changed=True)
     assert fast.interval_seconds == 1800           # halved when changing
-    slow = N(interval_seconds=3600, adaptive_interval=True)
+    slow = N(id=1, interval_seconds=3600, adaptive_interval=True)
     _adapt_interval(slow, changed=False)
     assert slow.interval_seconds > 3600            # backs off when stable
 
@@ -94,6 +94,20 @@ def test_quiet_hours():
 
 
 # --- HTML→text for AI suggestions ------------------------------------------
+
+def test_netsec_url_guards():
+    from watcher.netsec import validate_monitor_url, validate_public_url
+    # scheme guard (no DNS needed)
+    assert validate_monitor_url("file:///etc/passwd")
+    assert validate_monitor_url("javascript:alert(1)")
+    assert validate_monitor_url("data:text/html,x")
+    assert validate_monitor_url("https://example.com/p") is None
+    # SSRF guard against literal internal IPs (resolve without network)
+    assert validate_public_url("http://127.0.0.1/")
+    assert validate_public_url("http://169.254.169.254/latest/meta-data/")
+    assert validate_public_url("http://[::1]/")
+    assert validate_public_url("http://10.0.0.5/")
+
 
 def test_html_to_text():
     from watcher.web.routes.monitors import _html_to_text
