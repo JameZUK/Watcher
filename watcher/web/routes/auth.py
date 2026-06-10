@@ -1,4 +1,4 @@
-"""Registration, login, logout."""
+"""Registration, login (with optional TOTP 2FA), logout."""
 
 from __future__ import annotations
 
@@ -7,6 +7,8 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...app_settings import get_app_settings
+from ...auth.otp import user_secret, verify
 from ...auth.users import authenticate, create_user, get_by_email
 from ...config import settings
 from ...db import get_session
@@ -23,11 +25,21 @@ def _rate_ok(request: Request, scope: str) -> bool:
 
 
 async def _registration_allowed(session: AsyncSession) -> bool:
-    """Open registration only if explicitly enabled, or to bootstrap the first
-    (admin) account when no users exist yet."""
-    if settings.registration_open:
+    """Allow registration when an admin has opened it (or the env default), or to
+    bootstrap the very first account when no users exist yet."""
+    if (await session.execute(select(func.count()).select_from(User))).scalar_one() == 0:
         return True
-    return (await session.execute(select(func.count()).select_from(User))).scalar_one() == 0
+    app = await get_app_settings(session)
+    return bool(app.registration_open or settings.registration_open)
+
+
+async def _complete_login(request: Request, app, user: User):
+    request.session.clear()  # rotate the session on auth (anti-fixation)
+    request.session["user_id"] = user.id
+    # If 2FA is mandatory and this account hasn't set it up, send them to do so.
+    if app.force_otp and not user.otp_enabled:
+        return RedirectResponse("/account?err=otp_required", status_code=303)
+    return RedirectResponse("/", status_code=303)
 
 
 @router.get("/login")
@@ -57,10 +69,37 @@ async def login(
             {"mode": "login", "error": "Invalid email or password.", "email": email},
             status_code=401,
         )
-    reset(f"login:{client_ip(request)}")  # successful auth clears the throttle
-    request.session.clear()  # rotate the session on auth (anti-fixation)
-    request.session["user_id"] = user.id
-    return RedirectResponse("/", status_code=303)
+    reset(f"login:{client_ip(request)}")
+    if user.otp_enabled:
+        # Hold the (password-verified) user pending a valid 2FA code.
+        request.session.clear()
+        request.session["otp_uid"] = user.id
+        return templates.TemplateResponse(request, "login.html", {"mode": "otp"})
+    app = await get_app_settings(session)
+    return await _complete_login(request, app, user)
+
+
+@router.post("/login/otp")
+async def login_otp(
+    request: Request,
+    code: str = Form(...),
+    session: AsyncSession = Depends(get_session),
+):
+    uid = request.session.get("otp_uid")
+    if not uid:
+        return RedirectResponse("/login", status_code=303)
+    if not _rate_ok(request, "otp"):
+        return templates.TemplateResponse(
+            request, "login.html",
+            {"mode": "otp", "error": "Too many attempts — please wait and try again."}, status_code=429)
+    user = await session.get(User, uid)
+    if user is None or not user.is_active or not verify(user_secret(user), code):
+        return templates.TemplateResponse(
+            request, "login.html",
+            {"mode": "otp", "error": "Invalid authentication code."}, status_code=401)
+    reset(f"otp:{client_ip(request)}")
+    app = await get_app_settings(session)
+    return await _complete_login(request, app, user)
 
 
 @router.get("/register")
@@ -103,9 +142,8 @@ async def register(
             status_code=400,
         )
     user = await create_user(session, email, password)
-    request.session.clear()  # rotate the session on auth (anti-fixation)
-    request.session["user_id"] = user.id
-    return RedirectResponse("/", status_code=303)
+    app = await get_app_settings(session)
+    return await _complete_login(request, app, user)
 
 
 @router.post("/logout")

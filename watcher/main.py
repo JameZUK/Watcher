@@ -15,7 +15,17 @@ from .config import settings
 from .db import init_db
 from .scheduler import schedule_all, start_scheduler, stop_scheduler
 from .web import STATIC_DIR
-from .web.routes import api, auth, changes, dashboard, groups, monitors, settings_routes
+from .web.routes import (
+    account,
+    admin,
+    api,
+    auth,
+    changes,
+    dashboard,
+    groups,
+    monitors,
+    settings_routes,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -136,6 +146,8 @@ def create_app() -> FastAPI:
     app.include_router(groups.router)
     app.include_router(changes.router)
     app.include_router(settings_routes.router)
+    app.include_router(account.router)
+    app.include_router(admin.router)
     app.include_router(api.router)
 
     @app.exception_handler(StarletteHTTPException)

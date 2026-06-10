@@ -65,16 +65,28 @@
           {% endmacro %}
           {{ nav('/', 'Dashboard') }}
           {{ nav('/inbox', 'Inbox') }}
-          {{ nav('/settings', 'Settings') }}
         </nav>
         <div class="ml-auto flex items-center gap-3 text-sm">
           <a href="/monitors/new" class="btn btn-primary hidden sm:inline-flex text-sm">
             <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>New monitor
           </a>
-          <div class="hidden md:flex items-center gap-2 text-slate-400">
-            <span class="h-7 w-7 rounded-full grad-bar flex items-center justify-center text-xs font-semibold text-white">{{ user.email[0]|upper }}</span>
+          <!-- Account / options menu -->
+          <div class="relative" x-data="{ open: false }" @keydown.escape="open=false">
+            <button type="button" @click="open=!open" class="flex items-center gap-1.5 rounded-full pl-1 pr-2 py-1 hover:bg-white/5 transition" :class="open && 'bg-white/5'">
+              <span class="h-8 w-8 rounded-full grad-bar flex items-center justify-center text-xs font-semibold text-white">{{ (user.display_name or user.email)[0]|upper }}</span>
+              <svg viewBox="0 0 24 24" class="h-4 w-4 text-slate-400 transition" :class="open && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+            </button>
+            <div x-show="open" x-cloak @click.outside="open=false" x-transition.origin.top.right
+                 class="absolute right-0 mt-2 w-56 glass rounded-xl p-1.5 shadow-2xl z-40">
+              <div class="px-3 py-2 text-xs text-slate-500 truncate border-b border-white/5 mb-1">{{ user.email }}</div>
+              <a href="/account" class="block px-3 py-2 rounded-lg text-slate-300 hover:bg-white/10 hover:text-white transition">Account</a>
+              <a href="/settings" class="block px-3 py-2 rounded-lg text-slate-300 hover:bg-white/10 hover:text-white transition">Settings</a>
+              {% if user.is_admin %}<a href="/admin/users" class="flex items-center justify-between px-3 py-2 rounded-lg text-slate-300 hover:bg-white/10 hover:text-white transition">Users <span class="pill pill-amber">admin</span></a>{% endif %}
+              <form method="post" action="/logout" class="border-t border-white/5 mt-1 pt-1">
+                <button class="block w-full text-left px-3 py-2 rounded-lg text-red-300 hover:bg-white/10 transition">Sign out</button>
+              </form>
+            </div>
           </div>
-          <form method="post" action="/logout"><button class="text-slate-400 hover:text-white transition">Sign out</button></form>
         </div>
       </div>
     </div>

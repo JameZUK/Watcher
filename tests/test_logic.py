@@ -149,6 +149,29 @@ def test_json_mode_diffs_normalized_json():
     assert detect(mon, prev, diff).changed
 
 
+def test_combine_intent():
+    """Group + monitor watch-intents combine non-destructively (neither clobbers)."""
+    from watcher.runner import _combine_intent
+    assert _combine_intent("back in stock", "price below 250") == \
+        "Group goal: back in stock  This page specifically: price below 250"
+    assert _combine_intent("back in stock", None) == "Group goal: back in stock"
+    assert _combine_intent(None, "price below 250") == "This page specifically: price below 250"
+    assert _combine_intent(None, None) is None
+    assert _combine_intent("  ", "") is None
+
+
+def test_otp_verify():
+    import pyotp
+    from watcher.auth import otp
+    s = otp.new_secret()
+    assert otp.verify(s, pyotp.TOTP(s).now()) is True
+    assert otp.verify(s, "000000") is False
+    assert otp.verify(s, None) is False
+    assert otp.verify(None, "123456") is False
+    assert otp.verify(s, "12345") is False        # wrong length
+    assert otp.verify(s, "12 34 56") is False      # stripped to 6 digits but wrong
+
+
 def test_netsec_blocks_internal_targets_and_encodings():
     """SSRF: validate_public_url / validate_proxy must reject internal targets,
     including IPv4-mapped / NAT64 / CGNAT / 0.0.0.0 encodings (offline, literals)."""

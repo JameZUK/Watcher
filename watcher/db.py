@@ -40,6 +40,7 @@ _ADDED_COLUMNS = {
         "telegram_chat_id": "VARCHAR(64)", "discord_webhook": "VARCHAR(512)",
         "ntfy_topic": "VARCHAR(128)", "digest_enabled": "BOOLEAN DEFAULT 0",
         "quiet_start": "INTEGER", "quiet_end": "INTEGER", "api_token": "VARCHAR(64)",
+        "display_name": "VARCHAR(120)", "otp_secret_enc": "TEXT", "otp_enabled": "BOOLEAN DEFAULT 0",
     },
     "snapshots": {
         "title": "VARCHAR(512)", "screenshot_mobile_blob": "VARCHAR(64)",
@@ -61,6 +62,7 @@ _ADDED_COLUMNS = {
         "watch_intent": "TEXT", "kind": "VARCHAR(16) DEFAULT 'price'",
     },
     "app_settings": {
+        "registration_open": "BOOLEAN DEFAULT 0", "force_otp": "BOOLEAN DEFAULT 0",
         "smtp_host": "VARCHAR(255)", "smtp_port": "INTEGER DEFAULT 587", "smtp_user": "VARCHAR(255)",
         "smtp_pass_enc": "TEXT", "smtp_from": "VARCHAR(255)", "smtp_tls": "BOOLEAN DEFAULT 1",
         "telegram_token_enc": "TEXT", "ntfy_server": "VARCHAR(255) DEFAULT 'https://ntfy.sh'",

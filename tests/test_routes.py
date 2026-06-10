@@ -132,6 +132,142 @@ def test_dispatch_digest_routing():
     assert _run(_t)
 
 
+# --- groups ----------------------------------------------------------------
+
+def test_group_membership_and_page():
+    async def _t():
+        from watcher.config import settings
+        from watcher.main import create_app
+        from watcher.models import Group, Monitor, User
+        settings.registration_open = True
+        email = _email()
+        transport = httpx.ASGITransport(app=create_app())
+        async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                     headers={"Origin": "http://t"}, follow_redirects=True) as c:
+            await c.post("/register", data={"email": email, "password": "password123"})
+            r = await c.post("/monitors", data={
+                "url": "https://example.com", "engine": "chromium", "detection_mode": "auto",
+                "interval_minutes": "60", "wait_until": "load", "notify_channels": "inbox", "name": "M1"})
+            assert r.status_code == 200
+            r = await c.post("/groups", data={"name": "Topic group", "kind": "change",
+                                              "watch_intent": "a fresh update"})
+            assert r.status_code == 200 and "Topic group" in r.text
+
+            async with SessionLocal() as s:
+                u = (await s.execute(select(User).where(User.email == email))).scalar_one()
+                gid = (await s.execute(select(Group.id).where(Group.user_id == u.id))).scalar_one()
+                mid = (await s.execute(select(Monitor.id).where(Monitor.user_id == u.id))).scalars().first()
+
+            r = await c.post(f"/groups/{gid}/add", data={"monitor_id": str(mid)})
+            assert r.status_code == 200
+            r = await c.get(f"/groups/{gid}")
+            assert r.status_code == 200 and "example.com" in r.text and "a fresh update" in r.text
+            r = await c.post(f"/groups/{gid}/remove", data={"monitor_id": str(mid)})
+            assert r.status_code == 200
+
+        async with SessionLocal() as s:
+            assert (await s.get(Monitor, mid)).group_id is None
+        return True
+
+    assert _run(_t)
+
+
+def test_group_price_alert_fires_once():
+    async def _t():
+        from watcher.auth.security import hash_password
+        from watcher.models import (Change, Group, Monitor, Snapshot, SnapshotStatus, User)
+        from watcher.runner import _maybe_group_alert
+        async with SessionLocal() as s:
+            u = User(email=_email(), password_hash=hash_password("x")); s.add(u); await s.flush()
+            g = Group(user_id=u.id, name="JBL", kind="price", target_value=300.0, target_dir="below")
+            s.add(g); await s.flush()
+            m1 = Monitor(user_id=u.id, url="https://a.test", name="A", group_id=g.id,
+                         track_value=True, notify_channels=["inbox"])
+            m2 = Monitor(user_id=u.id, url="https://b.test", name="B", group_id=g.id,
+                         track_value=True, notify_channels=["inbox"])
+            s.add_all([m1, m2]); await s.flush()
+            s.add(Snapshot(monitor_id=m1.id, status=SnapshotStatus.ok, numeric_value=320.0, value_label="£320"))
+            s.add(Snapshot(monitor_id=m2.id, status=SnapshotStatus.ok, numeric_value=280.0, value_label="£280"))
+            await s.flush()
+
+            await _maybe_group_alert(s, m1)            # cheapest 280 < 300 → fire on m2
+            await s.flush()
+            ch = (await s.execute(select(Change).where(Change.monitor_id == m2.id))).scalars().all()
+            assert len(ch) == 1 and ch[0].ai_importance == "high"
+            assert (await s.get(Group, g.id)).alert_active is True
+
+            await _maybe_group_alert(s, m1)            # already crossed → no duplicate
+            ch = (await s.execute(select(Change).where(Change.monitor_id == m2.id))).scalars().all()
+            assert len(ch) == 1
+            await s.rollback()
+        return True
+
+    assert _run(_t)
+
+
+# --- account / OTP / admin -------------------------------------------------
+
+def test_otp_login_flow():
+    async def _t():
+        import pyotp
+        from watcher.auth import otp
+        from watcher.auth.security import encrypt_secret, hash_password
+        from watcher.main import create_app
+        from watcher.models import User
+        secret = otp.new_secret()
+        email = _email()
+        async with SessionLocal() as s:
+            s.add(User(email=email, password_hash=hash_password("password123"),
+                       otp_secret_enc=encrypt_secret(secret), otp_enabled=True))
+            await s.commit()
+        transport = httpx.ASGITransport(app=create_app())
+        async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                     headers={"Origin": "http://t"}) as c:
+            r = await c.post("/login", data={"email": email, "password": "password123"})
+            assert r.status_code == 200 and "Two-factor" in r.text       # password ok → 2FA step
+            r = await c.post("/login/otp", data={"code": "000000"})
+            assert r.status_code == 401                                  # wrong code
+            r = await c.post("/login/otp", data={"code": pyotp.TOTP(secret).now()}, follow_redirects=False)
+            assert r.status_code == 303                                  # correct → logged in
+        return True
+
+    assert _run(_t)
+
+
+def test_admin_gate_and_create_user():
+    async def _t():
+        from watcher.auth.security import hash_password
+        from watcher.config import settings
+        from watcher.main import create_app
+        from watcher.models import User
+        settings.registration_open = True
+        admin_email, plain_email, new_email = _email(), _email(), _email()
+        async with SessionLocal() as s:
+            s.add(User(email=admin_email, password_hash=hash_password("password123"), is_admin=True))
+            s.add(User(email=plain_email, password_hash=hash_password("password123"), is_admin=False))
+            await s.commit()
+        transport = httpx.ASGITransport(app=create_app())
+        # non-admin is blocked
+        async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                     headers={"Origin": "http://t"}, follow_redirects=False) as c:
+            await c.post("/login", data={"email": plain_email, "password": "password123"})
+            r = await c.get("/admin/users")
+            assert r.status_code in (401, 403)
+        # admin can view + create
+        async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                     headers={"Origin": "http://t"}, follow_redirects=True) as c:
+            await c.post("/login", data={"email": admin_email, "password": "password123"})
+            r = await c.get("/admin/users")
+            assert r.status_code == 200 and admin_email in r.text
+            r = await c.post("/admin/users", data={"email": new_email, "password": "password123"})
+            assert r.status_code == 200
+        async with SessionLocal() as s:
+            assert (await s.execute(select(User).where(User.email == new_email))).scalar_one_or_none() is not None
+        return True
+
+    assert _run(_t)
+
+
 # --- registration gating ---------------------------------------------------
 
 def test_registration_closed_blocks_signup():

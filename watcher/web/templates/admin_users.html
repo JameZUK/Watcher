@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Users · Watcher{% endblock %}
+{% set msgs = {'created':'User created.','updated':'User updated.','password':'Password reset.','otp_reset':'2FA reset for that user.','deleted':'User deleted.','access':'Access settings saved.'} %}
+{% set errs = {'invalid':'Check the email and password (8+ chars).','exists':'That email is already registered.','missing':'User not found.','last_admin':'You can’t remove the last admin.','self':'You can’t do that to your own account.'} %}
+{% block content %}
+<div class="max-w-4xl mx-auto space-y-5">
+  <h1 class="text-2xl sm:text-3xl font-bold tracking-tight text-white mb-1">User <span class="grad-text">administration</span></h1>
+
+  {% if msg and msgs.get(msg) %}<div class="rounded-xl bg-emerald-500/10 border border-emerald-500/25 px-4 py-2.5 text-sm text-emerald-200">{{ msgs[msg] }}</div>{% endif %}
+  {% if err and errs.get(err) %}<div class="rounded-xl bg-red-500/10 border border-red-500/25 px-4 py-2.5 text-sm text-red-300">{{ errs[err] }}</div>{% endif %}
+
+  <!-- Access control -->
+  <section class="glass rounded-2xl p-5 sm:p-6">
+    <h2 class="font-semibold text-white mb-4">Access</h2>
+    <form method="post" action="/admin/access" class="space-y-3">
+      <label class="flex items-center gap-2.5 text-sm text-slate-300">
+        <input type="checkbox" name="registration_open" {{ 'checked' if app.registration_open else '' }} class="rounded bg-white/10 border-white/20 text-brand-500">
+        Allow people to sign themselves up
+      </label>
+      <label class="flex items-center gap-2.5 text-sm text-slate-300">
+        <input type="checkbox" name="force_otp" {{ 'checked' if app.force_otp else '' }} class="rounded bg-white/10 border-white/20 text-brand-500">
+        Require two-factor authentication for everyone
+      </label>
+      <button class="btn btn-primary text-sm">Save access settings</button>
+    </form>
+  </section>
+
+  <!-- Create user -->
+  <section class="glass rounded-2xl p-5 sm:p-6">
+    <h2 class="font-semibold text-white mb-4">Create a user</h2>
+    <form method="post" action="/admin/users" class="flex flex-wrap items-end gap-3">
+      <div class="flex-1 min-w-[12rem]">
+        <label class="block text-xs text-slate-400 mb-1">Email</label>
+        <input name="email" type="email" required class="field !py-2">
+      </div>
+      <div>
+        <label class="block text-xs text-slate-400 mb-1">Temp password</label>
+        <input name="password" type="text" required minlength="8" class="field !py-2" placeholder="8+ chars">
+      </div>
+      <label class="flex items-center gap-2 text-sm text-slate-300 self-center pt-4">
+        <input type="checkbox" name="is_admin" class="rounded bg-white/10 border-white/20 text-brand-500"> Admin
+      </label>
+      <button class="btn btn-primary text-sm">Create</button>
+    </form>
+  </section>
+
+  <!-- Users -->
+  <section class="glass rounded-2xl overflow-hidden">
+    <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead class="text-xs text-slate-500 uppercase tracking-wide">
+        <tr class="border-b border-white/5">
+          <th class="text-left font-medium px-4 py-3">User</th>
+          <th class="text-left font-medium px-4 py-3">Status</th>
+          <th class="text-right font-medium px-4 py-3">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for u in users %}
+        <tr class="border-b border-white/5 last:border-0">
+          <td class="px-4 py-3">
+            <div class="font-medium text-white">{{ u.display_name or u.email }}</div>
+            {% if u.display_name %}<div class="text-xs text-slate-500">{{ u.email }}</div>{% endif %}
+          </td>
+          <td class="px-4 py-3 space-x-1.5 whitespace-nowrap">
+            {% if u.is_admin %}<span class="pill pill-amber">admin</span>{% endif %}
+            {% if not u.is_active %}<span class="pill" style="color:#fca5a5">disabled</span>{% endif %}
+            {% if u.otp_enabled %}<span class="pill">2FA</span>{% endif %}
+            {% if u.id == user.id %}<span class="pill">you</span>{% endif %}
+          </td>
+          <td class="px-4 py-3">
+            <div class="flex flex-wrap items-center justify-end gap-1.5">
+              <form method="post" action="/admin/users/{{ u.id }}/admin"><button class="text-xs text-slate-400 hover:text-white">{{ 'Revoke admin' if u.is_admin else 'Make admin' }}</button></form>
+              {% if u.id != user.id %}
+              <span class="text-slate-700">·</span>
+              <form method="post" action="/admin/users/{{ u.id }}/active"><button class="text-xs text-slate-400 hover:text-white">{{ 'Enable' if not u.is_active else 'Disable' }}</button></form>
+              {% endif %}
+              {% if u.otp_enabled %}
+              <span class="text-slate-700">·</span>
+              <form method="post" action="/admin/users/{{ u.id }}/reset-otp" onsubmit="return confirm('Reset 2FA for {{ u.email }}?')"><button class="text-xs text-slate-400 hover:text-white">Reset 2FA</button></form>
+              {% endif %}
+              <span class="text-slate-700">·</span>
+              <form method="post" action="/admin/users/{{ u.id }}/password" class="inline-flex items-center gap-1" onsubmit="return this.password.value.length>=8 || (alert('8+ chars'),false)">
+                <input name="password" type="text" placeholder="new pw" class="field !py-1 !px-2 text-xs w-24">
+                <button class="text-xs text-slate-400 hover:text-white">Set</button>
+              </form>
+              {% if u.id != user.id %}
+              <span class="text-slate-700">·</span>
+              <form method="post" action="/admin/users/{{ u.id }}/delete" onsubmit="return confirm('Delete {{ u.email }} and all their monitors?')"><button class="text-xs text-red-400 hover:text-red-300">Delete</button></form>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Account · Watcher{% endblock %}
+{% set msgs = {'profile':'Profile updated.','password':'Password changed.','otp_scan':'Scan the QR with your authenticator, then enter a code to finish.','otp_on':'Two-factor authentication is now on.','otp_off':'Two-factor authentication is off.'} %}
+{% set errs = {'email_taken':'That email is already in use.','bad_password':'Current password is incorrect.','weak_password':'New password must be 8–1024 characters.','otp_code':'That code didn’t verify — try again.','otp_off':'Enter your password or a current code to turn 2FA off.','otp_required':'Your administrator requires two-factor authentication. Please set it up below.'} %}
+{% block content %}
+<div class="max-w-2xl mx-auto space-y-5">
+  <h1 class="text-2xl sm:text-3xl font-bold tracking-tight text-white mb-1">Your <span class="grad-text">account</span></h1>
+
+  {% if msg and msgs.get(msg) %}<div class="rounded-xl bg-emerald-500/10 border border-emerald-500/25 px-4 py-2.5 text-sm text-emerald-200">{{ msgs[msg] }}</div>{% endif %}
+  {% if err and errs.get(err) %}<div class="rounded-xl bg-red-500/10 border border-red-500/25 px-4 py-2.5 text-sm text-red-300">{{ errs[err] }}</div>{% endif %}
+
+  <!-- Profile -->
+  <section class="glass rounded-2xl p-5 sm:p-6">
+    <h2 class="font-semibold text-white mb-4">Profile</h2>
+    <form method="post" action="/account/profile" class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-slate-300 mb-1.5">Display name <span class="text-slate-500 font-normal">· optional</span></label>
+        <input name="display_name" value="{{ user.display_name or '' }}" placeholder="e.g. James" class="field" maxlength="120">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-300 mb-1.5">Email <span class="text-slate-500 font-normal">· used to sign in</span></label>
+        <input name="email" type="email" value="{{ user.email }}" required class="field" autocomplete="email">
+      </div>
+      <button class="btn btn-primary text-sm">Save profile</button>
+    </form>
+  </section>
+
+  <!-- Password -->
+  <section class="glass rounded-2xl p-5 sm:p-6">
+    <h2 class="font-semibold text-white mb-4">Password</h2>
+    <form method="post" action="/account/password" class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-slate-300 mb-1.5">Current password</label>
+        <input name="current_password" type="password" required class="field" autocomplete="current-password">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-300 mb-1.5">New password</label>
+        <input name="new_password" type="password" required minlength="8" class="field" autocomplete="new-password">
+      </div>
+      <button class="btn btn-primary text-sm">Change password</button>
+    </form>
+  </section>
+
+  <!-- Two-factor -->
+  <section class="glass rounded-2xl p-5 sm:p-6">
+    <h2 class="font-semibold text-white mb-1">Two-factor authentication</h2>
+    {% if user.otp_enabled %}
+    <p class="text-sm text-emerald-300 mb-4">✓ 2FA is enabled — you'll be asked for an authenticator code at sign-in.</p>
+    <form method="post" action="/account/otp/disable" class="flex flex-wrap items-end gap-3">
+      <div>
+        <label class="block text-xs text-slate-400 mb-1">Password (to turn off)</label>
+        <input name="password" type="password" class="field !py-2" autocomplete="current-password">
+      </div>
+      <button class="btn btn-ghost text-sm text-red-300 hover:text-red-200">Disable 2FA</button>
+    </form>
+    {% elif otp_secret %}
+    <p class="text-sm text-slate-400 mb-4">Scan this with Google Authenticator, 1Password, Authy, etc. — then enter a code to confirm.</p>
+    <div class="flex flex-col sm:flex-row items-start gap-5">
+      <div class="rounded-xl bg-white p-3 shrink-0">{{ otp_qr|safe }}</div>
+      <div class="min-w-0 space-y-3">
+        <div>
+          <div class="text-xs text-slate-400 mb-1">Or enter this key manually:</div>
+          <code class="text-brand-300 break-all text-sm">{{ otp_secret }}</code>
+        </div>
+        <form method="post" action="/account/otp/enable" class="flex items-end gap-2">
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">6-digit code</label>
+            <input name="code" inputmode="numeric" pattern="[0-9]*" maxlength="6" required placeholder="000000" class="field !py-2 font-mono tracking-widest w-32">
+          </div>
+          <button class="btn btn-primary text-sm">Confirm</button>
+        </form>
+      </div>
+    </div>
+    {% else %}
+    <p class="text-sm text-slate-400 mb-4">Add an authenticator app for a second factor at sign-in.</p>
+    <form method="post" action="/account/otp/start">
+      <button class="btn btn-primary text-sm">Enable 2FA</button>
+    </form>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

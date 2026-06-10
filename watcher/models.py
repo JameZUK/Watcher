@@ -66,9 +66,13 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    display_name: Mapped[str | None] = mapped_column(String(120), default=None)
     password_hash: Mapped[str] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Two-factor (TOTP). Secret is Fernet-encrypted at rest.
+    otp_secret_enc: Mapped[str | None] = mapped_column(Text, default=None)
+    otp_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     # Personal notification destinations + delivery preferences
@@ -297,6 +301,9 @@ class AppSetting(Base):
     __tablename__ = "app_settings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    # Access control (admin-managed)
+    registration_open: Mapped[bool] = mapped_column(Boolean, default=False)  # self-service signup
+    force_otp: Mapped[bool] = mapped_column(Boolean, default=False)          # require 2FA for everyone
     # AI triage (OpenRouter). Key is Fernet-encrypted at rest.
     ai_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     openrouter_key_enc: Mapped[str | None] = mapped_column(Text, default=None)

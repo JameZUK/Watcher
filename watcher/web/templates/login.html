@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ 'Sign in' if mode=='login' else 'Create account' }} · Watcher{% endblock %}
+{% block title %}{{ 'Two-factor authentication' if mode=='otp' else ('Sign in' if mode=='login' else 'Create account') }} · Watcher{% endblock %}
 {% block auth %}
 <div class="min-h-screen flex items-center justify-center px-4 py-12">
   <div class="w-full max-w-sm rise">
@@ -7,6 +7,19 @@
       <img src="/static/logo.svg" alt="Watcher" class="h-28 w-28 drop-shadow-[0_0_24px_rgba(157,0,255,.45)]" width="112" height="112">
     </div>
     <div class="glass rounded-2xl p-6 sm:p-7">
+      {% if mode=='otp' %}
+      <h2 class="text-lg font-semibold text-white mb-1">Two-factor authentication</h2>
+      <p class="text-sm text-slate-400 mb-5">Enter the 6-digit code from your authenticator app.</p>
+      {% if error %}
+      <div class="mb-4 rounded-xl bg-red-500/10 border border-red-500/25 px-3.5 py-2.5 text-sm text-red-300">{{ error }}</div>
+      {% endif %}
+      <form method="post" action="/login/otp" class="space-y-4">
+        <input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" maxlength="6"
+               required autofocus placeholder="000000"
+               class="field text-center tracking-[0.5em] text-lg font-mono">
+        <button class="btn btn-primary w-full justify-center">Verify</button>
+      </form>
+      {% else %}
       <h2 class="text-lg font-semibold text-white mb-1">{{ 'Welcome back' if mode=='login' else 'Create your account' }}</h2>
       <p class="text-sm text-slate-400 mb-5">{{ 'Sign in to your monitors.' if mode=='login' else 'Start watching the web for changes.' }}</p>
       {% if error %}
@@ -23,11 +36,16 @@
         </div>
         <button class="btn btn-primary w-full justify-center">{{ 'Sign in' if mode=='login' else 'Create account' }}</button>
       </form>
+      {% endif %}
     </div>
+    {% if mode != 'otp' %}
     <p class="text-center text-sm text-slate-400 mt-5">
       {% if mode=='login' %}No account? <a href="/register" class="text-brand-400 hover:underline">Create one</a>
       {% else %}Already have an account? <a href="/login" class="text-brand-400 hover:underline">Sign in</a>{% endif %}
     </p>
+    {% else %}
+    <p class="text-center text-sm text-slate-400 mt-5"><a href="/login" class="text-brand-400 hover:underline">Use a different account</a></p>
+    {% endif %}
   </div>
 </div>
 {% endblock %}
