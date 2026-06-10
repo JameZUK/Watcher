@@ -82,6 +82,47 @@
   </section>
   {% endif %}
 
+  {% if is_admin %}
+  <section class="glass rounded-2xl p-5 sm:p-6">
+    <h2 class="font-semibold text-white mb-1">Notification transports <span class="pill pill-amber">admin</span></h2>
+    <p class="text-sm text-slate-400 mb-4 max-w-xl">Shared SMTP server, Telegram bot, and ntfy host used to deliver alerts. Secrets are encrypted at rest.</p>
+    <form method="post" action="/settings/transports" class="space-y-4">
+      <div class="grid sm:grid-cols-2 gap-4">
+        <div><label class="block text-sm font-medium text-slate-300 mb-1.5">SMTP host</label><input name="smtp_host" value="{{ tx.smtp_host }}" placeholder="smtp.example.com" class="field"></div>
+        <div><label class="block text-sm font-medium text-slate-300 mb-1.5">SMTP port</label><input type="number" name="smtp_port" value="{{ tx.smtp_port }}" class="field"></div>
+        <div><label class="block text-sm font-medium text-slate-300 mb-1.5">SMTP username</label><input name="smtp_user" value="{{ tx.smtp_user }}" autocomplete="off" class="field"></div>
+        <div><label class="block text-sm font-medium text-slate-300 mb-1.5">SMTP password</label><input type="password" name="smtp_pass" autocomplete="new-password" placeholder="{{ '•••• set (blank = keep)' if tx.smtp_pass_set else '' }}" class="field"></div>
+        <div><label class="block text-sm font-medium text-slate-300 mb-1.5">From address</label><input name="smtp_from" value="{{ tx.smtp_from }}" placeholder="watcher@example.com" class="field"></div>
+        <label class="flex items-center gap-2.5 self-end pb-2.5 text-sm text-slate-300"><input type="checkbox" name="smtp_tls" {{ 'checked' if tx.smtp_tls else '' }} class="rounded bg-white/10 border-white/20 text-brand-500"> Use STARTTLS</label>
+        <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Telegram bot token</label><input type="password" name="telegram_token" autocomplete="new-password" placeholder="{{ '•••• set (blank = keep)' if tx.telegram_token_set else '123456:ABC-DEF' }}" class="field"></div>
+        <div><label class="block text-sm font-medium text-slate-300 mb-1.5">ntfy server</label><input name="ntfy_server" value="{{ tx.ntfy_server }}" placeholder="https://ntfy.sh" class="field"></div>
+      </div>
+      <button class="btn btn-primary text-sm">Save transports</button>
+    </form>
+  </section>
+  {% endif %}
+
+  <section class="glass rounded-2xl p-5 sm:p-6">
+    <h2 class="font-semibold text-white mb-1">Notification destinations</h2>
+    <p class="text-sm text-slate-400 mb-4 max-w-xl">Your addresses for the channels you pick per monitor (email goes to <span class="text-slate-300">{{ user.email }}</span>).</p>
+    <form method="post" action="/settings/notifications" class="space-y-4">
+      <div class="grid sm:grid-cols-2 gap-4">
+        <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Telegram chat ID</label><input name="telegram_chat_id" value="{{ nd.telegram_chat_id }}" placeholder="123456789" class="field"></div>
+        <div><label class="block text-sm font-medium text-slate-300 mb-1.5">ntfy topic</label><input name="ntfy_topic" value="{{ nd.ntfy_topic }}" placeholder="my-watcher-alerts" class="field"></div>
+        <div class="sm:col-span-2"><label class="block text-sm font-medium text-slate-300 mb-1.5">Discord webhook URL</label><input name="discord_webhook" value="{{ nd.discord_webhook }}" placeholder="https://discord.com/api/webhooks/…" class="field"></div>
+      </div>
+      <label class="flex items-center gap-2.5 text-sm text-slate-200"><input type="checkbox" name="digest_enabled" {{ 'checked' if nd.digest_enabled else '' }} class="rounded bg-white/10 border-white/20 text-brand-500"> Digest mode — batch non-urgent changes hourly (high-importance still interrupts)</label>
+      <div>
+        <label class="block text-sm font-medium text-slate-300 mb-1.5">Quiet hours <span class="text-slate-500 font-normal">· UTC, optional — deferred to the digest</span></label>
+        <div class="flex items-center gap-2 text-sm text-slate-400">
+          from <input type="number" min="0" max="23" name="quiet_start" value="{{ nd.quiet_start if nd.quiet_start is not none else '' }}" class="field !w-20">
+          to <input type="number" min="0" max="23" name="quiet_end" value="{{ nd.quiet_end if nd.quiet_end is not none else '' }}" class="field !w-20"> <span class="text-slate-500">(hour)</span>
+        </div>
+      </div>
+      <button class="btn btn-primary text-sm">Save destinations</button>
+    </form>
+  </section>
+
   <section class="glass rounded-2xl p-5 sm:p-6" x-data="pushManager()" x-init="init()">
     <div class="flex items-start justify-between gap-4">
       <div>

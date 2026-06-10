@@ -26,7 +26,12 @@ async def get_session() -> AsyncIterator[AsyncSession]:
 # Columns added after the initial release. SQLite's create_all won't ALTER an
 # existing table, so we add any missing ones idempotently on startup.
 _ADDED_COLUMNS = {
-    "users": {"is_admin": "BOOLEAN DEFAULT 0"},
+    "users": {
+        "is_admin": "BOOLEAN DEFAULT 0",
+        "telegram_chat_id": "VARCHAR(64)", "discord_webhook": "VARCHAR(512)",
+        "ntfy_topic": "VARCHAR(128)", "digest_enabled": "BOOLEAN DEFAULT 0",
+        "quiet_start": "INTEGER", "quiet_end": "INTEGER",
+    },
     "snapshots": {
         "title": "VARCHAR(512)", "screenshot_mobile_blob": "VARCHAR(64)",
         "numeric_value": "FLOAT", "value_label": "VARCHAR(64)",
@@ -34,10 +39,16 @@ _ADDED_COLUMNS = {
     "changes": {
         "visual_blob": "VARCHAR(64)", "visual_mobile_blob": "VARCHAR(64)",
         "ai_headline": "TEXT", "ai_category": "VARCHAR(32)", "ai_importance": "VARCHAR(16)",
+        "notified": "BOOLEAN DEFAULT 0",
     },
     "monitors": {
         "ai_enabled": "BOOLEAN DEFAULT 1", "ai_watch_intent": "TEXT", "ai_policy": "VARCHAR(16)",
         "track_value": "BOOLEAN DEFAULT 0", "value_threshold": "FLOAT", "value_threshold_dir": "VARCHAR(8)",
+    },
+    "app_settings": {
+        "smtp_host": "VARCHAR(255)", "smtp_port": "INTEGER DEFAULT 587", "smtp_user": "VARCHAR(255)",
+        "smtp_pass_enc": "TEXT", "smtp_from": "VARCHAR(255)", "smtp_tls": "BOOLEAN DEFAULT 1",
+        "telegram_token_enc": "TEXT", "ntfy_server": "VARCHAR(255) DEFAULT 'https://ntfy.sh'",
     },
 }
 

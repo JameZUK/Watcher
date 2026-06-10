@@ -31,3 +31,28 @@ def get_openrouter_key(s: AppSetting) -> str | None:
 def set_openrouter_key(s: AppSetting, plaintext: str | None) -> None:
     """Store (encrypt) a new key, or clear it when given an empty value."""
     s.openrouter_key_enc = encrypt_secret(plaintext) if plaintext else None
+
+
+def _get_enc(token: str | None) -> str | None:
+    if not token:
+        return None
+    try:
+        return decrypt_secret(token)
+    except Exception:
+        return None
+
+
+def get_smtp_password(s: AppSetting) -> str | None:
+    return _get_enc(s.smtp_pass_enc)
+
+
+def set_smtp_password(s: AppSetting, plaintext: str | None) -> None:
+    s.smtp_pass_enc = encrypt_secret(plaintext) if plaintext else None
+
+
+def get_telegram_token(s: AppSetting) -> str | None:
+    return _get_enc(s.telegram_token_enc)
+
+
+def set_telegram_token(s: AppSetting, plaintext: str | None) -> None:
+    s.telegram_token_enc = encrypt_secret(plaintext) if plaintext else None

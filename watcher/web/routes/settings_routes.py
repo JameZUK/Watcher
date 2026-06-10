@@ -8,7 +8,13 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...ai import triage_change
-from ...app_settings import get_app_settings, get_openrouter_key, set_openrouter_key
+from ...app_settings import (
+    get_app_settings,
+    get_openrouter_key,
+    set_openrouter_key,
+    set_smtp_password,
+    set_telegram_token,
+)
 from ...auth.users import get_current_user, require_admin
 from ...config import settings
 from ...db import get_session
@@ -51,8 +57,71 @@ async def settings_page(
             "ai_model": app.ai_model,
             "ai_key_set": bool(app.openrouter_key_enc),
             "ai_policy": app.ai_low_value_policy,
+            # Per-user notification destinations + delivery prefs
+            "nd": {
+                "telegram_chat_id": user.telegram_chat_id or "",
+                "discord_webhook": user.discord_webhook or "",
+                "ntfy_topic": user.ntfy_topic or "",
+                "digest_enabled": user.digest_enabled,
+                "quiet_start": user.quiet_start,
+                "quiet_end": user.quiet_end,
+            },
+            # Admin transport config (secrets exposed only as set/unset flags)
+            "tx": {
+                "smtp_host": app.smtp_host or "", "smtp_port": app.smtp_port,
+                "smtp_user": app.smtp_user or "", "smtp_from": app.smtp_from or "",
+                "smtp_tls": app.smtp_tls, "smtp_pass_set": bool(app.smtp_pass_enc),
+                "telegram_token_set": bool(app.telegram_token_enc), "ntfy_server": app.ntfy_server,
+            },
         },
     )
+
+
+def _int_or_none(v):
+    try:
+        return int(v) if str(v).strip() != "" else None
+    except (ValueError, TypeError):
+        return None
+
+
+@router.post("/settings/notifications")
+async def save_notifications(
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    form = await request.form()
+    user.telegram_chat_id = (form.get("telegram_chat_id") or "").strip() or None
+    user.discord_webhook = (form.get("discord_webhook") or "").strip() or None
+    user.ntfy_topic = (form.get("ntfy_topic") or "").strip() or None
+    user.digest_enabled = _bool(form, "digest_enabled")
+    qs, qe = _int_or_none(form.get("quiet_start")), _int_or_none(form.get("quiet_end"))
+    user.quiet_start = qs if qs is not None and 0 <= qs <= 23 else None
+    user.quiet_end = qe if qe is not None and 0 <= qe <= 23 else None
+    await session.commit()
+    return RedirectResponse("/settings", status_code=303)
+
+
+@router.post("/settings/transports")
+async def save_transports(
+    request: Request,
+    user: User = Depends(require_admin),   # admin-only
+    session: AsyncSession = Depends(get_session),
+):
+    form = await request.form()
+    app = await get_app_settings(session)
+    app.smtp_host = (form.get("smtp_host") or "").strip() or None
+    app.smtp_port = _int_or_none(form.get("smtp_port")) or 587
+    app.smtp_user = (form.get("smtp_user") or "").strip() or None
+    app.smtp_from = (form.get("smtp_from") or "").strip() or None
+    app.smtp_tls = _bool(form, "smtp_tls")
+    app.ntfy_server = (form.get("ntfy_server") or "").strip() or "https://ntfy.sh"
+    if (form.get("smtp_pass") or "").strip():
+        set_smtp_password(app, form["smtp_pass"].strip())
+    if (form.get("telegram_token") or "").strip():
+        set_telegram_token(app, form["telegram_token"].strip())
+    await session.commit()
+    return RedirectResponse("/settings", status_code=303)
 
 
 def _bool(form, key: str) -> bool:

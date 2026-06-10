@@ -70,6 +70,14 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+    # Personal notification destinations + delivery preferences
+    telegram_chat_id: Mapped[str | None] = mapped_column(String(64), default=None)
+    discord_webhook: Mapped[str | None] = mapped_column(String(512), default=None)
+    ntfy_topic: Mapped[str | None] = mapped_column(String(128), default=None)
+    digest_enabled: Mapped[bool] = mapped_column(Boolean, default=False)  # batch low-importance
+    quiet_start: Mapped[int | None] = mapped_column(Integer, default=None)  # quiet-hours start (0-23)
+    quiet_end: Mapped[int | None] = mapped_column(Integer, default=None)
+
     monitors: Mapped[list["Monitor"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
@@ -220,6 +228,7 @@ class Change(Base):
     ai_headline: Mapped[str | None] = mapped_column(Text, default=None)
     ai_category: Mapped[str | None] = mapped_column(String(32), default=None)   # price|stock|content|availability|cosmetic|other
     ai_importance: Mapped[str | None] = mapped_column(String(16), default=None)  # high|medium|low|noise
+    notified: Mapped[bool] = mapped_column(Boolean, default=False, index=True)    # delivered (immediate or digest)
 
     monitor: Mapped["Monitor"] = relationship(back_populates="changes")
 
@@ -249,3 +258,13 @@ class AppSetting(Base):
     openrouter_key_enc: Mapped[str | None] = mapped_column(Text, default=None)
     ai_model: Mapped[str] = mapped_column(String(128), default="google/gemini-2.5-flash-lite")
     ai_low_value_policy: Mapped[str] = mapped_column(String(16), default="silent")  # silent|label|drop
+
+    # Notification transports (admin-configured, shared). Secrets are encrypted.
+    smtp_host: Mapped[str | None] = mapped_column(String(255), default=None)
+    smtp_port: Mapped[int] = mapped_column(Integer, default=587)
+    smtp_user: Mapped[str | None] = mapped_column(String(255), default=None)
+    smtp_pass_enc: Mapped[str | None] = mapped_column(Text, default=None)
+    smtp_from: Mapped[str | None] = mapped_column(String(255), default=None)
+    smtp_tls: Mapped[bool] = mapped_column(Boolean, default=True)
+    telegram_token_enc: Mapped[str | None] = mapped_column(Text, default=None)
+    ntfy_server: Mapped[str] = mapped_column(String(255), default="https://ntfy.sh")

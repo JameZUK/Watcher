@@ -11,6 +11,7 @@ from sqlalchemy import select
 from ..config import settings
 from ..db import SessionLocal
 from ..models import Monitor
+from ..notify import run_digests
 from ..runner import check_monitor
 from ..storage.retention import prune
 
@@ -19,6 +20,17 @@ log = logging.getLogger("watcher.scheduler")
 scheduler = AsyncIOScheduler(timezone="UTC")
 
 _PRUNE_JOB = "retention-prune"
+_DIGEST_JOB = "notification-digest"
+
+
+async def _run_digests() -> None:
+    try:
+        async with SessionLocal() as session:
+            n = await run_digests(session)
+        if n:
+            log.info("sent %d notification digest(s)", n)
+    except Exception:  # noqa: BLE001
+        log.exception("digest run failed")
 
 
 def _job_id(monitor_id: int) -> str:
@@ -82,6 +94,12 @@ def start_scheduler() -> None:
         scheduler.add_job(
             prune, trigger=IntervalTrigger(hours=24), id=_PRUNE_JOB,
             replace_existing=True, max_instances=1,
+        )
+        # Hourly digest sweep: batches deferred (non-high) changes per user,
+        # skipping users currently in their quiet hours.
+        scheduler.add_job(
+            _run_digests, trigger=IntervalTrigger(hours=1), id=_DIGEST_JOB,
+            replace_existing=True, max_instances=1, coalesce=True,
         )
         scheduler.start()
 
