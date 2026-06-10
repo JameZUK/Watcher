@@ -33,7 +33,7 @@ _SCHEMA = {
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "headline": {"type": "string", "description": "One short sentence a human can act on, e.g. 'Price dropped £299 → £263.99'."},
+            "headline": {"type": "string", "description": "One short, factual sentence describing ONLY what actually changed. No preamble. Do not invent specific numbers/prices you cannot see in the provided diff or image."},
             "category": {"type": "string", "enum": list(CATEGORIES)},
             "importance": {"type": "string", "enum": list(IMPORTANCES)},
             "detail": {"type": "string", "description": "Optional one-line extra context."},
@@ -55,7 +55,12 @@ _SYSTEM = (
     "rotation, carousels, timestamps, view counts, session tokens, reordering).\n"
     "If a 'what to watch for' instruction is given, rate importance RELATIVE to "
     "it: a change matching the instruction is high; an unrelated change is low "
-    "or noise even if large."
+    "or noise even if large.\n"
+    "CRITICAL: report ONLY what the supplied diff or image actually shows changed. "
+    "Never invent or guess specific prices, values, or stock states — if you are "
+    "given a screenshot with no clear before/after and cannot tell what changed, "
+    "say the appearance changed slightly and rate it 'noise' or 'cosmetic'. Do not "
+    "manufacture a price/stock story from a page you only see once."
 )
 
 
@@ -103,7 +108,13 @@ def _user_content(url, title, intent, diff_text, image_png):
     # Visual-only change: attach a screenshot if we have one.
     data_url = _compact_image(image_png) if image_png else None
     if data_url:
-        lines.append("\nNo text diff — the page changed visually. The image shows the current page.")
+        lines.append(
+            "\nNo text diff is available — only a small fraction of pixels changed. "
+            "The image is the CURRENT page (you do NOT have the previous version, so "
+            "you cannot know exact before/after values). Describe only what is plainly "
+            "different; if you cannot tell, treat it as cosmetic/noise. Do NOT state a "
+            "specific price or stock change you cannot verify from a single image."
+        )
         return [
             {"type": "text", "text": "\n".join(lines)},
             {"type": "image_url", "image_url": {"url": data_url}},

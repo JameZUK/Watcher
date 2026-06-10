@@ -149,6 +149,33 @@ def test_json_mode_diffs_normalized_json():
     assert detect(mon, prev, diff).changed
 
 
+def test_visual_noise_floor(monkeypatch):
+    """Sub-floor pixel churn (anti-aliasing, lazy images, carousels) must NOT
+    register as a change — the root cause of the JBL phantom-change bug."""
+    from types import SimpleNamespace as N
+    from watcher.detection import detector, visual
+    from watcher.models import DetectionMode
+
+    mag = [0.002]   # 0.2% of pixels — below the 0.5% default floor
+    monkeypatch.setattr(detector.blobs, "get_bytes", lambda h: b"before")
+    monkeypatch.setattr(detector.visual, "diff_images",
+                        lambda b, a, **k: visual.VisualDiff(True, mag[0], "x", b"overlay"))
+
+    mon = N(detection_mode=DetectionMode.visual, min_change_threshold=0.0,
+            normalize_whitespace=True, normalize_numbers=False, ignore_patterns=[])
+    prev = N(screenshot_blob="x", screenshot_mobile_blob=None, rendered_text="")
+    cur = N(screenshot_png=b"after", screenshot_mobile_png=None, rendered_text="", html="")
+
+    assert detector.detect(mon, prev, cur).changed is False   # 0.2% < floor → noise
+    mag[0] = 0.02                                             # 2% — a real change
+    assert detector.detect(mon, prev, cur).changed is True
+
+    # auto mode (text identical) is governed by the same floor
+    mon.detection_mode = DetectionMode.auto
+    mag[0] = 0.002
+    assert detector.detect(mon, prev, cur).changed is False
+
+
 def test_html_to_text():
     from watcher.web.routes.monitors import _html_to_text
     out = _html_to_text(

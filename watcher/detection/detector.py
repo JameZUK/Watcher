@@ -4,11 +4,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ..config import settings
 from ..engines.base import RenderResult
 from ..models import DetectionMode, Monitor, Snapshot
 from ..storage import blobs
 from . import structured, text, visual
 from .noise import normalize_text
+
+
+def _visual_floor(monitor: Monitor) -> float:
+    """Effective minimum visual change: the monitor's own threshold, but never
+    below the global noise floor that absorbs render jitter / dynamic chrome."""
+    return max(monitor.min_change_threshold or 0.0, settings.min_visual_change)
 
 
 @dataclass
@@ -67,7 +74,7 @@ def detect(monitor: Monitor, prev: Snapshot | None, current: RenderResult) -> Ch
         if before_png is None or current.screenshot_png is None:
             return ChangeResult(False, mode, 0.0, "No screenshot to compare")
         vd = visual.diff_images(before_png, current.screenshot_png)
-        changed = vd.changed and vd.magnitude >= monitor.min_change_threshold
+        changed = vd.changed and vd.magnitude >= _visual_floor(monitor)
         return ChangeResult(changed, mode, vd.magnitude, vd.summary,
                             diff_overlay_png=vd.overlay_png if changed else None,
                             diff_overlay_mobile_png=_mobile_overlay(prev, current) if changed else None)
@@ -101,7 +108,7 @@ def _detect_auto(monitor: Monitor, prev: Snapshot, current: RenderResult) -> Cha
     before_png = blobs.get_bytes(prev.screenshot_blob) if prev.screenshot_blob else None
     if before_png is not None and current.screenshot_png is not None:
         vd = visual.diff_images(before_png, current.screenshot_png)
-        visual_changed = vd.changed and vd.magnitude >= monitor.min_change_threshold
+        visual_changed = vd.changed and vd.magnitude >= _visual_floor(monitor)
 
     if not (text_changed or visual_changed):
         return ChangeResult(False, DetectionMode.auto, 0.0, "No change")

@@ -54,6 +54,13 @@ class Settings(BaseSettings):
     auto_pause_after_failures: int = Field(default=6)   # 0 disables auto-pause
     detect_timeout_seconds: int = Field(default=20)     # ceiling on diffing (regex-DoS guard)
 
+    # --- Detection sensitivity ---
+    # Minimum fraction of pixels (0..1) that must differ before a *visual* change
+    # counts — a noise floor that absorbs anti-aliasing, lazy-loaded images,
+    # carousels, and sub-pixel render jitter. Acts as a lower bound on each
+    # monitor's own min_change_threshold (so a monitor left at 0 still gets it).
+    min_visual_change: float = Field(default=0.005)     # 0.5% of the screenshot
+
     # Screenshot quality / device emulation.
     screenshot_scale: int = Field(default=2)        # device pixel ratio (retina-crisp)
     mobile_viewport_width: int = Field(default=390)   # iPhone-class logical width

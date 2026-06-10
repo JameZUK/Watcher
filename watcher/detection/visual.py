@@ -35,7 +35,10 @@ def _fit(a: Image.Image, b: Image.Image) -> tuple[Image.Image, Image.Image]:
 def diff_images(before_png: bytes, after_png: bytes, *, threshold: float = 0.1) -> VisualDiff:
     before, after = _fit(_load(before_png), _load(after_png))
     overlay = Image.new("RGBA", before.size)
-    mismatch = pixelmatch(before, after, overlay, includeAA=True, threshold=threshold)
+    # includeAA=False → pixelmatch detects and *ignores* anti-aliased pixels, so
+    # sub-pixel font/edge rendering jitter between otherwise-identical renders
+    # doesn't register as a change (a big source of phantom diffs).
+    mismatch = pixelmatch(before, after, overlay, includeAA=False, threshold=threshold)
 
     total = before.width * before.height
     magnitude = mismatch / total if total else 0.0
