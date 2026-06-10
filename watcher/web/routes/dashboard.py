@@ -49,38 +49,41 @@ async def dashboard(
     unacked = {mid: count for mid, count in rows}
     total_unacked = sum(unacked.values())
 
-    # Latest screenshot per monitor, for card thumbnails ("rendered" previews).
+    # Latest thumbnail + blocked-status per monitor, via window functions so the
+    # DB returns one row per monitor instead of scanning full snapshot history.
     thumbs: dict[int, int] = {}
     blocked: set[int] = set()
     if monitors:
         mids = [m.id for m in monitors]
-        snap_rows = (
-            await session.execute(
-                select(Snapshot.monitor_id, Snapshot.id)
-                .where(
-                    Snapshot.monitor_id.in_(mids),
-                    Snapshot.status == SnapshotStatus.ok,
-                    Snapshot.screenshot_blob.is_not(None),
-                )
-                .order_by(Snapshot.monitor_id, Snapshot.taken_at.desc())
-            )
-        ).all()
-        for mid, sid in snap_rows:
-            thumbs.setdefault(mid, sid)  # first row per monitor = most recent
 
-        # Monitors whose most recent snapshot is an error (e.g. blocked).
-        status_rows = (
-            await session.execute(
-                select(Snapshot.monitor_id, Snapshot.status)
-                .where(Snapshot.monitor_id.in_(mids))
-                .order_by(Snapshot.monitor_id, Snapshot.taken_at.desc())
-            )
-        ).all()
-        seen: set[int] = set()
-        for mid, status in status_rows:
-            if mid in seen:
-                continue
-            seen.add(mid)
+        # Most recent ok snapshot with a screenshot (the thumbnail).
+        thumb_rn = func.row_number().over(
+            partition_by=Snapshot.monitor_id, order_by=Snapshot.taken_at.desc()
+        ).label("rn")
+        thumb_sub = (
+            select(Snapshot.monitor_id.label("mid"), Snapshot.id.label("sid"), thumb_rn)
+            .where(Snapshot.monitor_id.in_(mids),
+                   Snapshot.status == SnapshotStatus.ok,
+                   Snapshot.screenshot_blob.is_not(None))
+            .subquery()
+        )
+        for mid, sid in (await session.execute(
+            select(thumb_sub.c.mid, thumb_sub.c.sid).where(thumb_sub.c.rn == 1)
+        )).all():
+            thumbs[mid] = sid
+
+        # Whether the absolute latest snapshot is an error.
+        latest_rn = func.row_number().over(
+            partition_by=Snapshot.monitor_id, order_by=Snapshot.taken_at.desc()
+        ).label("rn")
+        latest_sub = (
+            select(Snapshot.monitor_id.label("mid"), Snapshot.status.label("status"), latest_rn)
+            .where(Snapshot.monitor_id.in_(mids))
+            .subquery()
+        )
+        for mid, status in (await session.execute(
+            select(latest_sub.c.mid, latest_sub.c.status).where(latest_sub.c.rn == 1)
+        )).all():
             if status == SnapshotStatus.error:
                 blocked.add(mid)
 

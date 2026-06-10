@@ -11,6 +11,7 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -182,6 +183,8 @@ class LoginFlow(Base):
 
 class Snapshot(Base):
     __tablename__ = "snapshots"
+    # Hot query: latest snapshot(s) per monitor (optionally filtered by status).
+    __table_args__ = (Index("ix_snap_monitor_taken", "monitor_id", "taken_at"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     monitor_id: Mapped[int] = mapped_column(
@@ -212,6 +215,10 @@ class Snapshot(Base):
 
 class Change(Base):
     __tablename__ = "changes"
+    __table_args__ = (
+        Index("ix_change_monitor_detected", "monitor_id", "detected_at"),
+        Index("ix_change_monitor_acked", "monitor_id", "acknowledged"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     monitor_id: Mapped[int] = mapped_column(

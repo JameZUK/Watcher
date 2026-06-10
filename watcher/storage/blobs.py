@@ -17,6 +17,11 @@ def _path_for(key: str) -> Path:
     return settings.blobs_dir / key[:2] / key
 
 
+def path(key: str) -> Path:
+    """Filesystem path for a blob key (may not exist)."""
+    return _path_for(key)
+
+
 def put_bytes(data: bytes) -> str:
     """Store bytes, returning the content key (sha256 hex)."""
     key = hashlib.sha256(data).hexdigest()
