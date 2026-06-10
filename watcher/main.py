@@ -152,6 +152,10 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(StarletteHTTPException)
     async def _auth_redirect(request: Request, exc: StarletteHTTPException):
+        # Honour an explicit redirect (e.g. the force-2FA gate → /account).
+        loc = (exc.headers or {}).get("Location")
+        if loc:
+            return RedirectResponse(url=loc, status_code=303)
         # Redirect unauthenticated browser requests to the login page.
         if exc.status_code == 401 and "text/html" in request.headers.get("accept", ""):
             return RedirectResponse(url="/login", status_code=303)

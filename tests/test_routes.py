@@ -234,6 +234,74 @@ def test_otp_login_flow():
     assert _run(_t)
 
 
+def test_force_otp_hard_gate():
+    async def _t():
+        from watcher.app_settings import get_app_settings
+        from watcher.auth.security import hash_password, new_session_token
+        from watcher.main import create_app
+        from watcher.models import User
+        email = _email()
+        async with SessionLocal() as s:
+            s.add(User(email=email, password_hash=hash_password("password123"),
+                       session_token=new_session_token()))     # no OTP enrolled
+            app = await get_app_settings(s)
+            app.force_otp = True
+            await s.commit()
+        try:
+            transport = httpx.ASGITransport(app=create_app())
+            async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                         headers={"Origin": "http://t"}) as c:
+                await c.post("/login", data={"email": email, "password": "password123"})
+                # force_otp on + no OTP → every non-account page redirects to /account
+                r = await c.get("/", follow_redirects=False)
+                assert r.status_code == 303 and "/account" in r.headers.get("location", "")
+                # but the account page itself stays reachable (to enrol)
+                r = await c.get("/account", follow_redirects=False)
+                assert r.status_code == 200
+        finally:
+            async with SessionLocal() as s:
+                app = await get_app_settings(s)
+                app.force_otp = False
+                await s.commit()
+        return True
+
+    assert _run(_t)
+
+
+def test_session_invalidated_on_password_change():
+    async def _t():
+        from watcher.app_settings import get_app_settings
+        from watcher.auth.security import hash_password, new_session_token
+        from watcher.main import create_app
+        from watcher.models import User
+        email = _email()
+        async with SessionLocal() as s:
+            s.add(User(email=email, password_hash=hash_password("password123"),
+                       session_token=new_session_token()))
+            app = await get_app_settings(s)
+            app.force_otp = False
+            await s.commit()
+        app_obj = create_app()
+        transport = httpx.ASGITransport(app=app_obj)
+        # Two independent logged-in sessions for the same user.
+        async with httpx.AsyncClient(transport=transport, base_url="http://t", headers={"Origin": "http://t"}) as a, \
+                   httpx.AsyncClient(transport=transport, base_url="http://t", headers={"Origin": "http://t"}) as b:
+            await a.post("/login", data={"email": email, "password": "password123"})
+            await b.post("/login", data={"email": email, "password": "password123"})
+            assert (await a.get("/account", follow_redirects=False)).status_code == 200
+            assert (await b.get("/account", follow_redirects=False)).status_code == 200
+            # A changes the password → other sessions die; A survives.
+            r = await a.post("/account/password",
+                             data={"current_password": "password123", "new_password": "newpassword123"})
+            assert r.status_code in (200, 303)
+            assert (await a.get("/account", follow_redirects=False)).status_code == 200
+            rb = await b.get("/account", follow_redirects=False)
+            assert rb.status_code in (303, 401)        # B's session invalidated
+        return True
+
+    assert _run(_t)
+
+
 def test_admin_gate_and_create_user():
     async def _t():
         from watcher.auth.security import hash_password

@@ -33,9 +33,14 @@ async def _registration_allowed(session: AsyncSession) -> bool:
     return bool(app.registration_open or settings.registration_open)
 
 
-async def _complete_login(request: Request, app, user: User):
-    request.session.clear()  # rotate the session on auth (anti-fixation)
+async def _complete_login(request: Request, session: AsyncSession, app, user: User):
+    from ...auth.security import new_session_token
+    if user.session_token is None:          # backfill for pre-existing accounts
+        user.session_token = new_session_token()
+        await session.commit()
+    request.session.clear()                 # rotate the session on auth (anti-fixation)
     request.session["user_id"] = user.id
+    request.session["sv"] = user.session_token
     # If 2FA is mandatory and this account hasn't set it up, send them to do so.
     if app.force_otp and not user.otp_enabled:
         return RedirectResponse("/account?err=otp_required", status_code=303)
@@ -76,7 +81,7 @@ async def login(
         request.session["otp_uid"] = user.id
         return templates.TemplateResponse(request, "login.html", {"mode": "otp"})
     app = await get_app_settings(session)
-    return await _complete_login(request, app, user)
+    return await _complete_login(request, session, app, user)
 
 
 @router.post("/login/otp")
@@ -94,12 +99,22 @@ async def login_otp(
             {"mode": "otp", "error": "Too many attempts — please wait and try again."}, status_code=429)
     user = await session.get(User, uid)
     if user is None or not user.is_active or not verify(user_secret(user), code):
+        # Per-pending-user counter so rotating source IPs can't grind codes.
+        fails = request.session.get("otp_fails", 0) + 1
+        if fails >= 5:
+            request.session.pop("otp_uid", None)
+            request.session.pop("otp_fails", None)
+            return templates.TemplateResponse(
+                request, "login.html",
+                {"mode": "login", "error": "Too many codes — please sign in again."}, status_code=401)
+        request.session["otp_fails"] = fails
         return templates.TemplateResponse(
             request, "login.html",
             {"mode": "otp", "error": "Invalid authentication code."}, status_code=401)
+    request.session.pop("otp_fails", None)
     reset(f"otp:{client_ip(request)}")
     app = await get_app_settings(session)
-    return await _complete_login(request, app, user)
+    return await _complete_login(request, session, app, user)
 
 
 @router.get("/register")
@@ -143,7 +158,7 @@ async def register(
         )
     user = await create_user(session, email, password)
     app = await get_app_settings(session)
-    return await _complete_login(request, app, user)
+    return await _complete_login(request, session, app, user)
 
 
 @router.post("/logout")

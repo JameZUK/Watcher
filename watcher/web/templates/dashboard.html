@@ -15,8 +15,16 @@
   </a>
 </div>
 
-{% if request.query_params.get('imported') %}
-<div class="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-sm text-emerald-200 mb-4">Imported {{ request.query_params.get('imported') }} monitor(s).</div>
+{% set imported = request.query_params.get('imported')|int(0) %}
+{% if imported %}
+<div class="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-sm text-emerald-200 mb-4">Imported {{ imported }} monitor(s).</div>
+{% endif %}
+{% set gerr = request.query_params.get('group') %}
+{% if gerr %}
+<div class="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm text-amber-200 mb-4">{{
+  {'cap':'Group limit reached — delete a group first.','ai_rate':'Too many AI requests — wait a moment and try again.',
+   'ai_missing':'Enter a goal and at least one URL.','ai_badurls':'None of those URLs could be used.',
+   'noname':'Give the group a name.'}.get(gerr, 'Couldn’t create the group.') }}</div>
 {% endif %}
 {% if all_tags or query or active_tag or monitors %}
 <div class="mb-6 space-y-3" x-data="{ imp:false }">

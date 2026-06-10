@@ -21,6 +21,10 @@
         <label class="block text-sm font-medium text-slate-300 mb-1.5">Email <span class="text-slate-500 font-normal">· used to sign in</span></label>
         <input name="email" type="email" value="{{ user.email }}" required class="field" autocomplete="email">
       </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-300 mb-1.5">Current password <span class="text-slate-500 font-normal">· required only to change your email</span></label>
+        <input name="current_password" type="password" class="field" autocomplete="current-password">
+      </div>
       <button class="btn btn-primary text-sm">Save profile</button>
     </form>
   </section>

@@ -44,6 +44,19 @@ def _kind(form) -> str:
     return k if k in _KINDS else "price"
 
 
+def _intent(form) -> str | None:
+    return (form.get("watch_intent") or "").strip()[:2000] or None
+
+
+async def _group_cap_reached(session, user) -> bool:
+    cap = settings.max_groups_per_user
+    if not cap:
+        return False
+    n = (await session.execute(
+        select(func.count()).select_from(Group).where(Group.user_id == user.id))).scalar_one()
+    return n >= cap
+
+
 async def _owned_group(session: AsyncSession, user: User, group_id: int) -> Group:
     g = (await session.execute(
         select(Group).where(Group.id == group_id, Group.user_id == user.id)
@@ -104,10 +117,11 @@ async def create_group(
     name = (form.get("name") or "").strip()[:255]
     if not name:
         return RedirectResponse("/?group=noname", status_code=303)
+    if await _group_cap_reached(session, user):
+        return RedirectResponse("/?group=cap", status_code=303)
     kind = _kind(form)
     tv, td = _clean_target(form)
-    g = Group(user_id=user.id, name=name, kind=kind,
-              watch_intent=(form.get("watch_intent") or "").strip() or None,
+    g = Group(user_id=user.id, name=name, kind=kind, watch_intent=_intent(form),
               target_value=tv if kind == "price" else None,
               target_dir=td if kind == "price" else None)
     session.add(g)
@@ -135,6 +149,11 @@ async def ai_create_group(
     urls = [u.strip() for u in (form.get("urls") or "").splitlines() if u.strip()][:_MAX_GROUP_URLS]
     if not goal or not urls:
         return RedirectResponse("/?group=ai_missing", status_code=303)
+    if await _group_cap_reached(session, user):
+        return RedirectResponse("/?group=cap", status_code=303)
+    from ..ratelimit import allow
+    if not allow(f"ai:{user.id}", limit=settings.ai_max_calls, window=settings.ai_window_seconds):
+        return RedirectResponse("/?group=ai_rate", status_code=303)
 
     # Keep only http(s) + public URLs (SSRF).
     valid = []
@@ -281,7 +300,7 @@ async def update_group(
     if name:
         group.name = name
     group.kind = _kind(form)
-    group.watch_intent = (form.get("watch_intent") or "").strip() or None
+    group.watch_intent = _intent(form)
     tv, td = _clean_target(form)
     if group.kind != "price":
         tv, td = None, None

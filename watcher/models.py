@@ -73,6 +73,8 @@ class User(Base):
     # Two-factor (TOTP). Secret is Fernet-encrypted at rest.
     otp_secret_enc: Mapped[str | None] = mapped_column(Text, default=None)
     otp_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Bumped on any credential change to invalidate OTHER live sessions.
+    session_token: Mapped[str | None] = mapped_column(String(64), default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     # Personal notification destinations + delivery preferences

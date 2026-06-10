@@ -330,6 +330,12 @@ def _form_response(request, user, monitor, *, error=None, cookies_json="", statu
     )
 
 
+def _ai_quota_ok(user) -> bool:
+    """Per-user cap on calls that spend the shared OpenRouter key."""
+    from ..ratelimit import allow
+    return allow(f"ai:{user.id}", limit=settings.ai_max_calls, window=settings.ai_window_seconds)
+
+
 async def _user_groups(session, user):
     from ...models import Group
     return (await session.execute(
@@ -350,6 +356,8 @@ async def ai_suggest_watch(
     session: AsyncSession = Depends(get_session),
 ):
     """Suggest 'what to watch for' items by reviewing the page with the AI."""
+    if not _ai_quota_ok(user):
+        return JSONResponse({"ok": False, "error": "Too many AI requests — wait a moment."}, status_code=429)
     data = await request.json()
     url = (data.get("url") or "").strip()
     raw_id = data.get("monitor_id")
@@ -382,6 +390,8 @@ async def ai_create_monitor(
     session: AsyncSession = Depends(get_session),
 ):
     """Configure + create a monitor from a plain-English goal."""
+    if not _ai_quota_ok(user):
+        return _form_response(request, user, None, error="Too many AI requests — wait a moment.", status=429)
     form = await request.form()
     url = (form.get("url") or "").strip()
     goal = (form.get("goal") or "").strip()
@@ -433,6 +443,8 @@ async def ai_summary(
     session: AsyncSession = Depends(get_session),
 ):
     """Summarise a monitor's recent activity with the AI."""
+    if not _ai_quota_ok(user):
+        return JSONResponse({"ok": False, "error": "Too many AI requests — wait a moment."}, status_code=429)
     monitor = await _owned_monitor(session, user, monitor_id)
     app = await get_app_settings(session)
     key = get_openrouter_key(app)

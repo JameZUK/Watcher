@@ -110,7 +110,9 @@ async def reset_password(
     u = await session.get(User, user_id)
     if u is None or not (8 <= len(new) <= 1024):
         return RedirectResponse("/admin/users?err=invalid", status_code=303)
+    from ...auth.security import new_session_token
     u.password_hash = hash_password(new)
+    u.session_token = new_session_token()   # force the user's existing sessions out
     await session.commit()
     return RedirectResponse("/admin/users?msg=password", status_code=303)
 

@@ -67,6 +67,9 @@ class Settings(BaseSettings):
     # --- Abuse / resource limits (public-exposure hardening) ---
     allow_private_targets: bool = Field(default=False)   # let monitors hit private IPs
     max_monitors_per_user: int = Field(default=100)      # 0 = unlimited
+    max_groups_per_user: int = Field(default=50)         # 0 = unlimited
+    ai_max_calls: int = Field(default=30)                # per user per window (shared AI key)
+    ai_window_seconds: int = Field(default=300)
     manual_check_cooldown_seconds: int = Field(default=20)
     max_request_bytes: int = Field(default=2_000_000)    # body-size ceiling (~2 MB)
     max_changes_per_monitor: int = Field(default=500)    # prune oldest beyond this

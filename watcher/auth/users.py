@@ -24,10 +24,12 @@ async def get_by_email(session: AsyncSession, email: str) -> User | None:
 async def create_user(session: AsyncSession, email: str, password: str) -> User:
     # The very first account is the admin (owns global/app-wide settings).
     is_first = (await user_count(session)) == 0
+    from .security import new_session_token
     user = User(
         email=email.lower().strip(),
         password_hash=hash_password(password),
         is_admin=is_first,
+        session_token=new_session_token(),
     )
     session.add(user)
     await session.commit()
@@ -62,6 +64,19 @@ async def get_current_user(
     if not user or not user.is_active:
         request.session.clear()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    # Session invalidation: a credential change bumps session_token, killing other
+    # live sessions (legacy sessions with no token are tolerated until next login).
+    if user.session_token is not None and request.session.get("sv") != user.session_token:
+        request.session.clear()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired")
+    # Hard-gate "require 2FA": a user without OTP can only reach the account/setup
+    # pages until they enrol (else the policy is just a login-time nudge).
+    path = request.url.path
+    if not user.otp_enabled and not (path.startswith("/account") or path == "/logout"):
+        from ..app_settings import get_app_settings
+        if (await get_app_settings(session)).force_otp:
+            raise HTTPException(status_code=307, detail="Two-factor setup required",
+                                headers={"Location": "/account?err=otp_required"})
     return user
 
 

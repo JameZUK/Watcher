@@ -22,6 +22,11 @@ def new_api_token() -> str:
     return secrets.token_urlsafe(24)
 
 
+def new_session_token() -> str:
+    """Per-credential-version token; bumping it invalidates other live sessions."""
+    return secrets.token_hex(16)
+
+
 def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 

@@ -7,13 +7,22 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth.otp import new_secret, provisioning_uri, qr_svg, user_secret, verify
-from ...auth.security import encrypt_secret, hash_password, verify_password
+from ...auth.security import (
+    encrypt_secret, hash_password, new_session_token, verify_password,
+)
 from ...auth.users import get_by_email, get_current_user
 from ...db import get_session
 from ...models import User
 from .. import templates
 
 router = APIRouter()
+
+
+def _rotate(request: Request, user: User) -> None:
+    """Invalidate the user's OTHER sessions after a credential change, keeping
+    the current one valid."""
+    user.session_token = new_session_token()
+    request.session["sv"] = user.session_token
 
 
 @router.get("/account")
@@ -45,10 +54,14 @@ async def update_profile(
     user.display_name = (form.get("display_name") or "").strip()[:120] or None
     new_email = (form.get("email") or "").strip().lower()
     if new_email and new_email != user.email:
+        # Changing the login identity is sensitive → require the current password.
+        if not verify_password(form.get("current_password") or "", user.password_hash):
+            return RedirectResponse("/account?err=bad_password", status_code=303)
         existing = await get_by_email(session, new_email)
         if existing and existing.id != user.id:
             return RedirectResponse("/account?err=email_taken", status_code=303)
         user.email = new_email
+        _rotate(request, user)
     await session.commit()
     return RedirectResponse("/account?msg=profile", status_code=303)
 
@@ -67,6 +80,7 @@ async def change_password(
     if not (8 <= len(new) <= 1024):
         return RedirectResponse("/account?err=weak_password", status_code=303)
     user.password_hash = hash_password(new)
+    _rotate(request, user)                 # log out other sessions
     await session.commit()
     return RedirectResponse("/account?msg=password", status_code=303)
 
@@ -94,6 +108,7 @@ async def otp_enable(
         return RedirectResponse("/account?err=otp_code", status_code=303)
     user.otp_secret_enc = encrypt_secret(secret)
     user.otp_enabled = True
+    _rotate(request, user)
     await session.commit()
     request.session.pop("otp_setup", None)
     return RedirectResponse("/account?msg=otp_on", status_code=303)
@@ -113,6 +128,7 @@ async def otp_disable(
         return RedirectResponse("/account?err=otp_off", status_code=303)
     user.otp_enabled = False
     user.otp_secret_enc = None
+    _rotate(request, user)
     await session.commit()
     request.session.pop("otp_setup", None)
     return RedirectResponse("/account?msg=otp_off", status_code=303)
