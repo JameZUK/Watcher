@@ -30,7 +30,7 @@ _ADDED_COLUMNS = {
         "is_admin": "BOOLEAN DEFAULT 0",
         "telegram_chat_id": "VARCHAR(64)", "discord_webhook": "VARCHAR(512)",
         "ntfy_topic": "VARCHAR(128)", "digest_enabled": "BOOLEAN DEFAULT 0",
-        "quiet_start": "INTEGER", "quiet_end": "INTEGER",
+        "quiet_start": "INTEGER", "quiet_end": "INTEGER", "api_token": "VARCHAR(64)",
     },
     "snapshots": {
         "title": "VARCHAR(512)", "screenshot_mobile_blob": "VARCHAR(64)",
@@ -45,6 +45,7 @@ _ADDED_COLUMNS = {
         "ai_enabled": "BOOLEAN DEFAULT 1", "ai_watch_intent": "TEXT", "ai_policy": "VARCHAR(16)",
         "track_value": "BOOLEAN DEFAULT 0", "value_threshold": "FLOAT", "value_threshold_dir": "VARCHAR(8)",
         "consecutive_failures": "INTEGER DEFAULT 0",
+        "tags": "JSON", "adaptive_interval": "BOOLEAN DEFAULT 0",
     },
     "app_settings": {
         "smtp_host": "VARCHAR(255)", "smtp_port": "INTEGER DEFAULT 587", "smtp_user": "VARCHAR(255)",

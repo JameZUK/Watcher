@@ -56,6 +56,20 @@ async def _extract_value(app, monitor, result):
     return None
 
 
+def _adapt_interval(monitor, changed: bool) -> None:
+    """Auto-tune the check cadence: faster when changing, slower when stable."""
+    cur = monitor.interval_seconds
+    lo, hi = settings.min_interval_seconds, 24 * 3600
+    new = max(lo, int(cur * 0.5)) if changed else min(hi, int(cur * 1.3))
+    if new != cur:
+        monitor.interval_seconds = new
+        try:  # lazy import to avoid a scheduler<->runner import cycle
+            from .scheduler import reschedule_monitor
+            reschedule_monitor(monitor)
+        except Exception:
+            pass
+
+
 def _is_transient(result) -> bool:
     """A render failure worth retrying — driver/network/5xx, not a clean block."""
     return result.http_status is None or result.http_status >= 500
@@ -310,5 +324,8 @@ async def check_monitor(monitor_id: int) -> None:
                 # "silent": record the change but don't push/webhook for low value.
                 if not (low_value and policy == "silent"):
                     await dispatch(session, monitor, change)
+
+            if monitor.adaptive_interval:
+                _adapt_interval(monitor, bool(change_result.changed or threshold_msg))
 
             await session.commit()

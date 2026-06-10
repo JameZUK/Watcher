@@ -57,6 +57,7 @@ async def settings_page(
             "ai_model": app.ai_model,
             "ai_key_set": bool(app.openrouter_key_enc),
             "ai_policy": app.ai_low_value_policy,
+            "api_token": user.api_token or "",
             # Per-user notification destinations + delivery prefs
             "nd": {
                 "telegram_chat_id": user.telegram_chat_id or "",
@@ -75,6 +76,17 @@ async def settings_page(
             },
         },
     )
+
+
+@router.post("/settings/api-token")
+async def gen_api_token(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    import secrets
+    user.api_token = secrets.token_urlsafe(24)
+    await session.commit()
+    return RedirectResponse("/settings", status_code=303)
 
 
 def _int_or_none(v):

@@ -15,6 +15,34 @@
   </a>
 </div>
 
+{% if request.query_params.get('imported') %}
+<div class="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-sm text-emerald-200 mb-4">Imported {{ request.query_params.get('imported') }} monitor(s).</div>
+{% endif %}
+{% if all_tags or query or active_tag or monitors %}
+<div class="mb-6 space-y-3" x-data="{ imp:false }">
+  <div class="flex flex-wrap items-center gap-2">
+    <form method="get" action="/" class="flex-1 min-w-[12rem]">
+      {% if active_tag %}<input type="hidden" name="tag" value="{{ active_tag }}">{% endif %}
+      <input name="q" value="{{ query }}" placeholder="Search monitors…" class="field !py-2">
+    </form>
+    <a href="/monitors/export" class="btn btn-ghost text-xs">Export</a>
+    <button type="button" @click="imp=!imp" class="btn btn-ghost text-xs">Import</button>
+  </div>
+  {% if all_tags %}
+  <div class="flex flex-wrap gap-1.5">
+    <a href="/{% if query %}?q={{ query|urlencode }}{% endif %}" class="pill {{ '' if active_tag else 'pill-amber' }}">All</a>
+    {% for t in all_tags %}
+    <a href="/?tag={{ t|urlencode }}{% if query %}&amp;q={{ query|urlencode }}{% endif %}" class="pill {{ 'pill-amber' if active_tag==t else '' }}">{{ t }}</a>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <form x-show="imp" x-cloak method="post" action="/monitors/import" class="space-y-2">
+    <textarea name="data" rows="4" placeholder='Paste exported JSON: {"monitors":[…]}' class="field font-mono text-xs"></textarea>
+    <button class="btn btn-primary text-xs">Import monitors</button>
+  </form>
+</div>
+{% endif %}
+
 {% if not monitors %}
 <div class="glass rounded-3xl p-12 sm:p-16 text-center">
   <div class="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl grad-bar shadow-lg">

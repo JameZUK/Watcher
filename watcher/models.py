@@ -77,6 +77,7 @@ class User(Base):
     digest_enabled: Mapped[bool] = mapped_column(Boolean, default=False)  # batch low-importance
     quiet_start: Mapped[int | None] = mapped_column(Integer, default=None)  # quiet-hours start (0-23)
     quiet_end: Mapped[int | None] = mapped_column(Integer, default=None)
+    api_token: Mapped[str | None] = mapped_column(String(64), unique=True, default=None)  # REST API + RSS
 
     monitors: Mapped[list["Monitor"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
@@ -136,6 +137,10 @@ class Monitor(Base):
 
     # Reliability
     consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Organization
+    tags: Mapped[list] = mapped_column(JSON, default=list)
+    adaptive_interval: Mapped[bool] = mapped_column(Boolean, default=False)  # auto-tune cadence
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

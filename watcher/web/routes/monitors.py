@@ -107,6 +107,10 @@ def _apply_form(monitor: Monitor, form) -> None:
     vdir = (form.get("value_threshold_dir") or "").strip()
     monitor.value_threshold_dir = vdir if vdir in ("below", "above") else None
 
+    # Organization
+    monitor.tags = [t.strip() for t in (form.get("tags") or "").split(",") if t.strip()][:10]
+    monitor.adaptive_interval = _bool(form, "adaptive_interval")
+
 
 def _build_login_flow(monitor: Monitor, form) -> LoginFlow | None:
     """Reconcile a monitor's LoginFlow from the form.
@@ -343,6 +347,72 @@ async def ai_summary(
     if not text:
         return JSONResponse({"ok": False, "error": "Summary failed — try again."}, status_code=502)
     return JSONResponse({"ok": True, "summary": text})
+
+
+@router.get("/monitors/export")
+async def export_monitors(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
+    import json as _json
+    mons = (await session.execute(
+        select(Monitor).where(Monitor.user_id == user.id).order_by(Monitor.id)
+    )).scalars().all()
+    data = [{
+        "name": m.name, "url": m.url, "engine": m.engine.value,
+        "detection_mode": m.detection_mode.value, "interval_seconds": m.interval_seconds,
+        "selector": m.selector, "selector_attr": m.selector_attr, "tags": m.tags or [],
+        "ai_watch_intent": m.ai_watch_intent, "track_value": m.track_value,
+        "value_threshold": m.value_threshold, "value_threshold_dir": m.value_threshold_dir,
+        "notify_channels": m.notify_channels, "enabled": m.enabled,
+    } for m in mons]
+    return Response(
+        _json.dumps({"monitors": data}, indent=2), media_type="application/json",
+        headers={"Content-Disposition": "attachment; filename=watcher-monitors.json"},
+    )
+
+
+@router.post("/monitors/import")
+async def import_monitors(
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    import json as _json
+    form = await request.form()
+    raw = (form.get("data") or "").strip()
+    try:
+        parsed = _json.loads(raw)
+    except Exception:
+        return RedirectResponse("/?import=error", status_code=303)
+    items = parsed.get("monitors") if isinstance(parsed, dict) else parsed
+    count = 0
+    for it in items or []:
+        if not isinstance(it, dict) or not (it.get("url") or "").strip():
+            continue
+        try:
+            eng = Engine(it.get("engine") or "chromium")
+        except ValueError:
+            eng = Engine.chromium
+        try:
+            mode = DetectionMode(it.get("detection_mode") or "auto")
+        except ValueError:
+            mode = DetectionMode.auto
+        vdir = it.get("value_threshold_dir")
+        m = Monitor(
+            user_id=user.id, url=it["url"].strip()[:2048], name=(it.get("name") or it["url"])[:255],
+            engine=eng, detection_mode=mode,
+            interval_seconds=max(int(it.get("interval_seconds") or 3600), settings.min_interval_seconds),
+            selector=it.get("selector") or None, selector_attr=it.get("selector_attr") or None,
+            tags=it.get("tags") or [], ai_watch_intent=it.get("ai_watch_intent") or None,
+            track_value=bool(it.get("track_value")), value_threshold=it.get("value_threshold"),
+            value_threshold_dir=vdir if vdir in ("below", "above") else None,
+            notify_channels=it.get("notify_channels") or ["inbox"], enabled=bool(it.get("enabled", True)),
+        )
+        session.add(m)
+        await session.flush()
+        reschedule_monitor(m)
+        trigger_now(m.id)
+        count += 1
+    await session.commit()
+    return RedirectResponse(f"/?imported={count}", status_code=303)
 
 
 @router.post("/monitors")

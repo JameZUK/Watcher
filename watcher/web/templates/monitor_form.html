@@ -49,7 +49,7 @@
     <section class="glass rounded-2xl p-5 sm:p-6 space-y-4">
       <div>
         <label class="block text-sm font-medium text-slate-300 mb-1.5">URL to watch</label>
-        {{ field('url', m.url if m else '', type='url', placeholder='https://example.com/page') }}
+        {{ field('url', m.url if m else (request.query_params.get('url') or ''), type='url', placeholder='https://example.com/page') }}
       </div>
       <div class="grid sm:grid-cols-2 gap-4">
         <div>
@@ -64,6 +64,14 @@
           </div>
           <p class="text-xs text-slate-500 mt-1">Minimum 15 min.</p>
         </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-1.5">Tags <span class="text-slate-500 font-normal">· comma-separated</span></label>
+          {{ field('tags', (m.tags|join(', ')) if m and m.tags else '', placeholder='shopping, work') }}
+        </div>
+        <label class="flex items-center gap-2.5 self-end pb-2.5 text-sm text-slate-300">
+          <input type="checkbox" name="adaptive_interval" {{ 'checked' if m and m.adaptive_interval else '' }} class="rounded bg-white/10 border-white/20 text-brand-500">
+          Adaptive interval <span class="text-slate-500 text-xs">(auto-tune cadence)</span>
+        </label>
       </div>
     </section>
 
