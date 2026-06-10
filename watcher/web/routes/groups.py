@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -14,7 +14,7 @@ from ...app_settings import get_app_settings, get_openrouter_key
 from ...auth.users import get_current_user
 from ...config import settings
 from ...db import get_session
-from ...models import DetectionMode, Group, Monitor, Snapshot, SnapshotStatus, User
+from ...models import Change, DetectionMode, Group, Monitor, Snapshot, SnapshotStatus, User
 from ...netsec import validate_monitor_url, validate_public_url
 from ...scheduler import reschedule_monitor, trigger_now
 from .. import templates
@@ -22,6 +22,9 @@ from .. import templates
 router = APIRouter()
 
 _MAX_GROUP_URLS = 20
+
+
+_KINDS = ("price", "stock", "change", "custom")
 
 
 def _clean_target(form):
@@ -34,6 +37,11 @@ def _clean_target(form):
         return float(raw), d
     except (ValueError, TypeError):
         return None, None
+
+
+def _kind(form) -> str:
+    k = (form.get("kind") or "price").strip()
+    return k if k in _KINDS else "price"
 
 
 async def _owned_group(session: AsyncSession, user: User, group_id: int) -> Group:
@@ -64,17 +72,25 @@ async def list_groups(session: AsyncSession, user: User) -> list[dict]:
     )).scalars().all()
     out = []
     for g in groups:
-        vals = []
-        for m in g.monitors:
-            lv = await _latest_value(session, m.id)
-            if lv and lv[0] is not None:
-                vals.append((lv[0], lv[1]))
-        best = None
-        if vals:
-            best = (min(vals) if g.target_dir != "above" else max(vals))
+        best, recent = None, 0
+        if g.kind == "price":
+            vals = []
+            for m in g.monitors:
+                lv = await _latest_value(session, m.id)
+                if lv and lv[0] is not None:
+                    vals.append((lv[0], lv[1]))
+            if vals:
+                best = (min(vals) if g.target_dir != "above" else max(vals))
+        else:
+            mids = [m.id for m in g.monitors]
+            if mids:
+                recent = (await session.execute(
+                    select(func.count()).select_from(Change)
+                    .where(Change.monitor_id.in_(mids), Change.acknowledged.is_(False)))).scalar_one()
         out.append({"group": g, "count": len(g.monitors),
                     "best_value": best[0] if best else None,
-                    "best_label": best[1] if best else None})
+                    "best_label": best[1] if best else None,
+                    "recent": recent})
     return out
 
 
@@ -88,8 +104,12 @@ async def create_group(
     name = (form.get("name") or "").strip()[:255]
     if not name:
         return RedirectResponse("/?group=noname", status_code=303)
+    kind = _kind(form)
     tv, td = _clean_target(form)
-    g = Group(user_id=user.id, name=name, target_value=tv, target_dir=td)
+    g = Group(user_id=user.id, name=name, kind=kind,
+              watch_intent=(form.get("watch_intent") or "").strip() or None,
+              target_value=tv if kind == "price" else None,
+              target_dir=td if kind == "price" else None)
     session.add(g)
     await session.flush()
     # Optionally attach an initial monitor (from the "new group" picker).
@@ -141,18 +161,22 @@ async def ai_create_group(
     cfg = await configure_group(api_key=key, model=app.ai_model, base_url=app.ai_base_url,
                                 goal=goal, urls=valid) if key else None
     name = ((cfg or {}).get("name") or goal)[:255] or "New group"
+    kind = (cfg or {}).get("kind")
+    kind = kind if kind in _KINDS else ("price" if not cfg else "change")
     tv = (cfg or {}).get("target_value") or 0
     td = (cfg or {}).get("target_dir")
-    group = Group(user_id=user.id, name=name,
-                  target_value=float(tv) if tv else None,
-                  target_dir=td if td in ("below", "above") else None)
+    group = Group(user_id=user.id, name=name, kind=kind,
+                  watch_intent=((cfg or {}).get("watch_intent") or "").strip() or None,
+                  target_value=float(tv) if (tv and kind == "price") else None,
+                  target_dir=td if (td in ("below", "above") and kind == "price") else None)
     session.add(group)
     await session.flush()
 
+    track = kind == "price"
     for u in valid:
         m = Monitor(user_id=user.id, url=u, name="", detection_mode=DetectionMode.auto,
                     interval_seconds=max(3600, settings.min_interval_seconds),
-                    track_value=True, ai_enabled=True, enabled=True, group_id=group.id)
+                    track_value=track, ai_enabled=True, enabled=True, group_id=group.id)
         session.add(m)
         await session.flush()
         reschedule_monitor(m)
@@ -169,32 +193,44 @@ async def group_detail(
     session: AsyncSession = Depends(get_session),
 ):
     group = await _owned_group(session, user, group_id)
+    is_price = group.kind == "price"
 
     rows, raw = [], []
     for m in group.monitors:
-        lv = await _latest_value(session, m.id)
+        lv = await _latest_value(session, m.id) if is_price else None
+        lc = (await session.execute(
+            select(Change).where(Change.monitor_id == m.id)
+            .order_by(Change.detected_at.desc()).limit(1))).scalar_one_or_none()
         rows.append({"monitor": m,
                      "value": lv[0] if lv else None,
                      "label": (lv[1] if lv else None) or (f"{lv[0]:g}" if lv and lv[0] is not None else None),
-                     "at": lv[2] if lv else None})
-        pts = (await session.execute(
-            select(Snapshot.numeric_value, Snapshot.taken_at)
-            .where(Snapshot.monitor_id == m.id, Snapshot.numeric_value.is_not(None),
-                   Snapshot.status == SnapshotStatus.ok)
-            .order_by(Snapshot.taken_at.desc()).limit(60)
-        )).all()
-        series_pts = [(p[1].timestamp(), p[0]) for p in reversed(pts) if p[1] is not None]
-        if series_pts:
-            raw.append((m.name or m.url, series_pts))
+                     "at": lv[2] if lv else None,
+                     "change": lc})
+        if is_price:
+            pts = (await session.execute(
+                select(Snapshot.numeric_value, Snapshot.taken_at)
+                .where(Snapshot.monitor_id == m.id, Snapshot.numeric_value.is_not(None),
+                       Snapshot.status == SnapshotStatus.ok)
+                .order_by(Snapshot.taken_at.desc()).limit(60)
+            )).all()
+            series_pts = [(p[1].timestamp(), p[0]) for p in reversed(pts) if p[1] is not None]
+            if series_pts:
+                raw.append((m.name or m.url, series_pts))
 
-    # Build a static combined chart server-side (Alpine x-for doesn't work inside <svg>).
-    chart = _build_chart(raw)
-
+    chart = _build_chart(raw) if is_price else []
     vals = [r["value"] for r in rows if r["value"] is not None]
     best = (min(vals) if group.target_dir != "above" else max(vals)) if vals else None
     best_id = next((r["monitor"].id for r in rows if r["value"] == best), None) if best is not None else None
 
-    # Candidate monitors to add (the user's monitors not already in this group).
+    # Combined recent-changes feed (non-price groups).
+    feed = []
+    if not is_price:
+        feed = (await session.execute(
+            select(Change, Monitor).join(Monitor, Monitor.id == Change.monitor_id)
+            .where(Monitor.group_id == group.id)
+            .order_by(Change.detected_at.desc()).limit(20)
+        )).all()
+
     others = (await session.execute(
         select(Monitor).where(Monitor.user_id == user.id, Monitor.group_id.is_distinct_from(group.id))
         .order_by(Monitor.name)
@@ -202,8 +238,8 @@ async def group_detail(
 
     return templates.TemplateResponse(
         request, "group_detail.html",
-        {"user": user, "group": group, "rows": rows, "chart": chart,
-         "best": best, "best_id": best_id, "others": others},
+        {"user": user, "group": group, "is_price": is_price, "rows": rows, "chart": chart,
+         "best": best, "best_id": best_id, "others": others, "feed": feed},
     )
 
 
@@ -244,7 +280,11 @@ async def update_group(
     name = (form.get("name") or "").strip()[:255]
     if name:
         group.name = name
+    group.kind = _kind(form)
+    group.watch_intent = (form.get("watch_intent") or "").strip() or None
     tv, td = _clean_target(form)
+    if group.kind != "price":
+        tv, td = None, None
     if (tv, td) != (group.target_value, group.target_dir):
         group.target_value, group.target_dir = tv, td
         group.alert_active = False  # re-arm on a target change

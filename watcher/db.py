@@ -57,6 +57,9 @@ _ADDED_COLUMNS = {
         "tags": "JSON", "adaptive_interval": "BOOLEAN DEFAULT 0",
         "group_id": "INTEGER",
     },
+    "groups": {
+        "watch_intent": "TEXT", "kind": "VARCHAR(16) DEFAULT 'price'",
+    },
     "app_settings": {
         "smtp_host": "VARCHAR(255)", "smtp_port": "INTEGER DEFAULT 587", "smtp_user": "VARCHAR(255)",
         "smtp_pass_enc": "TEXT", "smtp_from": "VARCHAR(255)", "smtp_tls": "BOOLEAN DEFAULT 1",

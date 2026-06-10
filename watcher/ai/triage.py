@@ -430,19 +430,24 @@ _GROUP_SCHEMA = {
         "type": "object",
         "additionalProperties": False,
         "properties": {
-            "name": {"type": "string", "description": "Short product/group name."},
+            "name": {"type": "string", "description": "Short, human group name."},
+            "kind": {"type": "string", "enum": ["price", "stock", "change", "custom"]},
+            "watch_intent": {"type": "string", "description": "One line describing what to watch for across the group (empty for plain price)."},
             "target_value": {"type": "number", "description": "Price target to alert on, or 0 if none."},
             "target_dir": {"type": "string", "enum": ["below", "above", "none"]},
         },
-        "required": ["name", "target_value", "target_dir"],
+        "required": ["name", "kind", "watch_intent", "target_value", "target_dir"],
     },
 }
 
 _GROUP_SYSTEM = (
-    "You set up a price-comparison group of web pages from the user's goal. Give a "
-    "short, human group name (usually the product). If the user named a price to be "
-    "alerted on, set target_value + target_dir ('below 250' → 250/below; 'above 100' "
-    "→ 100/above); otherwise 0 / 'none'. Respond ONLY with the JSON."
+    "You set up a group of web pages watched together, from the user's goal. Choose "
+    "kind: 'price' (compare prices + alert on a target), 'stock' (alert when any "
+    "comes back in stock), 'change' (alert on any notable change), or 'custom' (a "
+    "specific thing). Give a short group name. Set watch_intent to a one-line "
+    "description of what to watch for (for stock/change/custom; empty for plain "
+    "price). For a price target set target_value + target_dir ('below 250' → "
+    "250/below); otherwise 0 / 'none'. Respond ONLY with the JSON."
 )
 
 

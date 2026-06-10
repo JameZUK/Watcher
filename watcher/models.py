@@ -173,8 +173,11 @@ class Group(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(255))
-    kind: Mapped[str] = mapped_column(String(16), default="price")
-    # Group-level threshold: alert when the BEST value across members crosses it
+    kind: Mapped[str] = mapped_column(String(16), default="price")  # price|stock|change|custom
+    # Shared "what to watch for" — combined (non-destructively) with each
+    # member's own intent at triage time. Used by stock/change/custom groups.
+    watch_intent: Mapped[str | None] = mapped_column(Text, default=None)
+    # Price groups: alert when the BEST value across members crosses it
     # ("below" → cheapest drops below target; "above" → highest rises above).
     target_value: Mapped[float | None] = mapped_column(Float, default=None)
     target_dir: Mapped[str | None] = mapped_column(String(8), default=None)  # below|above

@@ -95,7 +95,18 @@ def _target_block_reason(monitor) -> str | None:
     return None
 
 
-async def _maybe_triage(app, monitor, change_result, result):
+def _combine_intent(group_intent: str | None, mon_intent: str | None) -> str | None:
+    """Merge a group's shared watch intent with a monitor's own — non-destructive,
+    so a page that already has its own intent keeps it AND gets the group's."""
+    parts = []
+    if (group_intent or "").strip():
+        parts.append(f"Group goal: {group_intent.strip()}")
+    if (mon_intent or "").strip():
+        parts.append(f"This page specifically: {mon_intent.strip()}")
+    return "  ".join(parts) or None
+
+
+async def _maybe_triage(app, monitor, change_result, result, intent=None):
     """Best-effort AI triage of a detected change. Returns a Triage or None."""
     if not (monitor.ai_enabled and app.ai_enabled):
         return None
@@ -106,7 +117,8 @@ async def _maybe_triage(app, monitor, change_result, result):
     image = None if has_text else (change_result.diff_overlay_png or result.screenshot_png)
     return await triage_change(
         api_key=key, model=app.ai_model, base_url=app.ai_base_url, url=monitor.url, title=result.title,
-        intent=monitor.ai_watch_intent, diff_text=change_result.diff_text, image_png=image,
+        intent=intent if intent is not None else monitor.ai_watch_intent,
+        diff_text=change_result.diff_text, image_png=image,
     )
 
 
@@ -400,8 +412,14 @@ async def check_monitor(monitor_id: int) -> None:
                 await session.commit()  # keep the captured snapshot; skip change detection
                 return
             if change_result.changed or threshold_msg:
+                # Combine the group's shared watch-intent with the monitor's own
+                # (non-destructive) so members are triaged against the group goal too.
+                effective_intent = monitor.ai_watch_intent
+                if monitor.group_id:
+                    g = await session.get(Group, monitor.group_id)
+                    effective_intent = _combine_intent(g.watch_intent if g else None, monitor.ai_watch_intent)
                 # AI triage only when there's a real content change to summarise.
-                triage = await _maybe_triage(app, monitor, change_result, result) if change_result.changed else None
+                triage = await _maybe_triage(app, monitor, change_result, result, effective_intent) if change_result.changed else None
                 importance = triage.importance if triage else None
                 # A threshold crossing is always notable and overrides muting.
                 if threshold_msg:

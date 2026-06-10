@@ -1,20 +1,22 @@
 {% extends "base.html" %}
 {% block title %}{{ group.name }} · Watcher{% endblock %}
+{% set kind_label = {'price':'Price comparison','stock':'Back in stock','change':'Any change','custom':'Custom watch'} %}
 {% block content %}
 <div class="max-w-4xl mx-auto">
   <a href="/" class="inline-flex items-center gap-1 text-sm text-slate-400 hover:text-white mb-4">
     <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>Dashboard
   </a>
 
-  <div class="flex flex-wrap items-end justify-between gap-3 mb-6">
+  <div class="flex flex-wrap items-end justify-between gap-3 mb-2">
     <div>
       <h1 class="text-2xl sm:text-3xl font-bold tracking-tight text-white">{{ group.name }}</h1>
       <p class="text-sm text-slate-400 mt-1">
+        <span class="pill">{{ kind_label.get(group.kind, group.kind) }}</span>
         {{ rows|length }} page{{ 's' if rows|length != 1 }}
-        {% if group.target_value is not none %}· alert when {{ 'cheapest' if group.target_dir != 'above' else 'best' }} {{ group.target_dir }} {{ group.target_value|round(2) }}{% endif %}
+        {% if is_price and group.target_value is not none %}· alert when cheapest below {{ group.target_value|round(2) }}{% endif %}
       </p>
     </div>
-    {% if best is not none %}
+    {% if is_price and best is not none %}
     {% set hit = group.target_value is not none and ((group.target_dir=='below' and best < group.target_value) or (group.target_dir=='above' and best > group.target_value)) %}
     <div class="text-right">
       <div class="text-[11px] uppercase tracking-wide text-slate-500">{{ 'cheapest' if group.target_dir != 'above' else 'best' }} right now</div>
@@ -24,21 +26,24 @@
     </div>
     {% endif %}
   </div>
+  {% if group.watch_intent %}
+  <p class="text-sm text-slate-400 mb-5"><span class="text-slate-500">Watching for:</span> {{ group.watch_intent }}</p>
+  {% else %}<div class="mb-5"></div>{% endif %}
 
-  <!-- Comparison table -->
+  <!-- Members -->
   <section class="glass rounded-2xl overflow-hidden mb-5">
     <table class="w-full text-sm">
       <thead class="text-xs text-slate-500 uppercase tracking-wide">
         <tr class="border-b border-white/5">
           <th class="text-left font-medium px-4 py-3">Source</th>
-          <th class="text-left font-medium px-4 py-3">Price</th>
+          <th class="text-left font-medium px-4 py-3">{{ 'Price' if is_price else 'Latest' }}</th>
           <th class="text-left font-medium px-4 py-3 hidden sm:table-cell">Updated</th>
           <th class="px-4 py-3"></th>
         </tr>
       </thead>
       <tbody>
         {% for r in rows %}{% set m = r.monitor %}
-        <tr class="border-b border-white/5 last:border-0 {{ 'bg-emerald-500/[.06]' if best_id==m.id and r.value is not none else '' }}">
+        <tr class="border-b border-white/5 last:border-0 {{ 'bg-emerald-500/[.06]' if is_price and best_id==m.id and r.value is not none else '' }}">
           <td class="px-4 py-3">
             <a href="/monitors/{{ m.id }}" class="inline-flex items-center gap-2 hover:underline">
               <span class="dot {{ 'dot-live' if m.enabled else 'dot-paused' }} shrink-0"></span>
@@ -46,11 +51,17 @@
             </a>
             <div class="text-xs text-slate-500 truncate max-w-[16rem] ml-4">{{ m.name }}</div>
           </td>
-          <td class="px-4 py-3">
-            <span class="font-semibold text-white">{{ r.label or '—' }}</span>
-            {% if best_id==m.id and r.value is not none %}<span class="pill pill-amber ml-1.5">best</span>{% endif %}
+          <td class="px-4 py-3 max-w-[20rem]">
+            {% if is_price %}
+              <span class="font-semibold text-white">{{ r.label or '—' }}</span>
+              {% if best_id==m.id and r.value is not none %}<span class="pill pill-amber ml-1.5">best</span>{% endif %}
+            {% else %}
+              <span class="text-slate-300">{{ (r.change.ai_headline or r.change.summary) if r.change else '—' }}</span>
+            {% endif %}
           </td>
-          <td class="px-4 py-3 text-slate-500 hidden sm:table-cell">{{ r.at|timeago if r.at else 'never' }}</td>
+          <td class="px-4 py-3 text-slate-500 hidden sm:table-cell">
+            {{ (r.at if is_price else (r.change.detected_at if r.change else None))|timeago }}
+          </td>
           <td class="px-4 py-3 text-right">
             <form method="post" action="/groups/{{ group.id }}/remove" onsubmit="return confirm('Remove this page from the group?')">
               <input type="hidden" name="monitor_id" value="{{ m.id }}">
@@ -77,8 +88,8 @@
   </form>
   {% endif %}
 
-  <!-- Combined price chart (rendered server-side) -->
-  {% if chart %}
+  <!-- Price chart -->
+  {% if is_price and chart %}
   <section class="glass rounded-2xl p-5 mb-5">
     <h2 class="font-semibold text-white mb-3">Price over time</h2>
     <svg viewBox="0 0 800 220" class="w-full" style="height:240px" preserveAspectRatio="none">
@@ -97,16 +108,49 @@
   </section>
   {% endif %}
 
-  <!-- Settings: rename + alert target + delete -->
-  <section class="glass rounded-2xl p-5">
+  <!-- Recent changes feed (non-price) -->
+  {% if not is_price %}
+  <section class="glass rounded-2xl p-5 mb-5">
+    <h2 class="font-semibold text-white mb-3">Recent activity</h2>
+    {% if feed %}
+    <ul class="space-y-2.5">
+      {% for c, m in feed %}
+      <li class="flex items-start gap-3 text-sm">
+        <span class="dot {{ 'dot-live' if c.ai_importance=='high' else 'dot-paused' }} mt-1.5 shrink-0"></span>
+        <div class="min-w-0">
+          <a href="/monitors/{{ m.id }}" class="text-slate-200 hover:underline">{{ c.ai_headline or c.summary }}</a>
+          <div class="text-xs text-slate-500">{{ m.url|url_host }} · {{ c.detected_at|timeago }}</div>
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="text-sm text-slate-500">No changes detected across this group yet.</p>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <!-- Settings -->
+  <section class="glass rounded-2xl p-5" x-data="{ kind: '{{ group.kind }}' }">
     <h2 class="font-semibold text-white mb-4">Group settings</h2>
     <form method="post" action="/groups/{{ group.id }}" class="space-y-4">
-      <div>
-        <label class="block text-sm font-medium text-slate-300 mb-1.5">Name</label>
-        <input name="name" value="{{ group.name }}" required class="field">
+      <div class="grid sm:grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-1.5">Name</label>
+          <input name="name" value="{{ group.name }}" required class="field">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-1.5">Type</label>
+          <select name="kind" x-model="kind" class="field">
+            <option value="price" {{ 'selected' if group.kind=='price' else '' }}>Price comparison</option>
+            <option value="stock" {{ 'selected' if group.kind=='stock' else '' }}>Back in stock</option>
+            <option value="change" {{ 'selected' if group.kind=='change' else '' }}>Any notable change</option>
+            <option value="custom" {{ 'selected' if group.kind=='custom' else '' }}>Custom (AI)</option>
+          </select>
+        </div>
       </div>
-      <div>
-        <label class="block text-sm font-medium text-slate-300 mb-1.5">Alert me when the {{ 'cheapest' if group.target_dir != 'above' else 'best' }} price is</label>
+      <div x-show="kind==='price'" x-cloak>
+        <label class="block text-sm font-medium text-slate-300 mb-1.5">Alert me when the cheapest price is</label>
         <div class="flex flex-wrap items-center gap-2">
           <select name="target_dir" class="field !w-auto">
             <option value="">— no group alert —</option>
@@ -116,6 +160,11 @@
           <input type="number" step="any" name="target_value" value="{{ group.target_value if group.target_value is not none else '' }}" placeholder="250" class="field !w-32">
         </div>
         <p class="text-xs text-slate-500 mt-1.5">Fires once (high importance) when the best price across the group crosses this, and re-arms when it recovers.</p>
+      </div>
+      <div x-show="kind!=='price'" x-cloak>
+        <label class="block text-sm font-medium text-slate-300 mb-1.5">What to watch for <span class="text-slate-500 font-normal">· applies to every page in the group</span></label>
+        <textarea name="watch_intent" rows="2" placeholder="e.g. comes back in stock · a new model is announced · the headline changes" class="field">{{ group.watch_intent or '' }}</textarea>
+        <p class="text-xs text-slate-500 mt-1.5">Combined with each page's own intent (never replaces it) when the AI rates a change's importance.</p>
       </div>
       <button class="btn btn-primary text-sm">Save group</button>
     </form>

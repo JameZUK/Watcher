@@ -79,14 +79,25 @@
         <button type="button" @click="adv = true" class="text-xs text-slate-400 hover:text-white">manual setup</button>
       </div>
     </form>
-    <!-- Manual: name + target only (add pages later) -->
-    <form x-show="adv" x-cloak method="post" action="/groups" class="flex flex-wrap items-end gap-3">
-      <div class="flex-1 min-w-[10rem]">
-        <label class="block text-xs text-slate-400 mb-1">Group name</label>
-        <input name="name" required placeholder="e.g. JBL Boombox 3" class="field !py-2">
+    <!-- Manual: name + type + target/intent (add pages later) -->
+    <form x-show="adv" x-cloak method="post" action="/groups" class="space-y-3">
+      <div class="grid sm:grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Group name</label>
+          <input name="name" required placeholder="e.g. JBL Boombox 3" class="field !py-2">
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Type</label>
+          <select name="kind" x-model="kind" class="field !py-2">
+            <option value="price">Price comparison</option>
+            <option value="stock">Back in stock</option>
+            <option value="change">Any notable change</option>
+            <option value="custom">Custom (AI)</option>
+          </select>
+        </div>
       </div>
-      <div>
-        <label class="block text-xs text-slate-400 mb-1">Alert when the best price is</label>
+      <div x-show="kind==='price'" x-cloak>
+        <label class="block text-xs text-slate-400 mb-1">Alert when the cheapest price is</label>
         <div class="flex items-center gap-2">
           <select name="target_dir" class="field !py-2 !w-auto">
             <option value="">— no alert —</option><option value="below">below</option><option value="above">above</option>
@@ -94,23 +105,34 @@
           <input type="number" step="any" name="target_value" placeholder="250" class="field !py-2 !w-28">
         </div>
       </div>
-      <button class="btn btn-primary text-sm">Create group</button>
-      <button type="button" @click="adv = false" class="text-xs text-slate-400 hover:text-white self-center">use AI instead</button>
+      <div x-show="kind!=='price'" x-cloak>
+        <label class="block text-xs text-slate-400 mb-1">What to watch for <span class="text-slate-500">· applies to every page</span></label>
+        <input name="watch_intent" placeholder="e.g. comes back in stock · a new model is announced" class="field !py-2">
+      </div>
+      <div class="flex items-center gap-3">
+        <button class="btn btn-primary text-sm">Create group</button>
+        <button type="button" @click="adv = false" class="text-xs text-slate-400 hover:text-white">use AI instead</button>
+      </div>
     </form>
   </div>
   {% if groups %}
   <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+    {% set gkind = {'price':'Price','stock':'Back in stock','change':'Any change','custom':'Custom'} %}
     {% for gi in groups %}{% set g = gi.group %}
     {% set hit = g.target_value is not none and gi.best_value is not none and ((g.target_dir=='below' and gi.best_value < g.target_value) or (g.target_dir=='above' and gi.best_value > g.target_value)) %}
     <a href="/groups/{{ g.id }}" class="glass glass-hover rounded-2xl p-4 flex items-center justify-between gap-3 select-none">
       <div class="min-w-0">
         <h3 class="font-semibold text-white truncate">{{ g.name }}</h3>
-        <p class="text-xs text-slate-500">{{ gi.count }} page{{ 's' if gi.count != 1 }}{% if g.target_value is not none %} · alert {{ g.target_dir }} {{ g.target_value|round(2) }}{% endif %}</p>
+        <p class="text-xs text-slate-500">{{ gkind.get(g.kind, g.kind) }} · {{ gi.count }} page{{ 's' if gi.count != 1 }}</p>
       </div>
-      {% if gi.best_label %}
+      {% if g.kind == 'price' and gi.best_label %}
       <div class="text-right shrink-0">
         <div class="text-[10px] uppercase tracking-wide text-slate-500">{{ 'cheapest' if g.target_dir != 'above' else 'best' }}</div>
         <div class="text-lg font-bold {{ 'text-emerald-400' if hit else 'text-white' }}">{{ gi.best_label }}</div>
+      </div>
+      {% elif g.kind != 'price' and gi.recent %}
+      <div class="text-right shrink-0">
+        <span class="pill pill-amber">{{ gi.recent }} new</span>
       </div>
       {% endif %}
     </a>
@@ -180,7 +202,7 @@
 {% block scripts %}
 <script>
 function groupForm(){return {
-  adv: false, goal: '', urls: '', busy: false, aiError: '',
+  adv: false, kind: 'price', goal: '', urls: '', busy: false, aiError: '',
   // Friendly inline validation (busy is set on the form's @submit, not here, so
   // disabling the button can't cancel the native submit).
   aiGuard(e){
