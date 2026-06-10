@@ -77,18 +77,60 @@ def _ip_is_public(ip: str) -> bool:
     )
 
 
+def _resolve(host: str) -> set[str] | None:
+    """Resolve ``host`` to a set of IP strings, or None on resolution failure."""
+    try:
+        return {info[4][0] for info in socket.getaddrinfo(host, None)}
+    except socket.gaierror:
+        return None
+
+
 def _host_is_public(host: str) -> str | None:
     """Resolve ``host`` and return an error string if it has no addresses or ANY
-    resolved address is non-public; else None."""
+    resolved address is non-public; else None. Unresolvable → error (save-time)."""
     if not host:
         return "URL is missing a host."
-    try:
-        infos = socket.getaddrinfo(host, None)
-    except socket.gaierror:
+    ips = _resolve(host)
+    if ips is None:
         return "Could not resolve the host."
-    ips = {info[4][0] for info in infos}
     if not ips or any(not _ip_is_public(ip) for ip in ips):
         return "Refusing to connect to a private/internal address."
+    return None
+
+
+def _host_resolves_internal(host: str) -> bool:
+    """True only if ``host`` resolves and ANY address is internal. Unresolvable
+    or public → False — so a transient DNS failure isn't treated as a block."""
+    ips = _resolve(host)
+    return bool(ips) and any(not _ip_is_public(ip) for ip in ips)
+
+
+def render_block_reason(url: str) -> str | None:
+    """Render-time SSRF gate: block a bad scheme or a host that RESOLVES to an
+    internal address. Returns None on resolution failure (transient — let the
+    normal render attempt handle it rather than hard-failing/auto-pausing)."""
+    err = validate_monitor_url(url)
+    if err:
+        return err
+    if _host_resolves_internal(urlparse(url.strip()).hostname or ""):
+        return "Refusing to connect to a private/internal address."
+    return None
+
+
+def proxy_block_reason(proxy: str | None) -> str | None:
+    """Render-time proxy gate (transient-tolerant counterpart to validate_proxy)."""
+    proxy = (proxy or "").strip()
+    if not proxy:
+        return None
+    if "://" not in proxy:
+        return "Proxy must be scheme://host:port."
+    if proxy.split("://", 1)[0].lower() not in _PROXY_SCHEMES:
+        return "Unsupported proxy scheme."
+    host = urlparse(proxy).hostname
+    if not host:
+        return "Proxy is missing a host."
+    if _host_resolves_internal(host):
+        return "Proxy resolves to a private/internal address."
     return None
 
 

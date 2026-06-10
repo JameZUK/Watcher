@@ -115,7 +115,10 @@ def _apply_form(monitor: Monitor, form) -> None:
     monitor.wait_until = form.get("wait_until") if form.get("wait_until") in (
         "load", "domcontentloaded", "networkidle", "commit") else "networkidle"
     monitor.wait_selector = (form.get("wait_selector") or "").strip() or None
-    monitor.wait_timeout_ms = _clamp_int(form, "wait_timeout_ms", 15000, 1000, 120000)
+    # Cap at the render ceiling so a slow-loris page can't pin a render slot
+    # longer than the outer _render timeout anyway.
+    monitor.wait_timeout_ms = _clamp_int(form, "wait_timeout_ms", 15000, 1000,
+                                         settings.render_timeout_seconds * 1000)
     monitor.viewport_width = _clamp_int(form, "viewport_width", 1280, 320, 3840)
     monitor.viewport_height = _clamp_int(form, "viewport_height", 800, 320, 4320)
     proxy = (form.get("proxy") or "").strip()

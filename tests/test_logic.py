@@ -165,6 +165,26 @@ def test_netsec_blocks_internal_targets_and_encodings():
     assert validate_proxy(None) is None
 
 
+def test_render_gate_is_transient_tolerant():
+    """The render-time SSRF gate blocks resolved-internal/bad-scheme targets but
+    NOT a transient resolution failure (so a DNS blip can't auto-pause a monitor)."""
+    from watcher.netsec import proxy_block_reason, render_block_reason
+    assert render_block_reason("http://169.254.169.254/")          # resolved-internal
+    assert render_block_reason("file:///etc/passwd")               # bad scheme
+    assert render_block_reason("http://nonexistent.invalid.zzz/") is None   # transient
+    assert proxy_block_reason("socks5h://10.0.0.1:1080")           # internal proxy
+    assert proxy_block_reason("http://nonexistent.invalid.zzz:8080") is None
+    assert proxy_block_reason("") is None
+
+
+def test_csrf_host_parsing_ipv6_and_port():
+    from watcher.main import _host_only
+    assert _host_only("http://[::1]:8000") == "::1"     # IPv6 literal + port
+    assert _host_only("//[::1]:8000") == "::1"          # Host-header form
+    assert _host_only("//example.com:8000") == "example.com"
+    assert _host_only("https://EXAMPLE.com") == "example.com"
+
+
 def test_api_token_hashing():
     from watcher.auth.security import hash_token, looks_hashed, new_api_token
     raw = new_api_token()

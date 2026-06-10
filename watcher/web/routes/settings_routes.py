@@ -225,6 +225,10 @@ async def push_subscribe(
             or not keys.get("p256dh") or not keys.get("auth")
             or len(str(keys.get("p256dh"))) > 255 or len(str(keys.get("auth"))) > 255):
         return JSONResponse({"ok": False, "error": "invalid subscription"}, status_code=400)
+    # SSRF: the server POSTs to this endpoint on every change — block internal
+    # targets like the other notifier destinations (push services are public).
+    if not settings.allow_private_targets and validate_public_url(endpoint):
+        return JSONResponse({"ok": False, "error": "endpoint not allowed"}, status_code=400)
 
     existing = (
         await session.execute(

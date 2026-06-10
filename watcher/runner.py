@@ -26,16 +26,18 @@ _LOW_VALUE = {"low", "noise"}
 
 
 def _target_block_reason(monitor) -> str | None:
-    """Return why a monitor's network targets are blocked (SSRF), or None. Does
-    DNS resolution — call off the event loop."""
-    from .netsec import validate_proxy, validate_public_url
-    err = validate_public_url(monitor.url) or validate_proxy(monitor.proxy)
+    """Return why a monitor's network targets resolve to an internal address
+    (SSRF), or None. Transient-tolerant (a DNS failure is not a block, so a
+    resolver blip doesn't auto-pause a legit monitor). Resolves DNS — call off
+    the event loop."""
+    from .netsec import proxy_block_reason, render_block_reason
+    err = render_block_reason(monitor.url) or proxy_block_reason(monitor.proxy)
     if err:
         return err
     flow = getattr(monitor, "login_flow", None)
     for step in (flow.steps if flow and flow.steps else []):
         if step.get("action") == "goto" and step.get("url"):
-            if (e := validate_public_url(step["url"])):
+            if (e := render_block_reason(step["url"])):
                 return e
     return None
 

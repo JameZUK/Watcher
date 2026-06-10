@@ -20,6 +20,16 @@ from .web.routes import api, auth, changes, dashboard, monitors, settings_routes
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
 
+def _host_only(value: str) -> str:
+    """Extract a lowercased hostname from a URL or ``//host:port`` form,
+    correctly handling IPv6 brackets and ports (for the CSRF host comparison)."""
+    from urllib.parse import urlsplit
+    try:
+        return (urlsplit(value).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.ensure_dirs()
@@ -65,6 +75,44 @@ def create_app() -> FastAPI:
     )
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
+    # NB: @app.middleware runs in REVERSE registration order (last = outermost).
+    # Define csrf → body-size → security-headers so execution is
+    # security-headers(outer) → body-size → csrf → route — i.e. error responses
+    # (403/413) still get the security headers, and body-size runs before csrf.
+
+    @app.middleware("http")
+    async def _csrf_origin_guard(request: Request, call_next):
+        """CSRF defense for cookie-authed state changes. Fails CLOSED: a browser
+        always sends Origin (or at least Referer) on a cross-origin unsafe
+        request, so a cookie-authed POST/PUT/PATCH/DELETE with neither header, or
+        with a mismatched host, is rejected. The /api/* routes are token-authed
+        (no ambient session cookie) so they're exempt."""
+        if request.method in ("POST", "PUT", "PATCH", "DELETE") and not request.url.path.startswith("/api/"):
+            src = request.headers.get("origin") or request.headers.get("referer")
+            src_host = _host_only(src) if src else ""
+            # Host header hostname (bracket/port-safe) + operator-configured hosts.
+            allowed = {_host_only("//" + request.headers.get("host", ""))} | settings.trusted_host_set
+            if not src_host or src_host not in allowed:
+                return JSONResponse({"detail": "Cross-origin request blocked."}, status_code=403)
+        return await call_next(request)
+
+    @app.middleware("http")
+    async def _body_size_limit(request: Request, call_next):
+        """Reject oversized request bodies before they're read/parsed (memory DoS)."""
+        cl = request.headers.get("content-length")
+        if cl is not None:
+            try:
+                if int(cl) > settings.max_request_bytes:
+                    return JSONResponse({"detail": "Request body too large."}, status_code=413)
+            except ValueError:
+                return JSONResponse({"detail": "Invalid Content-Length."}, status_code=400)
+        elif request.method in ("POST", "PUT", "PATCH") and "chunked" in request.headers.get(
+                "transfer-encoding", "").lower():
+            # No Content-Length to check → would bypass the cap. This app has no
+            # streaming-upload endpoints, so require a declared length.
+            return JSONResponse({"detail": "Length Required."}, status_code=411)
+        return await call_next(request)
+
     @app.middleware("http")
     async def _security_headers(request: Request, call_next):
         """Defensive response headers (clickjacking, MIME-sniffing, referrer leak,
@@ -77,36 +125,6 @@ def create_app() -> FastAPI:
         if settings.secure_cookies:
             resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
         return resp
-
-    @app.middleware("http")
-    async def _body_size_limit(request: Request, call_next):
-        """Reject oversized request bodies before they're read/parsed (memory DoS)."""
-        cl = request.headers.get("content-length")
-        if cl is not None:
-            try:
-                if int(cl) > settings.max_request_bytes:
-                    return JSONResponse({"detail": "Request body too large."}, status_code=413)
-            except ValueError:
-                return JSONResponse({"detail": "Invalid Content-Length."}, status_code=400)
-        return await call_next(request)
-
-    @app.middleware("http")
-    async def _csrf_origin_guard(request: Request, call_next):
-        """CSRF defense for cookie-authed state changes. Fails CLOSED: a browser
-        always sends Origin (or at least Referer) on a cross-origin unsafe
-        request, so a cookie-authed POST/PUT/PATCH/DELETE with neither header, or
-        with a mismatched host, is rejected. The /api/* routes are token-authed
-        (no ambient session cookie) so they're exempt."""
-        if request.method in ("POST", "PUT", "PATCH", "DELETE") and not request.url.path.startswith("/api/"):
-            from urllib.parse import urlparse
-            src = request.headers.get("origin") or request.headers.get("referer")
-            src_host = (urlparse(src).hostname or "").lower() if src else ""
-            # Host header without port; plus any operator-configured public hosts.
-            host_hdr = (request.headers.get("host", "")).split(":", 1)[0].lower()
-            allowed = {host_hdr} | settings.trusted_host_set
-            if src_host not in allowed or not src_host:
-                return JSONResponse({"detail": "Cross-origin request blocked."}, status_code=403)
-        return await call_next(request)
 
     app.include_router(auth.router)
     app.include_router(dashboard.router)

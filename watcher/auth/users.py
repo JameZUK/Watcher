@@ -32,6 +32,15 @@ async def create_user(session: AsyncSession, email: str, password: str) -> User:
     session.add(user)
     await session.commit()
     await session.refresh(user)
+    # Race guard: if two accounts both saw an empty table, only the lowest-id one
+    # may keep admin (deterministic — both racers agree on the winner).
+    if is_first:
+        from sqlalchemy import func
+        min_id = (await session.execute(select(func.min(User.id)))).scalar_one()
+        if user.id != min_id and user.is_admin:
+            user.is_admin = False
+            await session.commit()
+            await session.refresh(user)
     return user
 
 

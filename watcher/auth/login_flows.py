@@ -94,7 +94,19 @@ def cookie_editor_to_storage_state(raw: str, allowed_host: str | None = None) ->
 
     if not cookies:
         raise ValueError("No usable cookies found in the pasted JSON.")
-    return {"cookies": cookies, "origins": origins}
+    cookies = cookies[:200]   # bound stored state (defense-in-depth)
+
+    # Scope pasted localStorage origins to the monitor host too (mirrors cookie
+    # scoping), and bound the count.
+    scoped_origins = []
+    for o in (origins or [])[:50]:
+        if not isinstance(o, dict):
+            continue
+        from urllib.parse import urlparse
+        ohost = (urlparse(str(o.get("origin") or "")).hostname or "")
+        if allowed_host is None or _domain_allowed(ohost, allowed_host):
+            scoped_origins.append(o)
+    return {"cookies": cookies, "origins": scoped_origins}
 
 
 def session_cookie_count(flow: LoginFlow | None) -> int:
