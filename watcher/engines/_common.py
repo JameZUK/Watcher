@@ -57,7 +57,7 @@ _COOKIE_CSS = (
 # button (so the banner closes properly and any gated content loads), and hide
 # whatever remains. Restores the scroll-lock such banners impose. Returns counts.
 _BANNER_HEURISTIC_JS = r"""() => {
-  const out = { clicked: 0, hidden: 0 };
+  const out = { clicked: 0, hidden: 0, walls: [] };
   const consentRx = /(cookie|consent|gdpr|ccpa|we value your privacy|your privacy|tracking technolog|privacy|opt[- ]?out|data protection)/i;
   const acceptRx  = /^(accept|agree|allow|got it|ok|okay|yes|i (accept|agree|understand)|understood|continue|enable all|allow all|accept all|i'?m ok|save.*accept|agree.*(close|continue))\b/i;
   // Dismiss/close actions for non-blocking bars and post-accept confirmation
@@ -114,6 +114,15 @@ _BANNER_HEURISTIC_JS = r"""() => {
   for (const c of overlays.slice(0, 8)) {
     const btn = c.__btn || findBtn(c, acceptRx, rejectRx) || findBtn(c, dismissRx, null);
     if (btn) { try { btn.click(); out.clicked++; continue; } catch (e) {} }
+    // No actionable accept/dismiss button: hide it for a clean screenshot. But if
+    // it's a BLOCKING wall (covers much of the viewport) record its HTML — hiding
+    // doesn't grant consent, so content gated behind it may still be missing; the
+    // optional AI fallback can learn the real accept selector from this snippet.
+    const rr = c.getBoundingClientRect();
+    if ((rr.width * rr.height) >= innerWidth * innerHeight * 0.35) {
+      const html = (c.outerHTML || '').replace(/<(script|style|svg|path|noscript)[\s\S]*?<\/\1>/gi, '');
+      out.walls.push(html.slice(0, 4000));
+    }
     try { c.style.setProperty('display', 'none', 'important'); out.hidden++; } catch (e) {}
   }
   // 2) generic interstitial modals (sign-in promos, newsletter/app nags, etc.)
@@ -204,31 +213,39 @@ async def click_consent(page, monitor: Monitor) -> None:
                 pass
 
 
-async def hide_banners(page, monitor: Monitor) -> None:
+async def hide_banners(page, monitor: Monitor) -> list | None:
     """Inject the consent-banner-hiding CSS AFTER load (reliable, unlike a
     document-start init script) so banners are gone from both the text and the
-    screenshot. Re-applied to child frames where they exist."""
+    screenshot. Re-applied to child frames where they exist.
+
+    Returns trimmed HTML of any BLOCKING consent wall the heuristic could only
+    hide (not accept) — content gated behind it may still be missing, so the
+    optional AI fallback can learn a real accept selector. None if all clear."""
     if not getattr(monitor, "block_annoyances", True):
-        return
+        return None
+
+    walls: list[str] = []
+
+    async def _run(target):
+        try:
+            res = await target.evaluate(_BANNER_HEURISTIC_JS)
+            if isinstance(res, dict) and res.get("walls"):
+                walls.extend(res["walls"])
+        except Exception:
+            pass
 
     async def _sweep():
         try:
             await page.add_style_tag(content=_COOKIE_CSS)
         except Exception:
             pass
-        try:
-            await page.evaluate(_BANNER_HEURISTIC_JS)
-        except Exception:
-            pass
+        await _run(page)
         # Consent dialogs are frequently rendered inside their own iframe; run the
         # same generic handler + CSS inside every child frame.
         for frame in page.frames:
             if frame is page.main_frame:
                 continue
-            try:
-                await frame.evaluate(_BANNER_HEURISTIC_JS)
-            except Exception:
-                pass
+            await _run(frame)
             try:
                 await frame.add_style_tag(content=_COOKIE_CSS)
             except Exception:
@@ -242,6 +259,8 @@ async def hide_banners(page, monitor: Monitor) -> None:
     except Exception:
         pass
     await _sweep()
+    # De-dup; cap to keep the AI prompt small/cheap.
+    return list(dict.fromkeys(walls))[:2] or None
 
 
 async def replay_login(page, monitor: Monitor) -> None:
@@ -343,7 +362,12 @@ async def capture(page, response, monitor: Monitor, mobile: bool = True) -> Rend
     # consent walls), then hide whatever banners remain — so they pollute neither
     # the captured text nor the screenshot / visual diff.
     await click_consent(page, monitor)
-    await hide_banners(page, monitor)
+    # hide_banners returns HTML of any blocking consent wall it could only hide
+    # (not accept) — fed to the runner's optional AI selector-learning fallback.
+    try:
+        result.unhandled_consent_html = await hide_banners(page, monitor)
+    except Exception:
+        result.unhandled_consent_html = None
 
     try:
         result.title = (await page.title() or "").strip() or None

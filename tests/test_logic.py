@@ -269,3 +269,60 @@ def test_html_to_text():
     )
     assert "Hi" in out and "Price & more" in out
     assert "color:red" not in out and "var x" not in out
+
+
+# --- AI self-healing consent learning --------------------------------------
+
+def _consent_args(monkeypatch, *, returned_selectors, ai_on=True, key="k",
+                  walls=("<div id=cmp>cookies</div>",), existing=None):
+    """Wire up app/monitor/result + stubs for _maybe_learn_consent and return them."""
+    import watcher.ai as ai
+    import watcher.runner as R
+
+    async def _fake_suggest(**kw):
+        _fake_suggest.kw = kw
+        return returned_selectors
+    _fake_suggest.kw = None
+    monkeypatch.setattr(ai, "suggest_consent_selectors", _fake_suggest)
+    monkeypatch.setattr(R, "get_openrouter_key", lambda app: key)
+
+    app = N(ai_enabled=ai_on, ai_model="m", ai_base_url=None)
+    monitor = N(block_annoyances=True, ai_enabled=True, id=1,
+                url="https://x", consent_clicks=list(existing or []))
+    result = N(unhandled_consent_html=list(walls) if walls else None)
+    return R, app, monitor, result, _fake_suggest
+
+
+def test_maybe_learn_consent_caches_selectors(monkeypatch):
+    import asyncio
+    R, app, monitor, result, _ = _consent_args(
+        monkeypatch, returned_selectors=["#accept-all", "button.ok"])
+    asyncio.run(R._maybe_learn_consent(app, monitor, result))
+    assert monitor.consent_clicks == ["#accept-all", "button.ok"]
+
+
+def test_maybe_learn_consent_skips_when_no_wall(monkeypatch):
+    import asyncio
+    R, app, monitor, result, stub = _consent_args(
+        monkeypatch, returned_selectors=["#x"], walls=None)
+    asyncio.run(R._maybe_learn_consent(app, monitor, result))
+    assert monitor.consent_clicks == []
+    assert stub.kw is None                      # AI never called
+
+
+def test_maybe_learn_consent_skips_when_already_have_clicks(monkeypatch):
+    import asyncio
+    R, app, monitor, result, stub = _consent_args(
+        monkeypatch, returned_selectors=["#new"], existing=["#manual"])
+    asyncio.run(R._maybe_learn_consent(app, monitor, result))
+    assert monitor.consent_clicks == ["#manual"]   # untouched; AI not re-spent
+    assert stub.kw is None
+
+
+def test_maybe_learn_consent_skips_when_ai_off(monkeypatch):
+    import asyncio
+    R, app, monitor, result, stub = _consent_args(
+        monkeypatch, returned_selectors=["#x"], ai_on=False)
+    asyncio.run(R._maybe_learn_consent(app, monitor, result))
+    assert monitor.consent_clicks == []
+    assert stub.kw is None

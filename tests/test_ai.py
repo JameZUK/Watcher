@@ -14,7 +14,7 @@ from watcher.ai import triage as T
 
 AI_FNS = [
     T.triage_change, T.suggest_watch_items, T.extract_value,
-    T.configure_monitor, T.summarize_history,
+    T.configure_monitor, T.summarize_history, T.suggest_consent_selectors,
 ]
 
 
@@ -46,7 +46,7 @@ class _FakeClient:
         '"found":true,"value":1.5,"label":"£1.50","suggestions":["a","b"],'
         '"name":"N","detection_mode":"auto","selector":"","interval_minutes":30,'
         '"ai_watch_intent":"x","track_value":true,"value_threshold":0,'
-        '"value_threshold_dir":"none"}'
+        '"value_threshold_dir":"none","selectors":["#accept-all","#accept-all","button.agree","<bad>"]}'
     )
 
     def __init__(self, *a, **k):
@@ -108,6 +108,22 @@ def test_summarize_threads_base_url(fake_http):
                                  name="n", lines=["x"]))
     assert r
     assert fake_http.last["url"] == "http://x/v1"
+
+
+def test_suggest_consent_selectors_parses_and_sanitizes(fake_http):
+    r = _run(T.suggest_consent_selectors(
+        api_key="k", model="m", base_url="http://x/v1", url="u",
+        html_snippets=["<div id='cmp'>We use cookies</div>"]))
+    # de-duped (case-insensitive) and the junk "<bad>" selector dropped
+    assert r == ["#accept-all", "button.agree"]
+    assert fake_http.last["url"] == "http://x/v1"
+
+
+def test_suggest_consent_selectors_no_html_returns_none(fake_http):
+    assert _run(T.suggest_consent_selectors(
+        api_key="k", model="m", url="u", html_snippets=[])) is None
+    assert _run(T.suggest_consent_selectors(
+        api_key="k", model="m", url="u", html_snippets=["   "])) is None
 
 
 def test_default_endpoint_is_openrouter(fake_http):

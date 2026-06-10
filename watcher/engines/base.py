@@ -52,6 +52,9 @@ class RenderResult:
     render_ms: int | None = None
     # Updated browser storage_state if a login flow ran (for session persistence).
     session_state: dict | None = None
+    # HTML of any consent/cookie banner the automatic handler could NOT clear —
+    # fed to the optional AI fallback so it can learn dismiss selectors.
+    unhandled_consent_html: list | None = None
     extra: dict = field(default_factory=dict)
 
 

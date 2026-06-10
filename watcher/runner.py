@@ -139,6 +139,35 @@ async def _extract_value(app, monitor, result):
     return None
 
 
+async def _maybe_learn_consent(app, monitor, result) -> None:
+    """Self-healing AI fallback: when the automatic handler leaves a consent
+    banner showing, ask the model for dismiss selectors ONCE and cache them on
+    the monitor so the next render clears it. No-op unless AI is on, the monitor
+    blocks annoyances, a banner remains, and we haven't already learned/​been told
+    selectors (so cost is bounded to ~one call per site)."""
+    if not getattr(monitor, "block_annoyances", True):
+        return
+    snippets = getattr(result, "unhandled_consent_html", None)
+    if not snippets:
+        return
+    if monitor.consent_clicks:           # already have manual/learned selectors — don't re-spend
+        return
+    if not (monitor.ai_enabled and app.ai_enabled):
+        return
+    key = get_openrouter_key(app)
+    if not key:
+        return
+    from .ai import suggest_consent_selectors
+    sels = await suggest_consent_selectors(
+        api_key=key, model=app.ai_model, base_url=app.ai_base_url,
+        url=monitor.url, html_snippets=snippets,
+    )
+    if sels:
+        monitor.consent_clicks = sels[:15]   # persisted by the caller's commit
+        logging.getLogger("watcher").info(
+            "AI consent: learned %d dismiss selector(s) for monitor %s", len(sels), monitor.id)
+
+
 def _adapt_interval(monitor, changed: bool) -> None:
     """Auto-tune the check cadence: faster when changing, slower when stable."""
     cur = monitor.interval_seconds
@@ -370,6 +399,10 @@ async def check_monitor(monitor_id: int) -> None:
             await session.flush()  # assign snap.id
 
             app = await get_app_settings(session)
+
+            # Self-healing: if a consent banner survived the automatic handler,
+            # learn dismiss selectors via AI (once) so the next render is clean.
+            await _maybe_learn_consent(app, monitor, result)
 
             # Value tracking: capture a numeric value each check for trends and
             # threshold alerts (e.g. price drops below a target).

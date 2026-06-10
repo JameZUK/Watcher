@@ -490,6 +490,88 @@ async def configure_group(
         return None
 
 
+_CONSENT_SCHEMA = {
+    "name": "consent_selectors",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "selectors": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "1-4 CSS selectors, clicked in order (most-likely first), that ACCEPT or CLOSE the banner.",
+            }
+        },
+        "required": ["selectors"],
+    },
+}
+
+_CONSENT_SYSTEM = (
+    "You are given the HTML of a cookie/consent/privacy banner or modal that a "
+    "headless browser FAILED to dismiss automatically. Return 1-4 CSS selectors "
+    "that, clicked IN ORDER, accept or close it so the underlying page is usable. "
+    "Prefer an 'accept all' / 'agree' / 'OK' / 'got it' control; otherwise a "
+    "close / 'X' button. NEVER choose 'reject', 'decline', 'manage', or "
+    "'settings' (they open more dialogs). Use the most stable selector available "
+    "(id, data-* attribute, aria-label, or a unique class) and make it valid CSS "
+    "that querySelector accepts. Respond ONLY with the JSON."
+)
+
+
+async def suggest_consent_selectors(
+    *, api_key: str, model: str, base_url: str | None = None, url: str,
+    html_snippets: list[str], timeout: float = 30.0,
+) -> list[str] | None:
+    """Given the HTML of an undismissable consent banner, suggest CSS selectors to
+    click to accept/close it. Returns an ordered list, or None on failure."""
+    if not api_key or not html_snippets:
+        return None
+    blob = "\n\n---\n\n".join(s for s in html_snippets if (s or "").strip())[:9000]
+    if not blob.strip():
+        return None
+    user = f"URL: {url}\n\nBanner/modal HTML:\n{blob}"
+    body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _CONSENT_SYSTEM},
+            {"role": "user", "content": user},
+        ],
+        "temperature": 0.0,
+        "max_tokens": 200,
+        "response_format": {"type": "json_schema", "json_schema": _CONSENT_SCHEMA},
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(base_url or OPENROUTER_URL, json=body, headers=headers)
+        if resp.status_code != 200:
+            logger.warning("OpenRouter consent failed: HTTP %s %s", resp.status_code, resp.text[:200])
+            return None
+        content = resp.json()["choices"][0]["message"]["content"]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("OpenRouter consent error: %s", exc)
+        return None
+    txt = (content or "").strip()
+    s, e = txt.find("{"), txt.rfind("}")
+    if s == -1 or e == -1:
+        return None
+    try:
+        data = json.loads(txt[s:e + 1])
+    except json.JSONDecodeError:
+        return None
+    out, seen = [], set()
+    for item in data.get("selectors", []):
+        sel = (item or "").strip()
+        # keep it a sane, single CSS selector — no newlines, no script-y junk.
+        if not sel or len(sel) > 200 or "\n" in sel or "<" in sel:
+            continue
+        if sel.lower() not in seen:
+            seen.add(sel.lower())
+            out.append(sel)
+    return out[:4] or None
+
+
 async def summarize_history(
     *, api_key: str, model: str, base_url: str | None = None, name: str, lines: list[str],
     timeout: float = 40.0,
