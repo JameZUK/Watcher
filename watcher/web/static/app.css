@@ -200,3 +200,13 @@ html.view-list .mon-foot { margin-top: 0; flex: none; text-align: right; flex-di
   html.view-list .mon-preview { width: 5.5rem; }
   html.view-list .mon-foot { display: none; }
 }
+
+/* Opaque surface for dropdowns/popovers (the translucent .glass is too see-
+   through when it floats over busy content like the dashboard). */
+.popover {
+  background: rgba(15, 13, 28, 0.97);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+html.perf-lite .popover { background: #14121e; backdrop-filter: none; -webkit-backdrop-filter: none; }

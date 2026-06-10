@@ -77,7 +77,7 @@
               <svg viewBox="0 0 24 24" class="h-4 w-4 text-slate-400 transition" :class="open && 'rotate-180'" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
             </button>
             <div x-show="open" x-cloak @click.outside="open=false" x-transition.origin.top.right
-                 class="absolute right-0 mt-2 w-56 glass rounded-xl p-1.5 shadow-2xl z-40">
+                 class="absolute right-0 mt-2 w-56 popover rounded-xl p-1.5 shadow-2xl z-40">
               <div class="px-3 py-2 text-xs text-slate-500 truncate border-b border-white/5 mb-1">{{ user.email }}</div>
               <a href="/account" class="block px-3 py-2 rounded-lg text-slate-300 hover:bg-white/10 hover:text-white transition">Account</a>
               <a href="/settings" class="block px-3 py-2 rounded-lg text-slate-300 hover:bg-white/10 hover:text-white transition">Settings</a>
