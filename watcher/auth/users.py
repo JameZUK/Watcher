@@ -72,7 +72,8 @@ async def get_current_user(
     # Hard-gate "require 2FA": a user without OTP can only reach the account/setup
     # pages until they enrol (else the policy is just a login-time nudge).
     path = request.url.path
-    if not user.otp_enabled and not (path.startswith("/account") or path == "/logout"):
+    exempt = path == "/account" or path.startswith("/account/") or path == "/logout"
+    if not user.otp_enabled and not exempt:
         from ..app_settings import get_app_settings
         if (await get_app_settings(session)).force_otp:
             raise HTTPException(status_code=307, detail="Two-factor setup required",

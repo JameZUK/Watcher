@@ -149,6 +149,15 @@ def test_json_mode_diffs_normalized_json():
     assert detect(mon, prev, diff).changed
 
 
+def test_json_diff_recursion_safe():
+    """A deeply-nested (malicious) JSON page must not raise out of detection."""
+    from watcher.detection.structured import diff_json
+    deep = "[" * 3000 + "1" + "]" * 3000
+    r = diff_json("[]", deep)          # must fall back, not RecursionError
+    assert r is not None
+    assert diff_json(deep, deep) is not None
+
+
 def test_combine_intent():
     """Group + monitor watch-intents combine non-destructively (neither clobbers)."""
     from watcher.runner import _combine_intent

@@ -126,8 +126,10 @@ async def reset_otp(
     """Clear a user's 2FA (e.g. they lost their authenticator)."""
     u = await session.get(User, user_id)
     if u is not None:
+        from ...auth.security import new_session_token
         u.otp_enabled = False
         u.otp_secret_enc = None
+        u.session_token = new_session_token()   # invalidate the user's live sessions
         await session.commit()
     return RedirectResponse("/admin/users?msg=otp_reset", status_code=303)
 

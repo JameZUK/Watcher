@@ -406,10 +406,13 @@ async def check_monitor(monitor_id: int) -> None:
                     asyncio.to_thread(detect, monitor, prev, result),
                     timeout=settings.detect_timeout_seconds,
                 )
-            except asyncio.TimeoutError:
+            except (asyncio.TimeoutError, RecursionError) as exc:
+                # Timeout (e.g. pathological ignore-regex) or deep-recursion on a
+                # malicious deeply-nested JSON page — keep the captured snapshot,
+                # skip change detection for this cycle.
                 logging.getLogger("watcher").warning(
-                    "detect() timed out for monitor %s (check ignore_patterns)", monitor.id)
-                await session.commit()  # keep the captured snapshot; skip change detection
+                    "detect() aborted for monitor %s (%s)", monitor.id, type(exc).__name__)
+                await session.commit()
                 return
             if change_result.changed or threshold_msg:
                 # Combine the group's shared watch-intent with the monitor's own

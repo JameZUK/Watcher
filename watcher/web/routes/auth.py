@@ -99,19 +99,19 @@ async def login_otp(
             {"mode": "otp", "error": "Too many attempts — please wait and try again."}, status_code=429)
     user = await session.get(User, uid)
     if user is None or not user.is_active or not verify(user_secret(user), code):
-        # Per-pending-user counter so rotating source IPs can't grind codes.
-        fails = request.session.get("otp_fails", 0) + 1
-        if fails >= 5:
+        # Server-side, per-ACCOUNT throttle (keyed by uid, not IP/session) so an
+        # attacker who knows the password can't grind the 6-digit code space by
+        # rotating source IPs / clearing cookies.
+        if not allow(f"otpverify:{uid}", limit=settings.login_max_attempts,
+                     window=settings.login_window_seconds):
             request.session.pop("otp_uid", None)
-            request.session.pop("otp_fails", None)
             return templates.TemplateResponse(
                 request, "login.html",
                 {"mode": "login", "error": "Too many codes — please sign in again."}, status_code=401)
-        request.session["otp_fails"] = fails
         return templates.TemplateResponse(
             request, "login.html",
             {"mode": "otp", "error": "Invalid authentication code."}, status_code=401)
-    request.session.pop("otp_fails", None)
+    reset(f"otpverify:{uid}")
     reset(f"otp:{client_ip(request)}")
     app = await get_app_settings(session)
     return await _complete_login(request, session, app, user)

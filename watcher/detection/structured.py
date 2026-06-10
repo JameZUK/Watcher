@@ -35,11 +35,13 @@ def diff_json(before: str, after: str) -> TextDiff:
     try:
         b = json.loads(before or "null")
         a = json.loads(after or "null")
+        dd = DeepDiff(b, a, ignore_order=True)
     except Exception:
-        # Fall back to a plain text diff if either side is not valid JSON.
+        # Not valid JSON, or a deeply-nested (possibly malicious) document that
+        # blows the recursion limit (RecursionError ⊂ Exception) — fall back to
+        # a plain text diff.
         return diff_text(before or "", after or "")
 
-    dd = DeepDiff(b, a, ignore_order=True)
     changed = bool(dd)
     if not changed:
         return TextDiff(False, 0.0, 0, 0, "No JSON change", "")
@@ -49,7 +51,10 @@ def diff_json(before: str, after: str) -> TextDiff:
     n = sum(counts.values())
     summary = ", ".join(f"{k}: {v}" for k, v in counts.items()) or "JSON changed"
     # Magnitude relative to size of the document keys, capped.
-    magnitude = min(n / max(_count_nodes(a) + _count_nodes(b), 1), 1.0)
+    try:
+        magnitude = min(n / max(_count_nodes(a) + _count_nodes(b), 1), 1.0)
+    except RecursionError:
+        magnitude = 1.0
     return TextDiff(True, magnitude, n, n, summary, pretty)
 
 
