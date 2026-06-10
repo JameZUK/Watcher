@@ -179,6 +179,36 @@ def test_dispatch_notified_only_when_delivered():
     assert _run(_t)
 
 
+# --- digest: inbox-only users don't accumulate an un-notified backlog ------
+
+def test_digest_marks_inbox_only_consumed():
+    async def _t():
+        from sqlalchemy import delete
+        from watcher.auth.security import hash_password
+        from watcher.models import Change, DetectionMode, Monitor, Snapshot, User
+        from watcher.notify import run_digests
+        async with SessionLocal() as s:
+            # digest on, but no external transport (telegram/ntfy/discord/smtp)
+            u = User(email=_email(), password_hash=hash_password("x"), digest_enabled=True)
+            s.add(u); await s.flush()
+            m = Monitor(user_id=u.id, url="https://x.test", name="M", notify_channels=["inbox"])
+            s.add(m); await s.flush()
+            snap = Snapshot(monitor_id=m.id); s.add(snap); await s.flush()
+            ch = Change(monitor_id=m.id, to_snapshot_id=snap.id, change_type=DetectionMode.auto,
+                        summary="x", ai_importance="medium", notified=False)
+            s.add(ch); await s.commit()
+            cid = ch.id
+        async with SessionLocal() as s:
+            await run_digests(s)
+        async with SessionLocal() as s:
+            ch = await s.get(Change, cid)
+            assert ch.notified is True   # consumed — not re-listed every hour forever
+            await s.execute(delete(Change).where(Change.id == cid)); await s.commit()
+        return True
+
+    assert _run(_t)
+
+
 # --- reliability: auto-pause after N failures ------------------------------
 
 def test_auto_pause_after_failures():

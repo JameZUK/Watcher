@@ -120,6 +120,24 @@ def test_netsec_url_guards():
     assert validate_public_url("http://10.0.0.5/")
 
 
+def test_safe_patterns():
+    from watcher.web.routes.monitors import _safe_patterns
+    assert _safe_patterns(["(a+", "valid.*", "x" * 300, "\\d{2}:\\d{2}"]) == ["valid.*", "\\d{2}:\\d{2}"]
+    assert _safe_patterns(["p"] * 100) == ["p"] * 25   # count capped
+
+
+def test_json_mode_diffs_normalized_json():
+    from types import SimpleNamespace as N
+    from watcher.detection.detector import detect
+    from watcher.models import DetectionMode
+    mon = N(detection_mode=DetectionMode.json, min_change_threshold=0.0)
+    prev = N(rendered_text='{\n  "a": 1\n}')
+    same = N(rendered_text='{\n  "a": 1\n}', html="<pre>{}</pre>")
+    diff = N(rendered_text='{\n  "a": 2\n}', html="")
+    assert not detect(mon, prev, same).changed   # identical normalized JSON → no spurious change
+    assert detect(mon, prev, diff).changed
+
+
 def test_html_to_text():
     from watcher.web.routes.monitors import _html_to_text
     out = _html_to_text(
