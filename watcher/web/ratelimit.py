@@ -23,8 +23,17 @@ def allow(key: str, *, limit: int, window: int) -> bool:
     cutoff = now - window
     with _lock:
         if len(_hits) > _MAX_KEYS:
+            # Shed expired/empty keys first…
             for k in [k for k, dq in _hits.items() if not dq or dq[-1] < cutoff]:
                 _hits.pop(k, None)
+            # …then HARD-cap against a flood of distinct *live* keys (e.g. an
+            # attacker rotating IPv6 addresses): evict the oldest entries.
+            # Evicting a live key just resets that key's counter — far cheaper
+            # than unbounded memory growth.
+            if len(_hits) > _MAX_KEYS:
+                for k in sorted(_hits, key=lambda k: _hits[k][-1] if _hits[k] else 0.0
+                                )[: len(_hits) - _MAX_KEYS]:
+                    _hits.pop(k, None)
         dq = _hits[key]
         while dq and dq[0] < cutoff:
             dq.popleft()
