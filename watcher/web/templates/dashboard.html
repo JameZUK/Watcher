@@ -27,6 +27,21 @@
     </form>
     <a href="/monitors/export" class="btn btn-ghost text-xs">Export</a>
     <button type="button" @click="imp=!imp" class="btn btn-ghost text-xs">Import</button>
+    <!-- View density switcher -->
+    <div x-data="dashView()" class="inline-flex items-center rounded-xl border border-white/10 bg-white/[.03] p-0.5">
+      <button type="button" @click="set('list')" title="List view"
+              :class="view==='list' ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-white'" class="inline-flex h-7 w-7 items-center justify-center rounded-lg transition">
+        <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+      </button>
+      <button type="button" @click="set('small')" title="Compact grid"
+              :class="view==='small' ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-white'" class="inline-flex h-7 w-7 items-center justify-center rounded-lg transition">
+        <svg viewBox="0 0 24 24" class="h-4 w-4" fill="currentColor" stroke="none"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+      </button>
+      <button type="button" @click="set('large')" title="Large thumbnails"
+              :class="view==='large' ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-white'" class="inline-flex h-7 w-7 items-center justify-center rounded-lg transition">
+        <svg viewBox="0 0 24 24" class="h-4 w-4" fill="currentColor" stroke="none"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>
+      </button>
+    </div>
   </div>
   {% if all_tags %}
   <div class="flex flex-wrap gap-1.5">
@@ -53,12 +68,12 @@
   <a href="/monitors/new" class="btn btn-primary">Create a monitor</a>
 </div>
 {% else %}
-<div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+<div class="mon-grid">
   {% for m in monitors %}
   {% set name = m.name or m.url %}
-  <a href="/monitors/{{ m.id }}" class="group glass glass-hover rounded-2xl overflow-hidden flex flex-col select-none">
+  <a href="/monitors/{{ m.id }}" class="mon-card group glass glass-hover rounded-2xl overflow-hidden flex flex-col select-none">
     <!-- Rendered preview -->
-    <div class="relative aspect-[16/10] bg-black/40 overflow-hidden">
+    <div class="mon-preview relative aspect-[16/10] bg-black/40 overflow-hidden">
       {% if thumbs.get(m.id) %}
         <picture>
           <source media="(max-width: 640px)" srcset="/monitors/{{ m.id }}/snapshots/{{ thumbs[m.id] }}/image?v=mobile">
@@ -80,7 +95,7 @@
       {% endif %}
     </div>
     <!-- Meta -->
-    <div class="p-4 flex flex-col gap-3 flex-1">
+    <div class="mon-meta p-4 flex flex-col gap-3 flex-1">
       <div class="flex items-start gap-2">
         <span class="dot {{ 'dot-err' if m.id in blocked else ('dot-live' if m.enabled else 'dot-paused') }} mt-1.5 shrink-0"></span>
         <div class="min-w-0">
@@ -88,7 +103,7 @@
           <p class="text-xs truncate" title="{{ m.url }}"><span class="text-slate-400">{{ m.url|url_host }}</span><span class="text-slate-600">{{ m.url|url_path_short(28) }}</span></p>
         </div>
       </div>
-      <div class="mt-auto flex items-center justify-between text-xs text-slate-500">
+      <div class="mon-foot mt-auto flex items-center justify-between text-xs text-slate-500">
         <span>every {{ m.interval_seconds|interval }} · {{ m.engine.value }}</span>
         <span class="{{ 'text-amber-400' if m.last_change_at else '' }}">
           {% if m.last_change_at %}changed {{ m.last_change_at|timeago }}{% else %}checked {{ m.last_checked_at|timeago }}{% endif %}
@@ -99,4 +114,19 @@
   {% endfor %}
 </div>
 {% endif %}
+{% endblock %}
+{% block scripts %}
+<script>
+function dashView(){return {
+  view: document.documentElement.classList.contains('view-list') ? 'list'
+      : document.documentElement.classList.contains('view-small') ? 'small' : 'large',
+  set(v){
+    this.view = v;
+    const c = document.documentElement.classList;
+    c.remove('view-small', 'view-list');
+    if (v !== 'large') c.add('view-' + v);
+    try { v === 'large' ? localStorage.removeItem('dashview') : localStorage.setItem('dashview', v); } catch (e) {}
+  },
+}}
+</script>
 {% endblock %}

@@ -174,3 +174,29 @@ html.perf-lite .dot-live { box-shadow: 0 0 0 2px rgba(52,211,153,.25); }
 html.perf-lite .dot-err  { box-shadow: 0 0 0 2px rgba(248,113,113,.25); }
 html.perf-lite .dot-paused { box-shadow: none; }
 html.perf-lite .rise { opacity: 1 !important; transform: none !important; }
+
+/* ── Dashboard density views ─────────────────────────────────────────────
+   Default = large thumbnails. html.view-small / html.view-list are toggled by
+   the switcher (and applied pre-paint from localStorage in base.html). */
+.mon-grid { display: grid; gap: 1.25rem; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 640px)  { .mon-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1024px) { .mon-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+/* Compact grid: more columns, denser, drop the footer line. */
+html.view-small .mon-grid { gap: 0.7rem; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (min-width: 640px)  { html.view-small .mon-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (min-width: 1024px) { html.view-small .mon-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (min-width: 1280px) { html.view-small .mon-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); } }
+html.view-small .mon-meta { padding: 0.6rem 0.7rem; gap: 0.4rem; }
+html.view-small .mon-foot { display: none; }
+
+/* List: horizontal rows with a small fixed thumbnail. */
+html.view-list .mon-grid { display: flex; flex-direction: column; gap: 0.5rem; }
+html.view-list .mon-card { flex-direction: row; align-items: stretch; border-radius: 0.85rem; }
+html.view-list .mon-preview { width: 9rem; flex: none; }
+html.view-list .mon-meta { flex: 1; flex-direction: row; align-items: center; gap: 1rem; padding: 0.55rem 0.9rem; }
+html.view-list .mon-foot { margin-top: 0; flex: none; text-align: right; flex-direction: column; align-items: flex-end; gap: 0.1rem; }
+@media (max-width: 520px) {
+  html.view-list .mon-preview { width: 5.5rem; }
+  html.view-list .mon-foot { display: none; }
+}

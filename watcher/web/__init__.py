@@ -14,6 +14,18 @@ STATIC_DIR = _HERE / "static"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
+def _asset_version() -> str:
+    """A cache-busting token that changes when the bundled CSS/JS changes, so
+    browsers don't serve stale static assets after an update."""
+    latest = 0.0
+    for name in ("app.css", "sw.js", "icon.svg", "logo.svg"):
+        try:
+            latest = max(latest, (STATIC_DIR / name).stat().st_mtime)
+        except OSError:
+            pass
+    return str(int(latest)) or "1"
+
+
 def _timeago(value: datetime | None) -> str:
     if not value:
         return "never"
@@ -74,3 +86,4 @@ templates.env.filters["pct"] = _pct
 templates.env.filters["interval"] = _interval
 templates.env.filters["url_host"] = _url_host
 templates.env.filters["url_path_short"] = _url_path_short
+templates.env.globals["asset_v"] = _asset_version()

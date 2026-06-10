@@ -1,4 +1,6 @@
-<h1 align="center">👁 Watcher</h1>
+<p align="center">
+  <img src="watcher-logo.svg" alt="Watcher" width="200">
+</p>
 
 <p align="center">
   <strong>A self-hosted tool to monitor any website or URL for changes — and tell you the moment something moves.</strong>
