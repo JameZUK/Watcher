@@ -356,9 +356,15 @@ function aiSection(opts){return {
     }
   },
   async generate(fromUrl){
-    const url = (document.querySelector('input[name=url]')?.value || '').trim();
+    // When triggered from the URL field, reveal + scroll to this section FIRST
+    // so the loading state / result / error is always visible (the button lives
+    // at the top of the form, the output down here).
+    if (fromUrl){ this.ai = true; this.$el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+    // Scope to THIS form — the page also has the "AI quick setup" form with its
+    // own input[name=url], so a bare document.querySelector grabs the wrong one.
+    const form = this.$el.closest('form');
+    const url = (form?.querySelector('input[name=url]')?.value || '').trim();
     if (!url){ this.error = 'Enter a URL to watch first.'; return; }
-    if (fromUrl) this.$el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     this.loading = true; this.error = ''; this.suggestions = [];
     try {
       const r = await fetch('/monitors/ai-suggest', {
@@ -370,7 +376,7 @@ function aiSection(opts){return {
         this.suggestions = d.suggestions || [];
         if (!this.suggestions.length) this.error = 'No suggestions came back.';
         // Prefill the name from the page title if the user left it blank.
-        const nameEl = document.querySelector('input[name=name]');
+        const nameEl = form?.querySelector('input[name=name]');
         if (d.title && nameEl && !nameEl.value.trim()) nameEl.value = d.title;
       }
       else this.error = d.error || 'Failed to generate suggestions.';

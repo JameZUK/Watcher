@@ -1,0 +1,168 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e6]:
+      - link "Watcher" [ref=e7] [cursor=pointer]:
+        - /url: /
+        - img [ref=e9]
+        - generic [ref=e12]: Watcher
+      - navigation [ref=e13]:
+        - link "Dashboard" [ref=e14] [cursor=pointer]:
+          - /url: /
+        - link "Inbox" [ref=e15] [cursor=pointer]:
+          - /url: /inbox
+        - link "Settings" [ref=e16] [cursor=pointer]:
+          - /url: /settings
+      - generic [ref=e17]:
+        - link "New monitor" [ref=e18] [cursor=pointer]:
+          - /url: /monitors/new
+          - img [ref=e19]
+          - text: New monitor
+        - generic [ref=e22]: D
+        - button "Sign out" [ref=e24] [cursor=pointer]
+  - main [ref=e25]:
+    - link "Dashboard" [ref=e26] [cursor=pointer]:
+      - /url: /
+      - img [ref=e27]
+      - text: Dashboard
+    - generic [ref=e29]:
+      - generic [ref=e30]:
+        - heading "JBL Boombox 3 Wifi" [level=1] [ref=e33]
+        - link "uk.jbl.com /JBLBB3WIFIBLKUK-Z.html?…" [ref=e34] [cursor=pointer]:
+          - /url: https://uk.jbl.com/JBLBB3WIFIBLKUK-Z.html?bvstate=pg%3A2%2Fct%3Ar
+          - img [ref=e35]
+          - generic [ref=e38]: uk.jbl.com
+          - generic [ref=e39]: /JBLBB3WIFIBLKUK-Z.html?…
+        - generic [ref=e40]:
+          - generic [ref=e41]: Smart
+          - generic [ref=e42]: firefox
+          - generic [ref=e43]: every 1h
+          - generic [ref=e44]: checked 1h ago
+      - generic [ref=e45]:
+        - button "Check now" [ref=e47] [cursor=pointer]:
+          - img [ref=e48]
+          - text: Check now
+        - button "···" [ref=e51] [cursor=pointer]
+    - generic [ref=e52]:
+      - generic [ref=e53]:
+        - generic [ref=e54]:
+          - generic [ref=e55]:
+            - generic [ref=e56]:
+              - heading "Value history" [level=2] [ref=e57]
+              - paragraph [ref=e58]: Alert below 300.0
+            - generic [ref=e59]:
+              - generic [ref=e60]: £263.99
+              - generic [ref=e61]: 0.00 since first capture
+          - img [ref=e62]
+          - generic [ref=e63]:
+            - generic [ref=e64]: min 263.99
+            - generic [ref=e65]: 6 points
+            - generic [ref=e66]: max 300.00
+        - generic [ref=e67]:
+          - generic [ref=e68]:
+            - heading "History" [level=2] [ref=e69]
+            - generic [ref=e70]:
+              - generic [ref=e71]:
+                - button "Desktop preview" [ref=e72] [cursor=pointer]:
+                  - img [ref=e73]
+                - button "Mobile preview" [ref=e76] [cursor=pointer]:
+                  - img [ref=e77]
+              - generic [ref=e79]: 1h ago
+          - generic [ref=e80]:
+            - generic [ref=e81]:
+              - img [ref=e83]
+              - button "Zoom to full size" [ref=e84] [cursor=pointer]:
+                - img [ref=e85]
+            - generic [ref=e88]:
+              - slider [ref=e89] [cursor=pointer]: "14"
+              - generic [ref=e90]:
+                - button "‹ Older" [ref=e91] [cursor=pointer]
+                - generic [ref=e92]: Render 15 of 15
+                - button "Newer ›" [ref=e93] [cursor=pointer]
+        - paragraph [ref=e94]: No changes detected yet — Watcher will surface them here in place.
+      - complementary [ref=e95]:
+        - generic [ref=e96]:
+          - generic [ref=e97]:
+            - text: Changes
+            - generic [ref=e98]: "0"
+          - list [ref=e99]:
+            - listitem [ref=e100]: No changes yet.
+        - generic [ref=e101]:
+          - generic [ref=e102]:
+            - text: Snapshots
+            - generic [ref=e103]: "25"
+          - list [ref=e104]:
+            - listitem [ref=e105]:
+              - generic [ref=e106]: 1h ago
+              - generic [ref=e107]: 200 · 7048ms
+            - listitem [ref=e108]:
+              - generic [ref=e109]: 1h ago
+              - generic "Blocked — HTTP 403 · DataDome anti-bot protection" [ref=e110]: error
+            - listitem [ref=e111]:
+              - generic [ref=e112]: 1h ago
+              - generic "Blocked — HTTP 403 · DataDome anti-bot protection" [ref=e113]: error
+            - listitem [ref=e114]:
+              - generic [ref=e115]: 1h ago
+              - generic [ref=e116]: 200 · 6902ms
+            - listitem [ref=e117]:
+              - generic [ref=e118]: 2h ago
+              - generic "Blocked — HTTP 403 · DataDome anti-bot protection" [ref=e119]: error
+            - listitem [ref=e120]:
+              - generic [ref=e121]: 3h ago
+              - generic [ref=e122]: 200 · 6753ms
+            - listitem [ref=e123]:
+              - generic [ref=e124]: 4h ago
+              - generic [ref=e125]: 200 · 13830ms
+            - listitem [ref=e126]:
+              - generic [ref=e127]: 5h ago
+              - generic [ref=e128]: 200 · 7187ms
+            - listitem [ref=e129]:
+              - generic [ref=e130]: 5h ago
+              - generic [ref=e131]: 200 · 7519ms
+            - listitem [ref=e132]:
+              - generic [ref=e133]: 6h ago
+              - generic [ref=e134]: 200 · 6271ms
+            - listitem [ref=e135]:
+              - generic [ref=e136]: 6h ago
+              - generic [ref=e137]: 200 · 7070ms
+            - listitem [ref=e138]:
+              - generic [ref=e139]: 7h ago
+              - generic [ref=e140]: 200 · 7909ms
+            - listitem [ref=e141]:
+              - generic [ref=e142]: 8h ago
+              - generic [ref=e143]: 200 · 6705ms
+            - listitem [ref=e144]:
+              - generic [ref=e145]: 9h ago
+              - generic [ref=e146]: 200 · 6340ms
+            - listitem [ref=e147]:
+              - generic [ref=e148]: 9h ago
+              - generic [ref=e149]: 200 · 8016ms
+            - listitem [ref=e150]:
+              - generic [ref=e151]: 10h ago
+              - generic [ref=e152]: 200 · 6194ms
+            - listitem [ref=e153]:
+              - generic [ref=e154]: 10h ago
+              - generic "Blocked — HTTP 403 · DataDome anti-bot protection" [ref=e155]: error
+            - listitem [ref=e156]:
+              - generic [ref=e157]: 10h ago
+              - generic "Blocked — HTTP 403 · DataDome anti-bot protection" [ref=e158]: error
+            - listitem [ref=e159]:
+              - generic [ref=e160]: 11h ago
+              - generic "Blocked — HTTP 403 · DataDome anti-bot protection" [ref=e161]: error
+            - listitem [ref=e162]:
+              - generic [ref=e163]: 11h ago
+              - generic "Blocked — HTTP 403 · DataDome anti-bot protection" [ref=e164]: error
+            - listitem [ref=e165]:
+              - generic [ref=e166]: 11h ago
+              - generic "Blocked — HTTP 403 · DataDome anti-bot protection" [ref=e167]: error
+            - listitem [ref=e168]:
+              - generic [ref=e169]: 12h ago
+              - generic [ref=e170]: 200 · 7307ms
+            - listitem [ref=e171]:
+              - generic [ref=e172]: 13h ago
+              - generic "Blocked — HTTP 403 · DataDome anti-bot protection" [ref=e173]: error
+            - listitem [ref=e174]:
+              - generic [ref=e175]: 13h ago
+              - generic "Blocked — HTTP 403 · DataDome anti-bot protection" [ref=e176]: error
+            - listitem [ref=e177]:
+              - generic [ref=e178]: 14h ago
+              - generic [ref=e179]: 200 · 7295ms

@@ -255,6 +255,16 @@ def _html_to_text(html: str) -> str:
     return _WS_RE.sub(" ", text).strip()
 
 
+def _html_title(html: str) -> str | None:
+    """Extract the page <title> (for prefilling a new monitor's name)."""
+    import html as _html
+    m = re.search(r"<title[^>]*>(.*?)</title>", html or "", re.IGNORECASE | re.DOTALL)
+    if not m:
+        return None
+    title = _html.unescape(re.sub(r"\s+", " ", m.group(1))).strip()
+    return title[:255] or None
+
+
 async def _page_text_for_suggest(session, user, url, monitor_id):
     """(title, text) for AI suggestions: prefer a recent capture, else fetch raw."""
     if monitor_id:
@@ -294,7 +304,7 @@ async def _page_text_for_suggest(session, user, url, monitor_id):
                 break
         if r is None or r.status_code >= 400:
             return None, ""
-        return None, _html_to_text(r.text)[:12000]
+        return _html_title(r.text), _html_to_text(r.text)[:12000]
     except Exception:
         return None, ""
 

@@ -1,0 +1,76 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e6]:
+      - link "Watcher" [ref=e7] [cursor=pointer]:
+        - /url: /
+        - img [ref=e9]
+        - generic [ref=e12]: Watcher
+      - navigation [ref=e13]:
+        - link "Dashboard" [ref=e14] [cursor=pointer]:
+          - /url: /
+        - link "Inbox" [ref=e15] [cursor=pointer]:
+          - /url: /inbox
+        - link "Settings" [ref=e16] [cursor=pointer]:
+          - /url: /settings
+      - generic [ref=e17]:
+        - link "New monitor" [ref=e18] [cursor=pointer]:
+          - /url: /monitors/new
+          - img [ref=e19]
+          - text: New monitor
+        - generic [ref=e22]: D
+        - button "Sign out" [ref=e24] [cursor=pointer]
+  - main [ref=e25]:
+    - generic [ref=e26]:
+      - generic [ref=e27]:
+        - heading "Your monitors" [level=1] [ref=e28]
+        - paragraph [ref=e29]: 4 tracked · all quiet
+      - link "New monitor" [ref=e30] [cursor=pointer]:
+        - /url: /monitors/new
+        - img [ref=e31]
+        - text: New monitor
+    - generic [ref=e34]:
+      - textbox "Search monitors…" [ref=e36]
+      - link "Export" [ref=e37] [cursor=pointer]:
+        - /url: /monitors/export
+      - button "Import" [ref=e38] [cursor=pointer]
+    - generic [ref=e39]:
+      - link "Smart Emerita Codeworks Website Change emerita.dev every 15m · chromium checked 29m ago" [ref=e40] [cursor=pointer]:
+        - /url: /monitors/4
+        - generic [ref=e43]: Smart
+        - generic [ref=e44]:
+          - generic [ref=e47]:
+            - heading "Emerita Codeworks Website Change" [level=3] [ref=e48]
+            - paragraph [ref=e49]: emerita.dev
+          - generic [ref=e50]:
+            - generic [ref=e51]: every 15m · chromium
+            - generic [ref=e52]: checked 29m ago
+      - link "Visual Example Domain (stable baseline) example.com every 1h · chromium checked 1h ago" [ref=e53] [cursor=pointer]:
+        - /url: /monitors/2
+        - generic [ref=e56]: Visual
+        - generic [ref=e57]:
+          - generic [ref=e60]:
+            - heading "Example Domain (stable baseline)" [level=3] [ref=e61]
+            - paragraph [ref=e62]: example.com
+          - generic [ref=e63]:
+            - generic [ref=e64]: every 1h · chromium
+            - generic [ref=e65]: checked 1h ago
+      - link "Smart JBL Boombox 3 Price Drop amazon.co.uk/JBL-Boombox-B…dp/B0C3VVYN7C?… every 1d · chromium checked 7m ago" [ref=e66] [cursor=pointer]:
+        - /url: /monitors/5
+        - generic [ref=e69]: Smart
+        - generic [ref=e70]:
+          - generic [ref=e73]:
+            - heading "JBL Boombox 3 Price Drop" [level=3] [ref=e74]
+            - paragraph [ref=e75]: amazon.co.uk/JBL-Boombox-B…dp/B0C3VVYN7C?…
+          - generic [ref=e76]:
+            - generic [ref=e77]: every 1d · chromium
+            - generic [ref=e78]: checked 7m ago
+      - link "Smart JBL Boombox 3 Wifi uk.jbl.com/JBLBB3WIFIBLKUK-Z.html?… every 1h · firefox changed 4h ago" [ref=e79] [cursor=pointer]:
+        - /url: /monitors/3
+        - generic [ref=e82]: Smart
+        - generic [ref=e83]:
+          - generic [ref=e86]:
+            - heading "JBL Boombox 3 Wifi" [level=3] [ref=e87]
+            - paragraph [ref=e88]: uk.jbl.com/JBLBB3WIFIBLKUK-Z.html?…
+          - generic [ref=e89]:
+            - generic [ref=e90]: every 1h · firefox
+            - generic [ref=e91]: changed 4h ago
