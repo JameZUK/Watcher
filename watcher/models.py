@@ -121,6 +121,11 @@ class Monitor(Base):
     ai_watch_intent: Mapped[str | None] = mapped_column(Text, default=None)   # "what to watch for"
     ai_policy: Mapped[str | None] = mapped_column(String(16), default=None)   # silent|label|drop; null = inherit global
 
+    # Value tracking (price/number trends + threshold alerts)
+    track_value: Mapped[bool] = mapped_column(Boolean, default=False)
+    value_threshold: Mapped[float | None] = mapped_column(Float, default=None)
+    value_threshold_dir: Mapped[str | None] = mapped_column(String(8), default=None)  # below|above
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     last_change_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
@@ -174,6 +179,8 @@ class Snapshot(Base):
     title: Mapped[str | None] = mapped_column(String(512), default=None)
     rendered_text: Mapped[str | None] = mapped_column(Text, default=None)
     extracted_value: Mapped[str | None] = mapped_column(Text, default=None)
+    numeric_value: Mapped[float | None] = mapped_column(Float, default=None, index=True)  # tracked value
+    value_label: Mapped[str | None] = mapped_column(String(64), default=None)              # display, e.g. "£263.99"
     content_hash: Mapped[str | None] = mapped_column(String(64), default=None, index=True)
     dom_hash: Mapped[str | None] = mapped_column(String(64), default=None)
 

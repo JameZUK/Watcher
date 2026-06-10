@@ -27,13 +27,17 @@ async def get_session() -> AsyncIterator[AsyncSession]:
 # existing table, so we add any missing ones idempotently on startup.
 _ADDED_COLUMNS = {
     "users": {"is_admin": "BOOLEAN DEFAULT 0"},
-    "snapshots": {"title": "VARCHAR(512)", "screenshot_mobile_blob": "VARCHAR(64)"},
+    "snapshots": {
+        "title": "VARCHAR(512)", "screenshot_mobile_blob": "VARCHAR(64)",
+        "numeric_value": "FLOAT", "value_label": "VARCHAR(64)",
+    },
     "changes": {
         "visual_blob": "VARCHAR(64)", "visual_mobile_blob": "VARCHAR(64)",
         "ai_headline": "TEXT", "ai_category": "VARCHAR(32)", "ai_importance": "VARCHAR(16)",
     },
     "monitors": {
         "ai_enabled": "BOOLEAN DEFAULT 1", "ai_watch_intent": "TEXT", "ai_policy": "VARCHAR(16)",
+        "track_value": "BOOLEAN DEFAULT 0", "value_threshold": "FLOAT", "value_threshold_dir": "VARCHAR(8)",
     },
 }
 

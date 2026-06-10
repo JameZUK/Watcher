@@ -8,11 +8,12 @@ import hashlib
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from .ai import triage_change
+from .ai import extract_value, triage_change
 from .app_settings import get_app_settings, get_openrouter_key
 from .config import settings
 from .db import SessionLocal
 from .detection import detect
+from .detection.value import parse_number
 from .engines import render_monitor
 from .models import Change, Monitor, Snapshot, SnapshotStatus, utcnow
 from .notify import dispatch
@@ -35,6 +36,37 @@ async def _maybe_triage(app, monitor, change_result, result):
         api_key=key, model=app.ai_model, url=monitor.url, title=result.title,
         intent=monitor.ai_watch_intent, diff_text=change_result.diff_text, image_png=image,
     )
+
+
+async def _extract_value(app, monitor, result):
+    """Extract the monitor's tracked numeric value: a parsed selector/value
+    first (free), else the AI. Returns (value, label) or None."""
+    if (result.extracted_value or "").strip():
+        parsed = parse_number(result.extracted_value)
+        if parsed:
+            return parsed
+    if monitor.ai_enabled and app.ai_enabled:
+        key = get_openrouter_key(app)
+        if key and (result.rendered_text or "").strip():
+            return await extract_value(
+                api_key=key, model=app.ai_model, url=monitor.url,
+                title=result.title, page_text=result.rendered_text,
+            )
+    return None
+
+
+def _threshold_crossing(monitor, prev_val, new_val, label):
+    """If the tracked value just crossed the alert threshold, return a message."""
+    t = monitor.value_threshold
+    if t is None or new_val is None or monitor.value_threshold_dir not in ("below", "above"):
+        return None
+    below = monitor.value_threshold_dir == "below"
+    now_hit = new_val < t if below else new_val > t
+    prev_hit = prev_val is not None and (prev_val < t if below else prev_val > t)
+    if now_hit and not prev_hit:
+        shown = label or f"{new_val:g}"
+        return f"Value dropped {'below' if below else 'above'} {t:g} — now {shown}"
+    return None
 
 # Cap concurrent browser renders to protect a single box.
 _semaphore = asyncio.Semaphore(settings.max_render_concurrency)
@@ -172,12 +204,28 @@ async def check_monitor(monitor_id: int) -> None:
             session.add(snap)
             await session.flush()  # assign snap.id
 
+            app = await get_app_settings(session)
+
+            # Value tracking: capture a numeric value each check for trends and
+            # threshold alerts (e.g. price drops below a target).
+            threshold_msg = None
+            if monitor.track_value:
+                extracted = await _extract_value(app, monitor, result)
+                if extracted:
+                    snap.numeric_value, snap.value_label = extracted
+                threshold_msg = _threshold_crossing(
+                    monitor, prev.numeric_value if prev else None,
+                    snap.numeric_value, snap.value_label,
+                )
+
             change_result = detect(monitor, prev, result)
-            if change_result.changed:
-                # AI triage (best-effort): headline + category + importance.
-                app = await get_app_settings(session)
-                triage = await _maybe_triage(app, monitor, change_result, result)
+            if change_result.changed or threshold_msg:
+                # AI triage only when there's a real content change to summarise.
+                triage = await _maybe_triage(app, monitor, change_result, result) if change_result.changed else None
                 importance = triage.importance if triage else None
+                # A threshold crossing is always notable and overrides muting.
+                if threshold_msg:
+                    importance = "high"
                 low_value = importance in _LOW_VALUE
                 policy = monitor.ai_policy or app.ai_low_value_policy  # silent|label|drop
 
@@ -196,19 +244,19 @@ async def check_monitor(monitor_id: int) -> None:
                     if change_result.diff_overlay_mobile_png is not None else None
                 )
 
+                headline = threshold_msg or (triage.headline if triage else None)
                 change = Change(
                     monitor_id=monitor.id,
                     from_snapshot_id=prev.id if prev else None,
                     to_snapshot_id=snap.id,
                     change_type=change_result.change_type,
-                    # Prefer the AI headline as the human-facing summary.
-                    summary=(triage.headline if triage and triage.headline else change_result.summary),
+                    summary=(headline or change_result.summary),
                     magnitude=change_result.magnitude,
                     diff_blob=text_blob,
                     visual_blob=visual_blob,
                     visual_mobile_blob=visual_mobile_blob,
-                    ai_headline=triage.headline if triage else None,
-                    ai_category=triage.category if triage else None,
+                    ai_headline=headline,
+                    ai_category=("price" if threshold_msg else (triage.category if triage else None)),
                     ai_importance=importance,
                 )
                 session.add(change)

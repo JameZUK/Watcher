@@ -98,6 +98,15 @@ def _apply_form(monitor: Monitor, form) -> None:
     policy = (form.get("ai_policy") or "").strip()
     monitor.ai_policy = policy if policy in ("silent", "label", "drop") else None
 
+    # Value tracking
+    monitor.track_value = _bool(form, "track_value")
+    try:
+        monitor.value_threshold = float(form["value_threshold"]) if (form.get("value_threshold") or "").strip() else None
+    except (ValueError, TypeError):
+        monitor.value_threshold = None
+    vdir = (form.get("value_threshold_dir") or "").strip()
+    monitor.value_threshold_dir = vdir if vdir in ("below", "above") else None
+
 
 def _build_login_flow(monitor: Monitor, form) -> LoginFlow | None:
     """Reconcile a monitor's LoginFlow from the form.
@@ -397,12 +406,21 @@ async def monitor_detail(
     diff_payload = _diff_payload(selected) if selected else None
     latest = snapshots[0] if snapshots else None
 
+    # Tracked-value time series (chronological) for the history chart.
+    value_series = [
+        {"v": s.numeric_value, "label": s.value_label or f"{s.numeric_value:g}",
+         "at": s.taken_at.isoformat() if s.taken_at else ""}
+        for s in reversed(snapshots)
+        if s.status == SnapshotStatus.ok and s.numeric_value is not None
+    ]
+    value_current = value_series[-1]["label"] if value_series else None
+
     return templates.TemplateResponse(
         request, "monitor_detail.html",
         {
             "user": user, "monitor": monitor, "changes": changes,
             "snapshots": snapshots, "selected": selected, "diff": diff_payload,
-            "latest": latest,
+            "latest": latest, "value_series": value_series, "value_current": value_current,
         },
     )
 

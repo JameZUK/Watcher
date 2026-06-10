@@ -259,6 +259,27 @@
       </div>
     </section>
 
+    <!-- Value tracking -->
+    <section class="glass rounded-2xl p-5 sm:p-6 space-y-4" x-data="{ tv: {{ 'true' if m and m.track_value else 'false' }} }">
+      <label class="flex items-center gap-2.5">
+        <input type="checkbox" name="track_value" x-model="tv" class="rounded bg-white/10 border-white/20 text-brand-500">
+        <span class="font-semibold text-white">Track a numeric value</span>
+      </label>
+      <p class="text-xs text-slate-500 -mt-2">Captures a number (price, stock count, rating) every check and charts it over time. Uses the element selector if set, otherwise the AI reads it off the page.</p>
+      <div x-show="tv" x-cloak x-transition class="space-y-2.5">
+        <label class="block text-sm font-medium text-slate-300">Alert me when the value is</label>
+        <div class="flex flex-wrap items-center gap-2">
+          <select name="value_threshold_dir" class="field !w-auto">
+            <option value="">— no alert —</option>
+            <option value="below" {{ 'selected' if m and m.value_threshold_dir=='below' else '' }}>below</option>
+            <option value="above" {{ 'selected' if m and m.value_threshold_dir=='above' else '' }}>above</option>
+          </select>
+          <input type="number" step="any" name="value_threshold" value="{{ m.value_threshold if m and m.value_threshold is not none else '' }}" placeholder="250" class="field !w-32">
+        </div>
+        <p class="text-xs text-slate-500">A crossing always notifies (high importance), even when other changes are muted.</p>
+      </div>
+    </section>
+
     <!-- Notifications -->
     <section class="glass rounded-2xl p-5 sm:p-6 space-y-4" x-data="{ channels: {{ (m.notify_channels if m else ['inbox'])|tojson }} }">
       <h2 class="font-semibold text-white">Notify me via</h2>

@@ -262,3 +262,74 @@ async def suggest_watch_items(
             seen.add(key)
             out.append(s)
     return out[:8] or None
+
+
+_VALUE_SCHEMA = {
+    "name": "tracked_value",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "found": {"type": "boolean"},
+            "value": {"type": "number"},
+            "label": {"type": "string", "description": "Tidy display, e.g. '£263.99' or '4.5'."},
+        },
+        "required": ["found", "value", "label"],
+    },
+}
+
+_VALUE_SYSTEM = (
+    "Extract the single most important tracked NUMBER from this page — usually a "
+    "price, but it could be a stock count, rating, or key metric. Set found=false "
+    "if there is no clear primary number. 'value' is the bare numeric value (no "
+    "symbols, no thousands separators); 'label' is a tidy display like '£263.99'. "
+    "Respond ONLY with the JSON."
+)
+
+
+async def extract_value(
+    *, api_key: str, model: str, url: str, title: str | None, page_text: str, timeout: float = 30.0
+) -> tuple[float, str] | None:
+    """Extract the page's primary tracked number via the model. None on failure."""
+    if not api_key or not (page_text or "").strip():
+        return None
+    text = page_text.strip()[:6000]
+    user = f"URL: {url}\n" + (f"Title: {title}\n" if title else "") + "\nPage content:\n" + text
+    body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _VALUE_SYSTEM},
+            {"role": "user", "content": user},
+        ],
+        "temperature": 0.0,
+        "max_tokens": 120,
+        "response_format": {"type": "json_schema", "json_schema": _VALUE_SCHEMA},
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(OPENROUTER_URL, json=body, headers=headers)
+        if resp.status_code != 200:
+            logger.warning("OpenRouter extract_value failed: HTTP %s %s", resp.status_code, resp.text[:200])
+            return None
+        content = resp.json()["choices"][0]["message"]["content"]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("OpenRouter extract_value error: %s", exc)
+        return None
+    txt = (content or "").strip()
+    s, e = txt.find("{"), txt.rfind("}")
+    if s == -1 or e == -1:
+        return None
+    try:
+        data = json.loads(txt[s:e + 1])
+    except json.JSONDecodeError:
+        return None
+    if not data.get("found"):
+        return None
+    try:
+        val = float(data["value"])
+    except (TypeError, ValueError, KeyError):
+        return None
+    label = (str(data.get("label") or "").strip() or str(val))[:64]
+    return val, label
