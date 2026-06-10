@@ -124,6 +124,10 @@ def create_app() -> FastAPI:
         resp.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
         if settings.secure_cookies:
             resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        # Don't let the browser serve a stale authenticated HTML page (avoids
+        # confusing "old UI" caching; static assets/images set their own caching).
+        if resp.headers.get("content-type", "").startswith("text/html"):
+            resp.headers.setdefault("Cache-Control", "no-store")
         return resp
 
     app.include_router(auth.router)

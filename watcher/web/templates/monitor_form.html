@@ -20,6 +20,7 @@
 
   <form method="post" action="{{ '/monitors/' ~ m.id if m else '/monitors' }}"
         x-data="monitorForm({ mode: '{{ m.detection_mode.value if m else 'auto' }}', login: {{ 'true' if m and m.login_flow else 'false' }}, adv: {{ 'true' if m else 'false' }} })"
+        @submit="busy = true"
         class="space-y-5">
 
     {% if error %}
@@ -350,10 +351,12 @@ function monitorForm(opts){return {
   goal: '', busy: false, aiError: '',
   // Friendly inline validation for "Set up with AI" (no native required popup).
   aiGuard(e){
-    const url = (this.$el.querySelector('input[name=url]')?.value || '').trim();
+    // $root is the component root (the <form>); $el would be the clicked button.
+    const url = (this.$root.querySelector('input[name=url]')?.value || '').trim();
     if (!url){ e.preventDefault(); this.aiError = 'Enter a URL to watch first.'; return; }
     if (!this.goal.trim()){ e.preventDefault(); this.aiError = 'Describe what you want to watch for.'; return; }
-    this.aiError = ''; this.busy = true;   // valid → let the form submit to /monitors/ai-create
+    this.aiError = '';   // valid → let the native submit proceed (busy is set on @submit,
+                         // NOT here: disabling the button mid-click would cancel the submit)
   },
 }}
 function aiSection(opts){return {

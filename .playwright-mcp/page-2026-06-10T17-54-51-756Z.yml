@@ -1,0 +1,69 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e6]:
+      - link "Watcher" [ref=e7] [cursor=pointer]:
+        - /url: /
+        - img [ref=e9]
+        - generic [ref=e12]: Watcher
+      - navigation [ref=e13]:
+        - link "Dashboard" [ref=e14] [cursor=pointer]:
+          - /url: /
+        - link "Inbox" [ref=e15] [cursor=pointer]:
+          - /url: /inbox
+        - link "Settings" [ref=e16] [cursor=pointer]:
+          - /url: /settings
+      - generic [ref=e17]:
+        - link "New monitor" [ref=e18] [cursor=pointer]:
+          - /url: /monitors/new
+          - img [ref=e19]
+          - text: New monitor
+        - generic [ref=e22]: D
+        - button "Sign out" [ref=e24] [cursor=pointer]
+  - main [ref=e25]:
+    - link "Dashboard" [ref=e26] [cursor=pointer]:
+      - /url: /
+      - img [ref=e27]
+      - text: Dashboard
+    - generic [ref=e29]:
+      - generic [ref=e30]:
+        - heading "Example Domain Heading Change" [level=1] [ref=e33]
+        - link "example.com" [ref=e34] [cursor=pointer]:
+          - /url: https://example.com
+          - img [ref=e35]
+          - generic [ref=e38]: example.com
+        - generic [ref=e39]:
+          - generic [ref=e40]: Text
+          - generic [ref=e41]: chromium
+          - generic [ref=e42]: every 15m
+          - generic [ref=e43]: checked never
+      - generic [ref=e44]:
+        - button "Check now" [ref=e46] [cursor=pointer]:
+          - img [ref=e47]
+          - text: Check now
+        - button "···" [ref=e50] [cursor=pointer]
+    - generic [ref=e51]:
+      - generic [ref=e52]:
+        - generic [ref=e53]:
+          - generic [ref=e54]:
+            - heading "History" [level=2] [ref=e55]
+            - generic [ref=e56]:
+              - generic [ref=e57]:
+                - button "Desktop preview" [ref=e58] [cursor=pointer]:
+                  - img [ref=e59]
+                - button "Mobile preview" [ref=e62] [cursor=pointer]:
+                  - img [ref=e63]
+              - generic [ref=e65]: —
+          - generic [ref=e66]: No render captured yet. The first check runs shortly.
+        - paragraph [ref=e67]: No changes detected yet — Watcher will surface them here in place.
+      - complementary [ref=e68]:
+        - generic [ref=e69]:
+          - generic [ref=e70]:
+            - text: Changes
+            - generic [ref=e71]: "0"
+          - list [ref=e72]:
+            - listitem [ref=e73]: No changes yet.
+        - generic [ref=e74]:
+          - generic [ref=e75]:
+            - text: Snapshots
+            - generic [ref=e76]: "0"
+          - list
