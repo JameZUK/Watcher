@@ -31,7 +31,17 @@ _SAMESITE = {
 }
 
 
-def cookie_editor_to_storage_state(raw: str) -> dict | None:
+def _domain_allowed(cookie_domain: str, host: str | None) -> bool:
+    """A cookie is in-scope if its domain equals or is a parent of the host
+    (standard cookie domain matching). Without a host, allow all."""
+    if not host:
+        return True
+    d = cookie_domain.lstrip(".").lower()
+    h = host.lower()
+    return bool(d) and (h == d or h.endswith("." + d))
+
+
+def cookie_editor_to_storage_state(raw: str, allowed_host: str | None = None) -> dict | None:
     """Convert a Cookie Editor (cookie-editor.com) JSON export — a bare cookie
     array — or an existing Playwright storage_state into a Playwright
     storage_state dict ({"cookies": [...], "origins": [...]}).
@@ -57,6 +67,10 @@ def cookie_editor_to_storage_state(raw: str) -> dict | None:
     cookies: list[dict] = []
     for c in items:
         if not isinstance(c, dict) or not c.get("name") or not (c.get("domain") or "").strip():
+            continue
+        # Scope injected cookies to the monitor's domain (don't load cookies for
+        # unrelated sites into the shared browser context).
+        if not _domain_allowed(str(c["domain"]).strip(), allowed_host):
             continue
         exp = c.get("expires", c.get("expirationDate"))
         try:

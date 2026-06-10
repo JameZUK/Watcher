@@ -40,6 +40,17 @@ def test_cookie_editor_errors():
         cookie_editor_to_storage_state("[]")
 
 
+def test_cookie_domain_scoping():
+    from watcher.auth.login_flows import cookie_editor_to_storage_state as conv
+    raw = ('[{"name":"a","value":"1","domain":".jbl.com"},'
+           '{"name":"b","value":"1","domain":"uk.jbl.com"},'
+           '{"name":"c","value":"1","domain":".evil.com"}]')
+    kept = sorted(c["name"] for c in conv(raw, allowed_host="uk.jbl.com")["cookies"])
+    assert kept == ["a", "b"]                       # parent + exact host kept, unrelated dropped
+    # no host → unrestricted (back-compat)
+    assert len(conv(raw)["cookies"]) == 3
+
+
 def test_session_is_valid_tz_safe():
     """SQLite returns naive datetimes; comparison must not crash."""
     from watcher.auth.login_flows import session_is_valid

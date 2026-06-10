@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import timedelta
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -100,7 +100,9 @@ def _apply_form(monitor: Monitor, form) -> None:
     monitor.wait_timeout_ms = _clamp_int(form, "wait_timeout_ms", 15000, 1000, 120000)
     monitor.viewport_width = _clamp_int(form, "viewport_width", 1280, 320, 3840)
     monitor.viewport_height = _clamp_int(form, "viewport_height", 800, 320, 4320)
-    monitor.proxy = (form.get("proxy") or "").strip() or None
+    proxy = (form.get("proxy") or "").strip()
+    proxy_scheme = proxy.split("://", 1)[0].lower() if "://" in proxy else ""
+    monitor.proxy = proxy if proxy_scheme in ("http", "https", "socks5", "socks5h", "socks4") else None
 
     minutes = _clamp_int(form, "interval_minutes", 60, 1, 60 * 24 * 30)
     monitor.interval_seconds = max(minutes * 60, settings.min_interval_seconds)
@@ -161,7 +163,9 @@ def _build_login_flow(monitor: Monitor, form) -> LoginFlow | None:
             steps.append({"action": "wait", "selector": form["login_success_selector"].strip()})
 
     # --- Pasted Cookie Editor JSON (independent of the login checkbox) ---
-    cookies = cookie_editor_to_storage_state(form.get("session_cookies_json", ""))  # may raise
+    cookies = cookie_editor_to_storage_state(   # may raise; cookies scoped to the monitor host
+        form.get("session_cookies_json", ""), allowed_host=urlparse(monitor.url or "").hostname,
+    )
     clear_session = _bool(form, "session_cookies_clear")
 
     flow = monitor.login_flow or LoginFlow(monitor_id=monitor.id)
