@@ -5,6 +5,23 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#06070f">
   <title>{% block title %}Watcher{% endblock %}</title>
+  <script>
+    // Apply Lite (reduced-effects) mode synchronously, before first paint, to
+    // avoid a flash of the GPU-heavy theme on devices without acceleration.
+    // perf = user choice (auto|full|lite); perf_detected = cached auto result.
+    (function () {
+      try {
+        var pref = localStorage.getItem('perf') || 'auto';
+        var lite = pref === 'lite';
+        if (pref === 'auto') {
+          var det = localStorage.getItem('perf_detected');
+          lite = det === 'lite' || (det === null && window.matchMedia &&
+                 matchMedia('(prefers-reduced-motion: reduce)').matches);
+        }
+        if (lite) document.documentElement.classList.add('perf-lite');
+      } catch (e) {}
+    })();
+  </script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = { theme: { extend: {
@@ -106,7 +123,86 @@
   {% block auth %}{% endblock %}
 {% endif %}
 <script>
+  // --- Lite (reduced-effects) mode detection -----------------------------
+  // Classifies the GPU pipeline. Trusts the WebGL renderer when it's readable
+  // (software rasterisers => no CSS compositing acceleration); otherwise falls
+  // back to a short backdrop-blur FPS probe — the actual bottleneck.
+  function perfRendererClass() {
+    try {
+      var c = document.createElement('canvas');
+      var gl = c.getContext('webgl') || c.getContext('experimental-webgl');
+      if (!gl) return 'soft';                       // no WebGL => almost certainly no accel
+      var ext = gl.getExtension('WEBGL_debug_renderer_info');
+      if (!ext) return 'unknown';                   // masked by the browser
+      var r = (gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) || '').toLowerCase();
+      if (!r) return 'unknown';
+      return /swiftshader|llvmpipe|software|basic render|microsoft basic|mesa offscreen/.test(r) ? 'soft' : 'hw';
+    } catch (e) { return 'unknown'; }
+  }
+  // Animate a (near-invisible) backdrop-blurred element over real content and
+  // measure rAF throughput — this exercises the exact compositing that's slow.
+  function perfFpsProbe(cb) {
+    var el = document.createElement('div');
+    el.style.cssText = 'position:fixed;top:0;left:0;width:200px;height:200px;z-index:9999;' +
+      'opacity:.01;pointer-events:none;will-change:transform;background:linear-gradient(45deg,#222,#555);' +
+      'backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);';
+    document.body.appendChild(el);
+    var frames = 0, start = performance.now();
+    (function tick(now) {
+      frames++;
+      el.style.transform = 'translateX(' + (frames % 40) + 'px)';
+      if (now - start < 400) requestAnimationFrame(tick);
+      else { var fps = frames / ((now - start) / 1000); el.remove(); cb(fps); }
+    })(performance.now());
+  }
+
   document.addEventListener('alpine:init', () => {
+    // Visual-effects mode (auto|full|lite), per-device via localStorage. The
+    // <head> script applies the initial class flash-free; this store powers the
+    // settings control and runs auto-detection when needed.
+    Alpine.store('perf', {
+      mode: localStorage.getItem('perf') || 'auto',
+      detected: localStorage.getItem('perf_detected'),   // 'lite' | 'full' | null
+      probing: false,
+      get effective() { return this.mode === 'auto' ? (this.detected || 'full') : this.mode; },
+      apply() { document.documentElement.classList.toggle('perf-lite', this.effective === 'lite'); },
+      set(m) {
+        this.mode = m; localStorage.setItem('perf', m);
+        if (m === 'auto' && !this.detected) this.detect(); else this.apply();
+      },
+      redetect() { this.detected = null; localStorage.removeItem('perf_detected'); this.detect(); },
+      detect() {
+        if (this.probing) return;
+        this.probing = true;
+        var self = this;
+        var finish = function (lite) {
+          self.detected = lite ? 'lite' : 'full';
+          localStorage.setItem('perf_detected', self.detected);
+          self.probing = false; self.apply();
+        };
+        try { if (matchMedia('(prefers-reduced-motion: reduce)').matches) return finish(true); } catch (e) {}
+        var rc = perfRendererClass();
+        if (rc === 'soft') return finish(true);
+        if (rc === 'hw') return finish(false);
+        perfFpsProbe(function (fps) { finish(fps < 45); });   // masked renderer => measure
+      },
+      init() {
+        if (this.mode === 'auto' && !this.detected) {
+          // Defer so the probe doesn't race page setup / busy main thread.
+          (window.requestIdleCallback || setTimeout)(() => this.detect(), 600);
+        } else { this.apply(); }
+      },
+    });
+    Alpine.store('perf').init();
+
+    // Shared desktop/mobile preview mode, so every viewer on the page (history
+    // scrubber + diff comparison) toggles together. Defaults to the viewing device.
+    Alpine.store('device', {
+      mode: (window.matchMedia && window.matchMedia('(max-width: 640px)').matches) ? 'mobile' : 'desktop',
+      get isMobile(){ return this.mode === 'mobile'; },
+      set(m){ this.mode = m; },
+      q(){ return this.mode === 'mobile' ? '?v=mobile' : ''; },
+    });
     Alpine.store('lb', {
       shown: false, src: '', zoom: 1,
       open(src){ this.src = src; this.zoom = 1; this.shown = true; document.documentElement.style.overflow = 'hidden'; },

@@ -144,3 +144,33 @@ input.time-range::-moz-range-thumb { width:18px; height:18px; border-radius:9999
   background-size: 18px 18px;
   background-position: 0 0, 0 9px, 9px -9px, -9px 0;
 }
+
+/* ===========================================================================
+   Performance / Lite mode
+   Toggled by <html class="perf-lite"> (see base.html) for devices without
+   hardware acceleration. Drops the GPU-heavy effects (backdrop blur, the
+   aurora background, large blurred shadows, animations) while keeping the
+   brand identity (flat colours, static button gradients) and — importantly —
+   focus rings, which stay intact because we never blanket-kill box-shadow.
+   ========================================================================== */
+html.perf-lite *,
+html.perf-lite *::before,
+html.perf-lite *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  animation: none !important;
+  transition: none !important;
+}
+/* Flat background instead of layered radial glows + masked grid. */
+html.perf-lite .bg-aurora { background: var(--bg); }
+html.perf-lite .bg-aurora::after { display: none; }
+/* Opaque panels (no blur to sample what's behind them). */
+html.perf-lite .glass { background: #0f111b; border-color: rgba(255,255,255,.08); }
+/* Replace decorative glows/lifts with cheap borders; keep button identity. */
+html.perf-lite .glass-hover:hover { transform: none; box-shadow: none; border-color: rgba(129,140,248,.45); }
+html.perf-lite .btn-primary,
+html.perf-lite .btn-primary:hover { box-shadow: none; }
+html.perf-lite .dot-live { box-shadow: 0 0 0 2px rgba(52,211,153,.25); }
+html.perf-lite .dot-err  { box-shadow: 0 0 0 2px rgba(248,113,113,.25); }
+html.perf-lite .dot-paused { box-shadow: none; }
+html.perf-lite .rise { opacity: 1 !important; transform: none !important; }

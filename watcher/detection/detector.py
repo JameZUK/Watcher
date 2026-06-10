@@ -19,6 +19,20 @@ class ChangeResult:
     summary: str
     diff_text: str | None = None
     diff_overlay_png: bytes | None = None
+    diff_overlay_mobile_png: bytes | None = None
+
+
+def _mobile_overlay(prev: Snapshot, current: RenderResult) -> bytes | None:
+    """Best-effort mobile-viewport visual overlay, mirroring the desktop one.
+
+    Returns None unless both the previous and current renders have a mobile
+    screenshot (so blocked/legacy snapshots simply yield no mobile overlay)."""
+    before = blobs.get_bytes(prev.screenshot_mobile_blob) if prev.screenshot_mobile_blob else None
+    after = current.screenshot_mobile_png
+    if before is None or after is None:
+        return None
+    vd = visual.diff_images(before, after)
+    return vd.overlay_png if vd.changed else None
 
 
 def _norm(monitor: Monitor, value: str | None) -> str:
@@ -55,7 +69,8 @@ def detect(monitor: Monitor, prev: Snapshot | None, current: RenderResult) -> Ch
         vd = visual.diff_images(before_png, current.screenshot_png)
         changed = vd.changed and vd.magnitude >= monitor.min_change_threshold
         return ChangeResult(changed, mode, vd.magnitude, vd.summary,
-                            diff_overlay_png=vd.overlay_png if changed else None)
+                            diff_overlay_png=vd.overlay_png if changed else None,
+                            diff_overlay_mobile_png=_mobile_overlay(prev, current) if changed else None)
 
     if mode == DetectionMode.html:
         before = blobs.get_text(prev.html_blob) if prev.html_blob else ""
@@ -105,4 +120,5 @@ def _detect_auto(monitor: Monitor, prev: Snapshot, current: RenderResult) -> Cha
         summary=summary,
         diff_text=td.unified if text_changed else None,
         diff_overlay_png=vd.overlay_png if (visual_changed and vd is not None) else None,
+        diff_overlay_mobile_png=_mobile_overlay(prev, current) if visual_changed else None,
     )

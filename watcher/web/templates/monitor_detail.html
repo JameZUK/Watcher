@@ -67,12 +67,12 @@
         <h2 class="font-semibold text-white">History</h2>
         <div class="flex items-center gap-3">
           <div class="flex p-0.5 rounded-lg bg-white/5 border border-white/10">
-            <button type="button" @click="device='desktop'" title="Desktop preview"
-                    :class="device==='desktop' ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-2.5 py-1 rounded-md transition">
+            <button type="button" @click="$store.device.set('desktop')" title="Desktop preview"
+                    :class="$store.device.mode==='desktop' ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-2.5 py-1 rounded-md transition">
               <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
             </button>
-            <button type="button" @click="device='mobile'" title="Mobile preview"
-                    :class="device==='mobile' ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-2.5 py-1 rounded-md transition">
+            <button type="button" @click="$store.device.set('mobile')" title="Mobile preview"
+                    :class="$store.device.mode==='mobile' ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-2.5 py-1 rounded-md transition">
               <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>
             </button>
           </div>
@@ -82,10 +82,20 @@
       <template x-if="frames.length">
         <div>
           <div class="relative bg-black/40">
-            <img :src="imgUrl()" @click="$store.lb.open(imgUrl())" class="w-full block cursor-zoom-in">
+            <!-- Scrollable preview stage: caps a full-page capture to ~65vh and
+                 scrolls inside it, instead of rendering a wall of screenshot.
+                 Mobile captures render at their true ~380px width, framed. -->
+            <div x-ref="stage" class="overflow-y-auto overscroll-contain max-h-[65vh] flex justify-center scroll-thin">
+              <img :src="imgUrl()" @click="$store.lb.open(imgUrl())"
+                   @load="$refs.stage.scrollTop = 0; $nextTick(() => scrollable = $refs.stage.scrollHeight > $refs.stage.clientHeight + 4)"
+                   class="block cursor-zoom-in self-start"
+                   :class="$store.device.isMobile && frames[i] && frames[i].mobile ? 'w-[380px] max-w-full my-5 rounded-2xl border border-white/12 shadow-xl' : 'w-full'">
+            </div>
             <span class="absolute top-3 left-3 pill pill-amber backdrop-blur" x-show="frames[i] && frames[i].changed">change detected</span>
-            <span class="absolute top-3 right-3 pill backdrop-blur" x-show="device==='mobile' && frames[i] && !frames[i].mobile" x-cloak>desktop only · no mobile capture yet</span>
-            <button type="button" @click="$store.lb.open(imgUrl())" class="absolute bottom-3 right-3 btn btn-ghost !px-2.5 !py-1.5 backdrop-blur" aria-label="Zoom">
+            <span class="absolute top-3 right-3 pill backdrop-blur" x-show="$store.device.isMobile && frames[i] && !frames[i].mobile" x-cloak>desktop only · no mobile capture yet</span>
+            <!-- "more below" hint, only when the capture overflows the stage -->
+            <div class="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/55 to-transparent" x-show="scrollable" x-cloak></div>
+            <button type="button" @click="$store.lb.open(imgUrl())" class="absolute bottom-3 right-3 btn btn-ghost !px-2.5 !py-1.5 backdrop-blur" aria-label="Zoom to full size">
               <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3M11 8v6M8 11h6"/></svg>
             </button>
           </div>
@@ -112,10 +122,28 @@
                x-data="{ tab: '{{ 'visual' if diff.has_visual else 'text' }}' }">
         <div class="px-5 py-3.5 border-b border-white/10 flex flex-wrap items-center justify-between gap-3">
           <div class="min-w-0">
-            <h2 class="font-semibold text-white">What changed</h2>
+            <div class="flex items-center gap-2 flex-wrap">
+              <h2 class="font-semibold text-white">What changed</h2>
+              {% if selected.ai_category %}<span class="pill {{ 'pill-amber' if selected.ai_importance == 'high' else '' }}">{{ selected.ai_category }}</span>{% endif %}
+              {% set imp_label = {'high':'high importance','medium':'medium','low':'low importance','noise':'noise'} %}
+              {% if selected.ai_importance %}<span class="pill text-slate-400">{{ imp_label.get(selected.ai_importance, selected.ai_importance) }}</span>{% endif %}
+            </div>
             <p class="text-xs text-slate-400 mt-0.5">{{ selected.detected_at|timeago }} · <span class="text-slate-300">{{ selected.summary }}</span></p>
           </div>
           <div class="flex items-center gap-2">
+            {% if diff.has_visual %}
+            <div class="flex p-0.5 rounded-lg bg-white/5 border border-white/10"
+                 {% if diff.has_text %}x-show="tab==='visual'"{% endif %} x-cloak>
+              <button type="button" @click="$store.device.set('desktop')" title="Desktop view"
+                      :class="$store.device.mode==='desktop' ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-2.5 py-1 rounded-md transition">
+                <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+              </button>
+              <button type="button" @click="$store.device.set('mobile')" title="Mobile view"
+                      :class="$store.device.mode==='mobile' ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-2.5 py-1 rounded-md transition">
+                <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>
+              </button>
+            </div>
+            {% endif %}
             {% if diff.has_visual and diff.has_text %}
             <div class="flex p-0.5 rounded-lg bg-white/5 border border-white/10 text-xs">
               <button @click="tab='visual'" :class="tab==='visual' ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-3 py-1.5 rounded-md transition">Visual</button>
@@ -133,34 +161,64 @@
           {% if selected.from_snapshot_id %}
           <div>
             <p class="text-xs font-medium text-slate-400 mb-2">Before / after <span class="text-slate-600">— drag the handle to compare</span></p>
-            <div x-data="beforeAfter()" x-ref="box" x-init="measure()" @resize.window="measure()"
-                 @pointerdown="start($event)" @pointermove="move($event)" @pointerup="dragging=false"
-                 class="relative select-none rounded-xl overflow-hidden border border-white/10 cursor-ew-resize"
-                 style="touch-action:none;">
-              <img src="/monitors/{{ monitor.id }}/snapshots/{{ selected.to_snapshot_id }}/image" class="block w-full" @load="measure()">
-              <div class="absolute inset-0 overflow-hidden" :style="`width:${pos}%`">
-                <img src="/monitors/{{ monitor.id }}/snapshots/{{ selected.from_snapshot_id }}/image" class="block max-w-none" :style="`width:${w}px`">
+            <!-- Before/after in a scrollable stage. The image scrolls vertically
+                 (touch-action:pan-y); the full-height divider bar and the
+                 viewport-pinned chevron handle drag horizontally to compare. -->
+            <div x-data="beforeAfter()" @resize.window="measure()"
+                 class="relative rounded-xl overflow-hidden border border-white/10">
+              <div x-ref="stage" class="overflow-y-auto overscroll-contain max-h-[65vh] scroll-thin bg-black/30">
+                <div x-ref="box" class="relative select-none w-full" style="touch-action:pan-y;">
+                  <img :src="`/monitors/{{ monitor.id }}/snapshots/{{ selected.to_snapshot_id }}/image${$store.device.q()}`" class="block w-full" @load="onLoad()">
+                  <div class="absolute inset-0 overflow-hidden" :style="`width:${pos}%`">
+                    <img :src="`/monitors/{{ monitor.id }}/snapshots/{{ selected.from_snapshot_id }}/image${$store.device.q()}`" class="block max-w-none" :style="`width:${w}px`">
+                  </div>
+                  <!-- full-height drag bar (grabbable at any scroll position) -->
+                  <div @pointerdown.prevent="start($event)" @pointermove="move($event)" @pointerup="end()" @pointercancel="end()"
+                       class="absolute top-0 bottom-0 z-10 flex justify-center cursor-ew-resize w-[26px] -translate-x-1/2 touch-none"
+                       :style="`left:${pos}%`">
+                    <div class="grad-bar h-full" style="width:2px"></div>
+                  </div>
+                </div>
               </div>
-              <div class="absolute top-0 bottom-0 grad-bar pointer-events-none" style="width:2px" :style="`left:${pos}%`"></div>
-              <div class="absolute top-1/2 grad-bar rounded-full shadow-lg pointer-events-none flex items-center justify-center"
-                   style="width:34px;height:34px;transform:translate(-50%,-50%)" :style="`left:${pos}%`">
+              <!-- chevron handle, pinned to the stage's vertical centre so it's
+                   always visible no matter how far the capture is scrolled -->
+              <div @pointerdown.prevent="start($event)" @pointermove="move($event)" @pointerup="end()" @pointercancel="end()"
+                   class="absolute top-1/2 z-20 grad-bar rounded-full shadow-lg flex items-center justify-center cursor-ew-resize w-[34px] h-[34px] -translate-x-1/2 -translate-y-1/2 touch-none"
+                   :style="`left:${pos}%`">
                 <svg viewBox="0 0 24 24" class="h-4 w-4 text-white" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M8 7l-4 5 4 5M16 7l4 5-4 5"/></svg>
               </div>
               <span class="absolute top-2 left-2 pill backdrop-blur pointer-events-none">Before</span>
               <span class="absolute top-2 right-2 pill backdrop-blur pointer-events-none">After</span>
-              <button type="button" @pointerdown.stop @click.stop="$store.lb.open('/monitors/{{ monitor.id }}/snapshots/{{ selected.to_snapshot_id }}/image')"
-                      class="absolute bottom-2 right-2 btn btn-ghost !px-2.5 !py-1.5 backdrop-blur" aria-label="Zoom after image">
+              <div class="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/55 to-transparent" x-show="scrollable" x-cloak></div>
+              <button type="button" @pointerdown.stop @click.stop="$store.lb.open(`/monitors/{{ monitor.id }}/snapshots/{{ selected.to_snapshot_id }}/image${$store.device.q()}`)"
+                      class="absolute bottom-2 right-2 z-20 btn btn-ghost !px-2.5 !py-1.5 backdrop-blur" aria-label="Zoom after image to full size">
                 <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3M11 8v6M8 11h6"/></svg>
               </button>
             </div>
           </div>
           {% else %}
-          <img src="/monitors/{{ monitor.id }}/snapshots/{{ selected.to_snapshot_id }}/image" @click="$store.lb.open('/monitors/{{ monitor.id }}/snapshots/{{ selected.to_snapshot_id }}/image')" class="w-full rounded-xl border border-white/10 cursor-zoom-in">
+          <div class="relative rounded-xl overflow-hidden border border-white/10" x-data="{ sc:false }">
+            <div x-ref="st" class="overflow-y-auto overscroll-contain max-h-[65vh] scroll-thin bg-black/30">
+              <img :src="`/monitors/{{ monitor.id }}/snapshots/{{ selected.to_snapshot_id }}/image${$store.device.q()}`"
+                   @click="$store.lb.open(`/monitors/{{ monitor.id }}/snapshots/{{ selected.to_snapshot_id }}/image${$store.device.q()}`)"
+                   @load="$refs.st.scrollTop=0; $nextTick(()=> sc = $refs.st.scrollHeight > $refs.st.clientHeight + 4)"
+                   class="block w-full cursor-zoom-in">
+            </div>
+            <div class="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/55 to-transparent" x-show="sc" x-cloak></div>
+          </div>
           {% endif %}
           <div>
-            <p class="text-xs font-medium text-slate-400 mb-2">Highlighted differences <span class="text-slate-600">— changed regions in red</span></p>
-            <div class="checker rounded-xl overflow-hidden border border-white/10">
-              <img src="/monitors/{{ monitor.id }}/changes/{{ selected.id }}/overlay" @click="$store.lb.open('/monitors/{{ monitor.id }}/changes/{{ selected.id }}/overlay')" class="w-full cursor-zoom-in">
+            <p class="text-xs font-medium text-slate-400 mb-2">Highlighted differences <span class="text-slate-600">— changed regions in red</span>
+              {% if not diff.has_visual_mobile %}<span class="text-slate-600" x-show="$store.device.isMobile" x-cloak>· showing desktop overlay (no mobile diff for this change)</span>{% endif %}
+            </p>
+            <div class="relative rounded-xl overflow-hidden border border-white/10" x-data="{ sc:false }">
+              <div x-ref="ov" class="overflow-y-auto overscroll-contain max-h-[65vh] scroll-thin checker">
+                <img :src="`/monitors/{{ monitor.id }}/changes/{{ selected.id }}/overlay${$store.device.q()}`"
+                     @click="$store.lb.open(`/monitors/{{ monitor.id }}/changes/{{ selected.id }}/overlay${$store.device.q()}`)"
+                     @load="$refs.ov.scrollTop=0; $nextTick(()=> sc = $refs.ov.scrollHeight > $refs.ov.clientHeight + 4)"
+                     class="block w-full cursor-zoom-in">
+              </div>
+              <div class="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/55 to-transparent" x-show="sc" x-cloak></div>
             </div>
           </div>
         </div>
@@ -224,10 +282,16 @@
 <script>
 // Draggable before/after image comparison.
 function beforeAfter(){return {
-  pos: 50, w: 0, dragging: false,
+  pos: 50, w: 0, dragging: false, scrollable: false,
   measure(){ if (this.$refs.box) this.w = this.$refs.box.clientWidth; },
-  start(e){ this.dragging = true; this.set(e); try { this.$refs.box.setPointerCapture(e.pointerId); } catch(_){} },
-  move(e){ if (this.dragging || e.buttons === 1) this.set(e); },
+  onLoad(){
+    this.measure();
+    const s = this.$refs.stage;
+    if (s){ s.scrollTop = 0; this.$nextTick(() => this.scrollable = s.scrollHeight > s.clientHeight + 4); }
+  },
+  start(e){ this.dragging = true; this.set(e); try { e.currentTarget.setPointerCapture(e.pointerId); } catch(_){} },
+  move(e){ if (this.dragging){ this.set(e); e.preventDefault(); } },
+  end(){ this.dragging = false; },
   set(e){
     const r = this.$refs.box.getBoundingClientRect();
     const x = (e.clientX ?? 0) - r.left;
@@ -240,11 +304,10 @@ function beforeAfter(){return {
 function timeMachine(frames, mid){return {
   frames: frames || [], mid,
   i: (frames && frames.length) ? frames.length - 1 : 0,
-  device: (window.matchMedia && window.matchMedia('(max-width: 640px)').matches) ? 'mobile' : 'desktop',
+  scrollable: false,   // true when the current capture overflows the stage
   imgUrl(){
     if (!this.frames.length) return '';
-    const q = this.device === 'mobile' ? '?v=mobile' : '';
-    return `/monitors/${this.mid}/snapshots/${this.frames[this.i].id}/image${q}`;
+    return `/monitors/${this.mid}/snapshots/${this.frames[this.i].id}/image${this.$store.device.q()}`;
   },
   get label(){ return this.frames.length ? this.frames[this.i].ago : '—'; },
 }}
