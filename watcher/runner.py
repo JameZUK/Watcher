@@ -25,6 +25,21 @@ from .storage import blobs
 _LOW_VALUE = {"low", "noise"}
 
 
+def _target_block_reason(monitor) -> str | None:
+    """Return why a monitor's network targets are blocked (SSRF), or None. Does
+    DNS resolution — call off the event loop."""
+    from .netsec import validate_proxy, validate_public_url
+    err = validate_public_url(monitor.url) or validate_proxy(monitor.proxy)
+    if err:
+        return err
+    flow = getattr(monitor, "login_flow", None)
+    for step in (flow.steps if flow and flow.steps else []):
+        if step.get("action") == "goto" and step.get("url"):
+            if (e := validate_public_url(step["url"])):
+                return e
+    return None
+
+
 async def _maybe_triage(app, monitor, change_result, result):
     """Best-effort AI triage of a detected change. Returns a Triage or None."""
     if not (monitor.ai_enabled and app.ai_enabled):
@@ -206,6 +221,18 @@ async def check_monitor(monitor_id: int) -> None:
                     .limit(1)
                 )
             ).scalar_one_or_none()
+
+            # SSRF gate: re-validate the target just before navigating, so a
+            # monitor created before this check existed — or one whose DNS now
+            # points at an internal address — is refused. Resolution is blocking,
+            # so it runs off the event loop.
+            if not settings.allow_private_targets:
+                target_err = await asyncio.to_thread(_target_block_reason, monitor)
+                if target_err:
+                    snap = Snapshot(monitor_id=monitor.id)
+                    await _fail(session, monitor, snap,
+                                error=f"Blocked internal target — {target_err}", http_status=None)
+                    return
 
             result = await _render(monitor)
             # Retry transient render failures (driver crash / network / 5xx) with backoff.

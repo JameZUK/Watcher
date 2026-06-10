@@ -32,6 +32,7 @@ async def send_to_all(
                 data=data,
                 vapid_private_key=settings.vapid_private_key,
                 vapid_claims={"sub": settings.vapid_subject},
+                timeout=10,  # bound a slow/blackhole push endpoint (thread-pool DoS)
             )
             return True
         except (WebPushException, Exception):

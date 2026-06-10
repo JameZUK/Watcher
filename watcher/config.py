@@ -6,7 +6,7 @@ import base64
 from functools import lru_cache
 from pathlib import Path
 
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, MultiFernet
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -28,6 +28,16 @@ class Settings(BaseSettings):
     # Fernet key (base64, 32 bytes) for encrypting stored credentials. If unset,
     # one is derived from secret_key (fine for dev, set explicitly in prod).
     encryption_key: str | None = Field(default=None)
+    # Escape hatch: allow the app to start with a weak SECRET_KEY (dev only).
+    allow_insecure: bool = Field(default=False)
+    # Open self-service registration. When False, registration is allowed only
+    # while no users exist yet (bootstrap the first/admin account), then closed.
+    registration_open: bool = Field(default=False)
+    # Serve the interactive API docs (/docs, /redoc, /openapi.json).
+    enable_docs: bool = Field(default=False)
+    # Extra hostnames permitted in Host/Origin (besides the request host) — e.g.
+    # the public hostname when behind a reverse proxy. Comma-separated via env.
+    trusted_hosts: str = Field(default="")
 
     # --- Server ---
     host: str = Field(default="0.0.0.0")
@@ -53,6 +63,16 @@ class Settings(BaseSettings):
     retry_backoff_seconds: float = Field(default=3.0)
     auto_pause_after_failures: int = Field(default=6)   # 0 disables auto-pause
     detect_timeout_seconds: int = Field(default=20)     # ceiling on diffing (regex-DoS guard)
+
+    # --- Abuse / resource limits (public-exposure hardening) ---
+    allow_private_targets: bool = Field(default=False)   # let monitors hit private IPs
+    max_monitors_per_user: int = Field(default=100)      # 0 = unlimited
+    manual_check_cooldown_seconds: int = Field(default=20)
+    max_request_bytes: int = Field(default=2_000_000)    # body-size ceiling (~2 MB)
+    max_changes_per_monitor: int = Field(default=500)    # prune oldest beyond this
+    max_diff_megapixels: float = Field(default=40.0)     # downscale huge screenshots before diff
+    login_max_attempts: int = Field(default=10)          # per IP per window
+    login_window_seconds: int = Field(default=300)
 
     # --- Detection sensitivity ---
     # Minimum fraction of pixels (0..1) that must differ before a *visual* change
@@ -90,13 +110,37 @@ class Settings(BaseSettings):
     def blobs_dir(self) -> Path:
         return self.data_dir / "blobs"
 
-    def fernet(self) -> Fernet:
-        """Return a Fernet cipher for credential encryption."""
+    @property
+    def trusted_host_set(self) -> set[str]:
+        return {h.strip().lower() for h in self.trusted_hosts.split(",") if h.strip()}
+
+    def _derived_fernet_key(self) -> bytes:
+        """HKDF-derive a 32-byte Fernet key from secret_key (domain-separated)."""
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+        hkdf = HKDF(algorithm=hashes.SHA256(), length=32, salt=None,
+                    info=b"watcher-credential-encryption-v1")
+        return base64.urlsafe_b64encode(hkdf.derive(self.secret_key.encode("utf-8")))
+
+    def _legacy_fernet_key(self) -> bytes:
+        """The pre-v1 zero-padded derivation — kept only so secrets encrypted by
+        an older build still decrypt (MultiFernet rotation)."""
+        raw = self.secret_key.encode("utf-8").ljust(32, b"0")[:32]
+        return base64.urlsafe_b64encode(raw)
+
+    def fernet(self) -> Fernet | MultiFernet:
+        """Return a cipher for credential encryption.
+
+        New data is encrypted with the primary key; decryption also accepts the
+        legacy zero-padded key so existing stored secrets keep working after the
+        upgrade. An explicit WATCHER_ENCRYPTION_KEY (recommended in prod) takes
+        precedence and skips the secret_key derivation entirely.
+        """
         if self.encryption_key:
             return Fernet(self.encryption_key.encode())
-        # Derive a stable 32-byte key from secret_key (dev convenience).
-        raw = self.secret_key.encode("utf-8").ljust(32, b"0")[:32]
-        return Fernet(base64.urlsafe_b64encode(raw))
+        return MultiFernet([Fernet(self._derived_fernet_key()),
+                            Fernet(self._legacy_fernet_key())])
 
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)

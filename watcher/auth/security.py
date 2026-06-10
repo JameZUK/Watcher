@@ -2,12 +2,33 @@
 
 from __future__ import annotations
 
+import hashlib
+import secrets
+
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
 
 from ..config import settings
 
 _ph = PasswordHasher()
+
+
+# --- API tokens ------------------------------------------------------------
+# Tokens are high-entropy (192-bit) random strings, so a fast unsalted SHA-256
+# is sufficient to store them at rest (no brute-force surface) while ensuring a
+# DB leak doesn't hand out working tokens.
+
+def new_api_token() -> str:
+    return secrets.token_urlsafe(24)
+
+
+def hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def looks_hashed(value: str | None) -> bool:
+    """True if ``value`` is already a SHA-256 hex digest (migration guard)."""
+    return bool(value) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
 
 
 def hash_password(password: str) -> str:

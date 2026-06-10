@@ -149,6 +149,40 @@ def test_json_mode_diffs_normalized_json():
     assert detect(mon, prev, diff).changed
 
 
+def test_netsec_blocks_internal_targets_and_encodings():
+    """SSRF: validate_public_url / validate_proxy must reject internal targets,
+    including IPv4-mapped / NAT64 / CGNAT / 0.0.0.0 encodings (offline, literals)."""
+    from watcher.netsec import validate_proxy, validate_public_url
+    for u in ("http://127.0.0.1/", "http://169.254.169.254/latest/meta-data/",
+              "http://[::1]/", "http://10.0.0.5/admin", "http://0.0.0.0/",
+              "http://[::ffff:127.0.0.1]/", "http://100.64.0.1/"):
+        assert validate_public_url(u), u            # all blocked (truthy error)
+    # proxy host gets the same IP policy + scheme allowlist
+    assert validate_proxy("http://127.0.0.1:8080")
+    assert validate_proxy("socks5h://10.0.0.1:1080")
+    assert validate_proxy("ftp://1.1.1.1:1080")     # bad scheme
+    assert validate_proxy("") is None               # empty allowed
+    assert validate_proxy(None) is None
+
+
+def test_api_token_hashing():
+    from watcher.auth.security import hash_token, looks_hashed, new_api_token
+    raw = new_api_token()
+    h = hash_token(raw)
+    assert len(h) == 64 and looks_hashed(h)
+    assert not looks_hashed(raw)                     # cleartext isn't a hash
+    assert hash_token(raw) == h                      # deterministic lookup
+
+
+def test_rate_limiter_window():
+    from watcher.web.ratelimit import allow, reset
+    reset("unit")
+    assert all(allow("unit", limit=3, window=60) for _ in range(3))
+    assert not allow("unit", limit=3, window=60)     # 4th over the limit
+    reset("unit")
+    assert allow("unit", limit=3, window=60)         # reset clears it
+
+
 def test_visual_noise_floor(monkeypatch):
     """Sub-floor pixel churn (anti-aliasing, lazy images, carousels) must NOT
     register as a change — the root cause of the JBL phantom-change bug."""

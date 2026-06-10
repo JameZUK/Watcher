@@ -99,3 +99,13 @@ async def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS ix_change_monitor_acked ON changes(monitor_id, acknowledged)",
         ):
             await conn.exec_driver_sql(ddl)
+        # One-time migration: hash any API tokens still stored in cleartext.
+        # The previously-issued token keeps working (lookups hash the presented
+        # value), but a DB leak no longer exposes usable tokens.
+        from .auth.security import hash_token, looks_hashed
+        rows = (await conn.exec_driver_sql(
+            "SELECT id, api_token FROM users WHERE api_token IS NOT NULL")).fetchall()
+        for uid, tok in rows:
+            if tok and not looks_hashed(tok):
+                await conn.exec_driver_sql(
+                    "UPDATE users SET api_token=? WHERE id=?", (hash_token(tok), uid))

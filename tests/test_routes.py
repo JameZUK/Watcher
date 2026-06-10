@@ -30,12 +30,17 @@ def _email():
 
 def test_web_and_api_smoke():
     async def _t():
+        from watcher.config import settings
         from watcher.main import create_app
         from watcher.models import User
+        settings.registration_open = True   # allow the HTTP register in this flow
         app = create_app()
         transport = httpx.ASGITransport(app=app)
         email = _email()
-        async with httpx.AsyncClient(transport=transport, base_url="http://t", follow_redirects=True) as c:
+        # Browser-like same-origin header so the (fail-closed) CSRF guard admits
+        # the POSTs in this flow.
+        async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                     headers={"Origin": "http://t"}, follow_redirects=True) as c:
             r = await c.post("/register", data={"email": email, "password": "password123"})
             assert r.status_code == 200
             r = await c.post("/login", data={"email": email, "password": "password123"})
@@ -70,13 +75,16 @@ def test_web_and_api_smoke():
             })
             assert r.status_code == 200 and "Imported" in r.text
 
-            # generate an API token
-            await c.post("/settings/api-token")
+            # generate an API token — the cleartext is shown exactly once
+            import re
+            r = await c.post("/settings/api-token")
+            m = re.search(r'break-all">([A-Za-z0-9_-]+)<', r.text)
+            assert m, "one-time API token not surfaced"
+            token = m.group(1)
 
         async with SessionLocal() as s:
             u = (await s.execute(select(User).where(User.email == email))).scalar_one()
-            token = u.api_token
-        assert token
+            assert u.api_token and len(u.api_token) == 64   # stored as a SHA-256 hash
 
         # token-authed API + RSS (and 401 on a bad token)
         async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
@@ -124,6 +132,29 @@ def test_dispatch_digest_routing():
     assert _run(_t)
 
 
+# --- registration gating ---------------------------------------------------
+
+def test_registration_closed_blocks_signup():
+    async def _t():
+        from watcher.auth.security import hash_password
+        from watcher.config import settings
+        from watcher.main import create_app
+        from watcher.models import User
+        # Ensure at least one user exists, then close registration.
+        async with SessionLocal() as s:
+            s.add(User(email=_email(), password_hash=hash_password("x")))
+            await s.commit()
+        settings.registration_open = False
+        transport = httpx.ASGITransport(app=create_app())
+        async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                     headers={"Origin": "http://t"}) as c:
+            r = await c.post("/register", data={"email": _email(), "password": "password123"})
+            assert r.status_code == 403   # closed → rejected
+        return True
+
+    assert _run(_t)
+
+
 # --- CSRF origin guard -----------------------------------------------------
 
 def test_csrf_origin_guard():
@@ -137,9 +168,13 @@ def test_csrf_origin_guard():
             # same-origin passes the guard (then 401 for being unauthenticated)
             r = await c.post("/changes/ack-all", headers={"Origin": "http://t"})
             assert r.status_code != 403
-            # no Origin (e.g. curl) passes the guard too
-            r = await c.post("/changes/ack-all")
+            # Referer-only same-origin also passes
+            r = await c.post("/changes/ack-all", headers={"Referer": "http://t/inbox"})
             assert r.status_code != 403
+            # fail CLOSED: a cookie-authed unsafe request with neither Origin nor
+            # Referer is rejected (a browser always sends one cross-origin)
+            r = await c.post("/changes/ack-all")
+            assert r.status_code == 403
         return True
 
     assert _run(_t)

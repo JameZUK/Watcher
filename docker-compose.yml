@@ -3,10 +3,21 @@ services:
     build: .
     image: watcher:latest
     ports:
-      - "8000:8000"
+      # Bound to loopback: put a TLS-terminating reverse proxy (Caddy/nginx/
+      # Traefik) in front for public exposure. Use "8000:8000" only on a
+      # trusted network.
+      - "127.0.0.1:8000:8000"
     environment:
-      # CHANGE THESE in production.
+      # REQUIRED: the app refuses to start with the default/placeholder key.
+      # Generate: `python -c "import secrets; print(secrets.token_urlsafe(48))"`
       WATCHER_SECRET_KEY: "change-me-to-a-long-random-string"
+      # Recommended in prod (separate from SECRET_KEY):
+      # `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+      # WATCHER_ENCRYPTION_KEY: ""
+      # Set true behind HTTPS so the session cookie gets Secure + HSTS is sent.
+      WATCHER_SECURE_COOKIES: "false"
+      # Public hostname(s) for the CSRF/Origin check when behind a proxy.
+      # WATCHER_TRUSTED_HOSTS: "watcher.example.com"
       # Optional: enable Web Push (generate with `vapid --gen`)
       # WATCHER_VAPID_PUBLIC_KEY: ""
       # WATCHER_VAPID_PRIVATE_KEY: ""

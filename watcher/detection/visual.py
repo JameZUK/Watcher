@@ -8,6 +8,19 @@ from dataclasses import dataclass
 from PIL import Image
 from pixelmatch.contrib.PIL import pixelmatch
 
+from ..config import settings
+
+
+def _bound(im: Image.Image) -> Image.Image:
+    """Downscale an oversized screenshot so diffing a deliberately enormous page
+    can't exhaust memory. Keeps aspect ratio; preserves small images unchanged."""
+    budget = settings.max_diff_megapixels * 1_000_000
+    px = im.width * im.height
+    if px <= budget or px == 0:
+        return im
+    scale = (budget / px) ** 0.5
+    return im.resize((max(1, int(im.width * scale)), max(1, int(im.height * scale))))
+
 
 @dataclass
 class VisualDiff:
@@ -18,7 +31,7 @@ class VisualDiff:
 
 
 def _load(png: bytes) -> Image.Image:
-    return Image.open(io.BytesIO(png)).convert("RGB")
+    return _bound(Image.open(io.BytesIO(png)).convert("RGB"))
 
 
 def _fit(a: Image.Image, b: Image.Image) -> tuple[Image.Image, Image.Image]:

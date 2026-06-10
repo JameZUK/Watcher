@@ -19,6 +19,7 @@ from ...auth.users import get_current_user, require_admin
 from ...config import settings
 from ...db import get_session
 from ...models import PushSubscription, User
+from ...netsec import validate_monitor_url, validate_public_url
 from ...notify import push
 from .. import templates
 
@@ -58,7 +59,10 @@ async def settings_page(
             "ai_key_set": bool(app.openrouter_key_enc),
             "ai_policy": app.ai_low_value_policy,
             "ai_base_url": app.ai_base_url or "",
-            "api_token": user.api_token or "",
+            # The token is stored hashed; the cleartext is shown exactly once,
+            # right after generation, via a one-time session value.
+            "api_token_set": bool(user.api_token),
+            "new_api_token": request.session.pop("new_api_token", None),
             # Per-user notification destinations + delivery prefs
             "nd": {
                 "telegram_chat_id": user.telegram_chat_id or "",
@@ -81,12 +85,15 @@ async def settings_page(
 
 @router.post("/settings/api-token")
 async def gen_api_token(
+    request: Request,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    import secrets
-    user.api_token = secrets.token_urlsafe(24)
+    from ...auth.security import hash_token, new_api_token
+    raw = new_api_token()
+    user.api_token = hash_token(raw)            # store only the hash
     await session.commit()
+    request.session["new_api_token"] = raw      # shown once on the next render
     return RedirectResponse("/settings", status_code=303)
 
 
@@ -105,7 +112,10 @@ async def save_notifications(
 ):
     form = await request.form()
     user.telegram_chat_id = (form.get("telegram_chat_id") or "").strip() or None
-    user.discord_webhook = (form.get("discord_webhook") or "").strip() or None
+    discord = (form.get("discord_webhook") or "").strip() or None
+    if discord and not settings.allow_private_targets and validate_public_url(discord):
+        return RedirectResponse("/settings?error=discord_url", status_code=303)
+    user.discord_webhook = discord
     user.ntfy_topic = (form.get("ntfy_topic") or "").strip() or None
     user.digest_enabled = _bool(form, "digest_enabled")
     qs, qe = _int_or_none(form.get("quiet_start")), _int_or_none(form.get("quiet_end"))
@@ -128,7 +138,10 @@ async def save_transports(
     app.smtp_user = (form.get("smtp_user") or "").strip() or None
     app.smtp_from = (form.get("smtp_from") or "").strip() or None
     app.smtp_tls = _bool(form, "smtp_tls")
-    app.ntfy_server = (form.get("ntfy_server") or "").strip() or "https://ntfy.sh"
+    ntfy_server = (form.get("ntfy_server") or "").strip() or "https://ntfy.sh"
+    if not settings.allow_private_targets and validate_public_url(ntfy_server):
+        return RedirectResponse("/settings?error=ntfy_url", status_code=303)
+    app.ntfy_server = ntfy_server
     if (form.get("smtp_pass") or "").strip():
         set_smtp_password(app, form["smtp_pass"].strip())
     if (form.get("telegram_token") or "").strip():
@@ -155,7 +168,13 @@ async def save_ai_settings(
         app.ai_model = model
     policy = (form.get("ai_low_value_policy") or "silent").strip()
     app.ai_low_value_policy = policy if policy in _POLICIES else "silent"
-    app.ai_base_url = (form.get("ai_base_url") or "").strip() or None
+    base_url = (form.get("ai_base_url") or "").strip() or None
+    # The shared OpenRouter key is sent as a Bearer header to this URL — only
+    # accept http(s) so it can't be redirected to an exfiltration endpoint via a
+    # malformed scheme. (Localhost is allowed: self-hosted Ollama is a valid use.)
+    if base_url and validate_monitor_url(base_url):
+        return RedirectResponse("/settings?error=ai_base_url", status_code=303)
+    app.ai_base_url = base_url
     # Key: a new value replaces; "clear" wipes; blank leaves the existing key.
     if _bool(form, "openrouter_key_clear"):
         set_openrouter_key(app, None)

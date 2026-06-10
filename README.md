@@ -144,11 +144,14 @@ extension/      one-click "add this tab" browser extension
 
 ## 🔒 Security notes
 
-- Set a strong `WATCHER_SECRET_KEY` in production (signs sessions + webhooks); Watcher logs a critical warning on startup if it's left at the dev placeholder.
-- Login credentials, session cookies, and global API keys (OpenRouter, SMTP, Telegram) are encrypted with Fernet; set `WATCHER_ENCRYPTION_KEY` explicitly rather than deriving it from the secret key.
-- Global app settings (the shared AI key, SMTP, etc.) are gated behind an **admin** role; the first registered user is bootstrapped as admin.
-- **SSRF**: user-supplied URLs are scheme-checked and their resolved IPs are validated (private / loopback / link-local / metadata ranges are blocked, re-checked on every redirect hop). **CSRF**: an Origin/Referer guard rejects cross-origin cookie-authed writes. User regex ignore-patterns run with a timeout (ReDoS-safe).
-- Watcher fetches arbitrary user-supplied URLs by design — only expose it to trusted users, ideally behind a reverse proxy with TLS (set `WATCHER_SECURE_COOKIES=true`).
+Watcher is built to be exposed to the public internet behind a TLS-terminating reverse proxy. Key controls:
+
+- **Secrets**: a strong `WATCHER_SECRET_KEY` is **required** — the app refuses to start with the dev placeholder (override in local dev only with `WATCHER_ALLOW_INSECURE=1`). Credentials, session state, and global API keys (OpenRouter/SMTP/Telegram) are encrypted at rest with Fernet (key HKDF-derived from the secret, or set `WATCHER_ENCRYPTION_KEY` explicitly in prod). API tokens are stored **hashed** (shown once on generation).
+- **Accounts**: self-registration is closed by default (`WATCHER_REGISTRATION_OPEN=false`) — only the first/bootstrap admin account can self-register; create further users as admin or open registration deliberately. Login/registration are **rate-limited** per IP. Global settings are gated behind an **admin** role.
+- **SSRF**: every render target, proxy, login URL, webhook, and ntfy/Discord destination is scheme-checked and its resolved IPs validated — private / loopback / link-local / CGNAT / metadata ranges (incl. IPv4-mapped & NAT64 forms) are blocked, re-checked just before each render. Set `WATCHER_ALLOW_PRIVATE_TARGETS=true` only on trusted networks that intentionally monitor internal hosts. A real browser re-resolves DNS, so for untrusted exposure **also place the renderer behind an egress firewall** that blocks internal ranges.
+- **Web hardening**: a fail-closed Origin/Referer **CSRF** guard on cookie-authed writes; **security headers** (X-Frame-Options, nosniff, Referrer-Policy, Permissions-Policy, HSTS when `WATCHER_SECURE_COOKIES=true`); request **body-size limit**; CDN scripts pinned with **SRI**; API docs (`/docs`) off by default (`WATCHER_ENABLE_DOCS`).
+- **Abuse / DoS**: per-user monitor cap, manual-check cooldown, ReDoS-safe regex (timeout), bounded screenshot diffing, capped change retention, and outbound timeouts on every notifier.
+- **Deployment**: the container runs as a **non-root** user; `docker-compose.yml` binds to loopback (front it with Caddy/nginx/Traefik for TLS). Set `WATCHER_SECURE_COOKIES=true` and `WATCHER_TRUSTED_HOSTS=<public-host>` behind the proxy.
 
 ## 📄 License
 

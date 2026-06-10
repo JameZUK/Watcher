@@ -31,6 +31,19 @@ async def prune() -> int:
     async with SessionLocal() as session:
         monitor_ids = (await session.execute(select(Monitor.id))).scalars().all()
 
+        # Cap retained Changes per monitor FIRST, so the snapshots they pinned
+        # can then be pruned below (bounds disk for always-changing pages).
+        cap = settings.max_changes_per_monitor
+        if cap:
+            for mid in monitor_ids:
+                stale = (await session.execute(
+                    select(Change.id).where(Change.monitor_id == mid)
+                    .order_by(Change.detected_at.desc()).offset(cap)
+                )).scalars().all()
+                for i in range(0, len(stale), 500):
+                    await session.execute(delete(Change).where(Change.id.in_(stale[i:i + 500])))
+            await session.commit()
+
         # Snapshot ids referenced by changes must be preserved.
         referenced: set[int] = set()
         for col in (Change.from_snapshot_id, Change.to_snapshot_id):

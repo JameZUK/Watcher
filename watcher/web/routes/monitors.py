@@ -9,7 +9,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import defer, selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -30,7 +30,7 @@ from ...models import (
     User,
     utcnow,
 )
-from ...netsec import validate_monitor_url, validate_public_url
+from ...netsec import validate_monitor_url, validate_proxy, validate_public_url
 
 # How long a manually pasted cookie session is trusted before re-prompting.
 # Successful checks roll this forward via mark_session(), so it self-maintains.
@@ -150,6 +150,24 @@ def _apply_form(monitor: Monitor, form) -> None:
     monitor.adaptive_interval = _bool(form, "adaptive_interval")
 
 
+def _validate_targets(monitor: Monitor) -> str | None:
+    """Validate every network destination on a monitor against the SSRF policy.
+    Always enforces the http(s) scheme; additionally requires public IPs for the
+    URL, webhook, and proxy unless ``allow_private_targets`` is set."""
+    err = validate_monitor_url(monitor.url)
+    if err:
+        return err
+    if settings.allow_private_targets:
+        return None
+    if (e := validate_public_url(monitor.url)):
+        return e
+    if monitor.webhook_url and (e := validate_public_url(monitor.webhook_url)):
+        return f"Webhook URL — {e}"
+    if (e := validate_proxy(monitor.proxy)):
+        return f"Proxy — {e}"
+    return None
+
+
 def _build_login_flow(monitor: Monitor, form) -> LoginFlow | None:
     """Reconcile a monitor's LoginFlow from the form.
 
@@ -166,7 +184,12 @@ def _build_login_flow(monitor: Monitor, form) -> LoginFlow | None:
     login_enabled = _bool(form, "login_enabled")
     if login_enabled:
         if form.get("login_url"):
-            steps.append({"action": "goto", "url": form["login_url"].strip()})
+            login_url = form["login_url"].strip()
+            lerr = validate_monitor_url(login_url) or (
+                None if settings.allow_private_targets else validate_public_url(login_url))
+            if lerr:
+                raise ValueError(f"Login URL — {lerr}")
+            steps.append({"action": "goto", "url": login_url})
         if form.get("login_user_selector"):
             secrets_plain["username"] = form.get("login_username", "")
             steps.append({"action": "fill", "selector": form["login_user_selector"].strip(),
@@ -439,11 +462,22 @@ async def import_monitors(
     except Exception:
         return RedirectResponse("/?import=error", status_code=303)
     items = parsed.get("monitors") if isinstance(parsed, dict) else parsed
+    # Respect the per-user cap across the whole account, not just per request.
+    cap = settings.max_monitors_per_user
+    remaining = _IMPORT_CAP
+    if cap:
+        existing = (await session.execute(
+            select(func.count()).select_from(Monitor).where(Monitor.user_id == user.id)
+        )).scalar_one()
+        remaining = max(0, min(_IMPORT_CAP, cap - existing))
     count = 0
-    for it in (items or [])[:_IMPORT_CAP]:   # bound mass-creation / render-pool abuse
+    for it in (items or [])[:remaining]:   # bound mass-creation / render-pool abuse
         if not isinstance(it, dict) or not (it.get("url") or "").strip():
             continue
-        if validate_monitor_url(it["url"].strip()):   # skip non-http(s) URLs
+        url = it["url"].strip()
+        if validate_monitor_url(url):   # skip non-http(s) URLs
+            continue
+        if not settings.allow_private_targets and validate_public_url(url):  # skip internal targets
             continue
         try:
             eng = Engine(it.get("engine") or "chromium")
@@ -483,9 +517,17 @@ async def create_monitor(
     session: AsyncSession = Depends(get_session),
 ):
     form = await request.form()
+    cap = settings.max_monitors_per_user
+    if cap:
+        count = (await session.execute(
+            select(func.count()).select_from(Monitor).where(Monitor.user_id == user.id)
+        )).scalar_one()
+        if count >= cap:
+            return _form_response(request, user, None,
+                                  error=f"Monitor limit reached ({cap}). Delete some first.", status=400)
     monitor = Monitor(user_id=user.id)
     _apply_form(monitor, form)
-    url_err = validate_monitor_url(monitor.url)
+    url_err = _validate_targets(monitor)
     if url_err:
         return _form_response(request, user, None, error=url_err, status=400)
     try:
@@ -527,7 +569,7 @@ async def update_monitor(
     monitor = await _owned_monitor(session, user, monitor_id)
     form = await request.form()
     _apply_form(monitor, form)
-    url_err = validate_monitor_url(monitor.url)
+    url_err = _validate_targets(monitor)
     if url_err:
         return _form_response(request, user, monitor, error=url_err, status=400)
     try:
@@ -588,6 +630,18 @@ async def check_monitor_now(
     session: AsyncSession = Depends(get_session),
 ):
     monitor = await _owned_monitor(session, user, monitor_id)
+    # Cooldown: stop a user spamming immediate checks to flood the render pool.
+    cooldown = settings.manual_check_cooldown_seconds
+    if cooldown and monitor.last_checked_at is not None:
+        from datetime import timezone
+
+        from ...models import utcnow
+        lc = monitor.last_checked_at
+        if lc.tzinfo is None:                    # SQLite hands back naive UTC
+            lc = lc.replace(tzinfo=timezone.utc)
+        age = (utcnow() - lc).total_seconds()
+        if 0 <= age < cooldown:
+            return RedirectResponse(f"/monitors/{monitor.id}?checked=cooldown", status_code=303)
     trigger_now(monitor.id)
     return RedirectResponse(f"/monitors/{monitor.id}", status_code=303)
 

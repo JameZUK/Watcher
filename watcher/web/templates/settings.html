@@ -131,20 +131,23 @@
   <section class="glass rounded-2xl p-5 sm:p-6">
     <h2 class="font-semibold text-white mb-1">API &amp; feeds</h2>
     <p class="text-sm text-slate-400 mb-4">A personal token for the REST API and your RSS feed.</p>
-    {% if api_token %}
+    {% if new_api_token %}
     <div class="space-y-2 text-sm">
-      <div><span class="text-slate-400">Token:</span> <code class="text-brand-300 break-all">{{ api_token }}</code></div>
+      <div class="text-amber-300 text-xs">Copy this now — it's shown only once and stored hashed:</div>
+      <div><span class="text-slate-400">Token:</span> <code class="text-brand-300 break-all">{{ new_api_token }}</code></div>
       <div class="text-xs text-slate-500 font-mono space-y-0.5 mt-2">
+        <div>Authorization: Bearer &lt;token&gt;  (preferred)</div>
         <div>GET /api/monitors?token=…</div>
-        <div>GET /api/changes?token=…</div>
-        <div>RSS&nbsp;&nbsp;/feed.xml?token=…</div>
+        <div>RSS&nbsp;&nbsp;/feed.xml?token=…  (query param ok for RSS readers)</div>
       </div>
     </div>
+    {% elif api_token_set %}
+    <p class="text-sm text-slate-400">A token is set (stored hashed, so it can't be shown again). Regenerate to get a new one.</p>
     {% else %}
     <p class="text-sm text-slate-500">No token yet — generate one to use the API and RSS feed.</p>
     {% endif %}
     <form method="post" action="/settings/api-token" class="mt-3">
-      <button class="btn btn-ghost text-sm">{{ 'Regenerate token' if api_token else 'Generate token' }}</button>
+      <button class="btn btn-ghost text-sm">{{ 'Regenerate token' if api_token_set else 'Generate token' }}</button>
     </form>
   </section>
 

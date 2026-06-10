@@ -1,11 +1,20 @@
 """URL safety checks to limit SSRF.
 
-Two levels:
+Levels:
 - ``validate_monitor_url`` — for URLs a real browser will navigate to: blocks
   non-http(s) schemes (file:, data:, chrome:, view-source:, …).
-- ``validate_public_url`` — stricter, for server-side ``httpx`` fetches that
-  return the body to the user: additionally rejects hosts that resolve to any
-  private/loopback/link-local/reserved/metadata address.
+- ``validate_public_url`` — stricter: additionally rejects hosts that resolve to
+  any private/loopback/link-local/reserved/metadata address. Used for server-side
+  ``httpx`` fetches AND (unless ``allow_private_targets`` is set) for the browser
+  render path and every user-supplied outbound destination.
+- ``validate_proxy`` — same IP policy applied to a per-monitor proxy host.
+
+Residual risk: a real browser re-resolves DNS itself, so DNS-rebinding / a
+redirect to an internal host between validation and the actual navigation is not
+fully closed in-process. For untrusted public exposure, also place the renderer
+behind an egress firewall/proxy that blocks RFC1918 + link-local + ULA + metadata
+ranges. ``allow_private_targets`` disables the IP checks for trusted/internal
+deployments that intentionally monitor private hosts.
 """
 
 from __future__ import annotations
@@ -15,6 +24,14 @@ import socket
 from urllib.parse import urlparse
 
 _ALLOWED_SCHEMES = {"http", "https"}
+_PROXY_SCHEMES = {"http", "https", "socks5", "socks5h", "socks4"}
+
+# Explicit deny networks layered on top of the ``ipaddress`` property checks.
+_DENY_NETS = (
+    ipaddress.ip_network("0.0.0.0/8"),       # "this network"
+    ipaddress.ip_network("169.254.0.0/16"),  # link-local incl. cloud metadata
+    ipaddress.ip_network("100.64.0.0/10"),   # CGNAT
+)
 
 
 def validate_monitor_url(url: str) -> str | None:
@@ -30,10 +47,29 @@ def validate_monitor_url(url: str) -> str | None:
     return None
 
 
+def _unwrap(addr):
+    """Unwrap IPv4-mapped / 6to4 / NAT64 IPv6 forms to the embedded IPv4 so an
+    address like ``::ffff:127.0.0.1`` or ``64:ff9b::7f00:1`` is judged on its
+    real (internal) IPv4 target rather than slipping through as "public IPv6"."""
+    if addr.version != 6:
+        return addr
+    mapped = getattr(addr, "ipv4_mapped", None)
+    if mapped is not None:
+        return mapped
+    sixtofour = getattr(addr, "sixtofour", None)
+    if sixtofour is not None:
+        return sixtofour
+    if addr in ipaddress.ip_network("64:ff9b::/96"):  # NAT64 well-known prefix
+        return ipaddress.ip_address(int(addr) & 0xFFFFFFFF)
+    return addr
+
+
 def _ip_is_public(ip: str) -> bool:
     try:
-        addr = ipaddress.ip_address(ip)
+        addr = _unwrap(ipaddress.ip_address(ip))
     except ValueError:
+        return False
+    if any(addr in net for net in _DENY_NETS if addr.version == net.version):
         return False
     return not (
         addr.is_private or addr.is_loopback or addr.is_link_local
@@ -41,22 +77,41 @@ def _ip_is_public(ip: str) -> bool:
     )
 
 
-def validate_public_url(url: str) -> str | None:
-    """Stricter check for server-side fetches: also blocks internal targets.
-
-    Resolves the host and rejects if ANY resolved address is non-public
-    (defends against internal hosts and most metadata endpoints; DNS-rebinding
-    between this check and the fetch is a residual risk).
-    """
-    err = validate_monitor_url(url)
-    if err:
-        return err
-    host = urlparse(url.strip()).hostname or ""
+def _host_is_public(host: str) -> str | None:
+    """Resolve ``host`` and return an error string if it has no addresses or ANY
+    resolved address is non-public; else None."""
+    if not host:
+        return "URL is missing a host."
     try:
         infos = socket.getaddrinfo(host, None)
     except socket.gaierror:
         return "Could not resolve the host."
     ips = {info[4][0] for info in infos}
     if not ips or any(not _ip_is_public(ip) for ip in ips):
-        return "Refusing to fetch a private/internal address."
+        return "Refusing to connect to a private/internal address."
     return None
+
+
+def validate_public_url(url: str) -> str | None:
+    """Stricter check: scheme allowlist AND every resolved IP must be public."""
+    err = validate_monitor_url(url)
+    if err:
+        return err
+    return _host_is_public(urlparse(url.strip()).hostname or "")
+
+
+def validate_proxy(proxy: str | None) -> str | None:
+    """Validate a per-monitor proxy string ``scheme://host[:port]``: known scheme
+    and a host that resolves only to public addresses. None/empty is allowed."""
+    proxy = (proxy or "").strip()
+    if not proxy:
+        return None
+    if "://" not in proxy:
+        return "Proxy must be scheme://host:port."
+    scheme = proxy.split("://", 1)[0].lower()
+    if scheme not in _PROXY_SCHEMES:
+        return "Unsupported proxy scheme."
+    host = urlparse(proxy).hostname
+    if not host:
+        return "Proxy is missing a host."
+    return _host_is_public(host)

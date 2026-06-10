@@ -32,3 +32,9 @@ jobs:
 
       - name: Run tests
         run: pytest -q
+
+      - name: Dependency vulnerability audit (advisory)
+        continue-on-error: true   # surfaces CVEs without blocking the build
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt --desc

@@ -15,6 +15,11 @@ RUN python -m camoufox fetch || true
 
 COPY watcher ./watcher
 
+# Drop privileges: run as the non-root user shipped in the Playwright base image
+# (so an app/browser-renderer compromise doesn't get root in the container).
+RUN mkdir -p /data && chown -R pwuser:pwuser /app /data
+USER pwuser
+
 VOLUME ["/data"]
 EXPOSE 8000
 

@@ -26,12 +26,19 @@ async def require_token(
         tok = auth[7:].strip()
     user = None
     if tok:
+        from ...auth.security import hash_token
         user = (await session.execute(
-            select(User).where(User.api_token == tok, User.is_active)
+            select(User).where(User.api_token == hash_token(tok), User.is_active)
         )).scalar_one_or_none()
     if user is None:
         raise HTTPException(status_code=401, detail="Invalid or missing API token")
     return user
+
+
+@router.get("/robots.txt", include_in_schema=False)
+async def robots() -> Response:
+    """Keep the (auth-gated) app out of search indexes."""
+    return Response("User-agent: *\nDisallow: /\n", media_type="text/plain")
 
 
 def _monitor_json(m: Monitor) -> dict:
