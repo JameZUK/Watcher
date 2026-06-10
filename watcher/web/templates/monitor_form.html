@@ -305,7 +305,7 @@
     </section>
 
     <!-- Notifications -->
-    <section class="glass rounded-2xl p-5 sm:p-6 space-y-4" x-data="{ channels: {{ (m.notify_channels if m else ['inbox'])|tojson }} }">
+    <section class="glass rounded-2xl p-5 sm:p-6 space-y-4" x-data='{ channels: {{ (m.notify_channels if m else ["inbox"])|tojson }} }'>
       <h2 class="font-semibold text-white">Notify me via</h2>
       <div class="flex flex-wrap gap-2.5">
         {% for ch, label in [('inbox','In-app inbox'),('push','Web Push'),('email','Email'),('telegram','Telegram'),('discord','Discord'),('ntfy','ntfy'),('webhook','Webhook')] %}

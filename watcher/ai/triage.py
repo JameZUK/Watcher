@@ -291,7 +291,8 @@ _VALUE_SYSTEM = (
 
 
 async def extract_value(
-    *, api_key: str, model: str, url: str, title: str | None, page_text: str, timeout: float = 30.0
+    *, api_key: str, model: str, base_url: str | None = None, url: str, title: str | None,
+    page_text: str, timeout: float = 30.0,
 ) -> tuple[float, str] | None:
     """Extract the page's primary tracked number via the model. None on failure."""
     if not api_key or not (page_text or "").strip():
@@ -371,8 +372,8 @@ _CONFIG_SYSTEM = (
 
 
 async def configure_monitor(
-    *, api_key: str, model: str, url: str, title: str | None, page_text: str, goal: str,
-    timeout: float = 40.0,
+    *, api_key: str, model: str, base_url: str | None = None, url: str, title: str | None,
+    page_text: str, goal: str, timeout: float = 40.0,
 ) -> dict | None:
     """Produce a monitor config dict from a plain-English goal. None on failure."""
     if not api_key or not (page_text or "").strip():
@@ -412,7 +413,8 @@ async def configure_monitor(
 
 
 async def summarize_history(
-    *, api_key: str, model: str, name: str, lines: list[str], timeout: float = 40.0,
+    *, api_key: str, model: str, base_url: str | None = None, name: str, lines: list[str],
+    timeout: float = 40.0,
 ) -> str | None:
     """One-paragraph narrative of a monitor's recent changes/values. None on failure."""
     if not api_key or not lines:
