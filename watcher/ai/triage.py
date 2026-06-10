@@ -143,6 +143,7 @@ async def triage_change(
     *,
     api_key: str,
     model: str,
+    base_url: str | None = None,
     url: str,
     title: str | None,
     intent: str | None,
@@ -170,7 +171,7 @@ async def triage_change(
     }
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(OPENROUTER_URL, json=body, headers=headers)
+            resp = await client.post(base_url or OPENROUTER_URL, json=body, headers=headers)
         if resp.status_code != 200:
             logger.warning("OpenRouter triage failed: HTTP %s %s", resp.status_code, resp.text[:200])
             return None
@@ -213,6 +214,7 @@ async def suggest_watch_items(
     *,
     api_key: str,
     model: str,
+    base_url: str | None = None,
     url: str,
     title: str | None,
     page_text: str,
@@ -238,7 +240,7 @@ async def suggest_watch_items(
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(OPENROUTER_URL, json=body, headers=headers)
+            resp = await client.post(base_url or OPENROUTER_URL, json=body, headers=headers)
         if resp.status_code != 200:
             logger.warning("OpenRouter suggest failed: HTTP %s %s", resp.status_code, resp.text[:200])
             return None
@@ -309,7 +311,7 @@ async def extract_value(
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(OPENROUTER_URL, json=body, headers=headers)
+            resp = await client.post(base_url or OPENROUTER_URL, json=body, headers=headers)
         if resp.status_code != 200:
             logger.warning("OpenRouter extract_value failed: HTTP %s %s", resp.status_code, resp.text[:200])
             return None
@@ -391,7 +393,7 @@ async def configure_monitor(
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(OPENROUTER_URL, json=body, headers=headers)
+            resp = await client.post(base_url or OPENROUTER_URL, json=body, headers=headers)
         if resp.status_code != 200:
             logger.warning("OpenRouter configure failed: HTTP %s %s", resp.status_code, resp.text[:200])
             return None
@@ -429,7 +431,7 @@ async def summarize_history(
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(OPENROUTER_URL, json=body, headers=headers)
+            resp = await client.post(base_url or OPENROUTER_URL, json=body, headers=headers)
         if resp.status_code != 200:
             return None
         return (resp.json()["choices"][0]["message"]["content"] or "").strip() or None

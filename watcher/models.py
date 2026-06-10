@@ -266,6 +266,7 @@ class AppSetting(Base):
     openrouter_key_enc: Mapped[str | None] = mapped_column(Text, default=None)
     ai_model: Mapped[str] = mapped_column(String(128), default="google/gemini-2.5-flash-lite")
     ai_low_value_policy: Mapped[str] = mapped_column(String(16), default="silent")  # silent|label|drop
+    ai_base_url: Mapped[str | None] = mapped_column(String(255), default=None)  # OpenAI-compatible endpoint (Ollama, etc.)
 
     # Notification transports (admin-configured, shared). Secrets are encrypted.
     smtp_host: Mapped[str | None] = mapped_column(String(255), default=None)

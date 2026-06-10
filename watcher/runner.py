@@ -34,7 +34,7 @@ async def _maybe_triage(app, monitor, change_result, result):
     has_text = bool((change_result.diff_text or "").strip())
     image = None if has_text else (change_result.diff_overlay_png or result.screenshot_png)
     return await triage_change(
-        api_key=key, model=app.ai_model, url=monitor.url, title=result.title,
+        api_key=key, model=app.ai_model, base_url=app.ai_base_url, url=monitor.url, title=result.title,
         intent=monitor.ai_watch_intent, diff_text=change_result.diff_text, image_png=image,
     )
 
@@ -50,7 +50,7 @@ async def _extract_value(app, monitor, result):
         key = get_openrouter_key(app)
         if key and (result.rendered_text or "").strip():
             return await extract_value(
-                api_key=key, model=app.ai_model, url=monitor.url,
+                api_key=key, model=app.ai_model, base_url=app.ai_base_url, url=monitor.url,
                 title=result.title, page_text=result.rendered_text,
             )
     return None

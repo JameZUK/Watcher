@@ -57,6 +57,7 @@ async def settings_page(
             "ai_model": app.ai_model,
             "ai_key_set": bool(app.openrouter_key_enc),
             "ai_policy": app.ai_low_value_policy,
+            "ai_base_url": app.ai_base_url or "",
             "api_token": user.api_token or "",
             # Per-user notification destinations + delivery prefs
             "nd": {
@@ -154,6 +155,7 @@ async def save_ai_settings(
         app.ai_model = model
     policy = (form.get("ai_low_value_policy") or "silent").strip()
     app.ai_low_value_policy = policy if policy in _POLICIES else "silent"
+    app.ai_base_url = (form.get("ai_base_url") or "").strip() or None
     # Key: a new value replaces; "clear" wipes; blank leaves the existing key.
     if _bool(form, "openrouter_key_clear"):
         set_openrouter_key(app, None)
@@ -176,7 +178,7 @@ async def test_ai_settings(
     if not key:
         return JSONResponse({"ok": False, "error": "No API key set."}, status_code=400)
     result = await triage_change(
-        api_key=key, model=app.ai_model, url="https://example.com",
+        api_key=key, model=app.ai_model, base_url=app.ai_base_url, url="https://example.com",
         title="Example", intent=None,
         diff_text="- Price: £299.00\n+ Price: £263.99", timeout=20.0,
     )

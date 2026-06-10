@@ -263,7 +263,7 @@ async def ai_suggest_watch(
             {"ok": False, "error": "Couldn’t read this page. Save the monitor and run a check, then try again."},
             status_code=502,
         )
-    suggestions = await suggest_watch_items(api_key=key, model=app.ai_model, url=url, title=title, page_text=text)
+    suggestions = await suggest_watch_items(api_key=key, model=app.ai_model, base_url=app.ai_base_url, url=url, title=title, page_text=text)
     if not suggestions:
         return JSONResponse({"ok": False, "error": "No suggestions came back — try again."}, status_code=502)
     return JSONResponse({"ok": True, "suggestions": suggestions})
@@ -288,7 +288,7 @@ async def ai_create_monitor(
     title, text = await _page_text_for_suggest(session, user, url, None)
     if not (text or "").strip():
         return _form_response(request, user, None, error="Couldn’t read that page — check the URL.", status=400)
-    cfg = await configure_monitor(api_key=key, model=app.ai_model, url=url, title=title, page_text=text, goal=goal)
+    cfg = await configure_monitor(api_key=key, model=app.ai_model, base_url=app.ai_base_url, url=url, title=title, page_text=text, goal=goal)
     if not cfg:
         return _form_response(request, user, None, error="AI setup failed — try the manual form below.", status=502)
 
@@ -343,7 +343,7 @@ async def ai_summary(
         lines.append("Recent tracked values: " + ", ".join(vals[:20]))
     if not lines:
         return JSONResponse({"ok": False, "error": "Nothing to summarise yet."}, status_code=400)
-    text = await summarize_history(api_key=key, model=app.ai_model, name=monitor.name, lines=lines)
+    text = await summarize_history(api_key=key, model=app.ai_model, base_url=app.ai_base_url, name=monitor.name, lines=lines)
     if not text:
         return JSONResponse({"ok": False, "error": "Summary failed — try again."}, status_code=502)
     return JSONResponse({"ok": True, "summary": text})

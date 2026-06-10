@@ -51,6 +51,7 @@ _ADDED_COLUMNS = {
         "smtp_host": "VARCHAR(255)", "smtp_port": "INTEGER DEFAULT 587", "smtp_user": "VARCHAR(255)",
         "smtp_pass_enc": "TEXT", "smtp_from": "VARCHAR(255)", "smtp_tls": "BOOLEAN DEFAULT 1",
         "telegram_token_enc": "TEXT", "ntfy_server": "VARCHAR(255) DEFAULT 'https://ntfy.sh'",
+        "ai_base_url": "VARCHAR(255)",
     },
 }
 
