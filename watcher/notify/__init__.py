@@ -25,6 +25,9 @@ async def dispatch(session: AsyncSession, monitor: Monitor, change: Change) -> N
         "summary": change.summary,
         "magnitude": round(change.magnitude, 4),
         "detected_at": change.detected_at.isoformat(),
+        "ai_headline": change.ai_headline,
+        "ai_category": change.ai_category,
+        "ai_importance": change.ai_importance,
     }
 
     if "webhook" in channels and monitor.webhook_url:
@@ -36,9 +39,9 @@ async def dispatch(session: AsyncSession, monitor: Monitor, change: Change) -> N
                 select(PushSubscription).where(PushSubscription.user_id == monitor.user_id)
             )
         ).scalars().all()
-        await push.send_to_all(
-            subs,
-            title=f"Change: {monitor.name}",
-            body=change.summary,
-            url=f"/monitors/{monitor.id}",
-        )
+        # Lead with the AI headline when present — it's the actionable bit.
+        if change.ai_headline:
+            title, body = change.ai_headline, monitor.name
+        else:
+            title, body = f"Change: {monitor.name}", change.summary
+        await push.send_to_all(subs, title=title, body=body, url=f"/monitors/{monitor.id}")

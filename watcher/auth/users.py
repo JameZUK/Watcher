@@ -22,7 +22,13 @@ async def get_by_email(session: AsyncSession, email: str) -> User | None:
 
 
 async def create_user(session: AsyncSession, email: str, password: str) -> User:
-    user = User(email=email.lower().strip(), password_hash=hash_password(password))
+    # The very first account is the admin (owns global/app-wide settings).
+    is_first = (await user_count(session)) == 0
+    user = User(
+        email=email.lower().strip(),
+        password_hash=hash_password(password),
+        is_admin=is_first,
+    )
     session.add(user)
     await session.commit()
     await session.refresh(user)
@@ -47,4 +53,15 @@ async def get_current_user(
     if not user or not user.is_active:
         request.session.clear()
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    return user
+
+
+async def require_admin(user: User = Depends(get_current_user)) -> User:
+    """Dependency: like get_current_user, but 403s non-admin users.
+
+    Guards global/app-wide settings (e.g. the shared OpenRouter key) so only
+    an administrator can view or change them.
+    """
+    if not user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Administrator access required")
     return user

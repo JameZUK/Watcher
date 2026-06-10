@@ -8,6 +8,8 @@ import hashlib
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from .ai import triage_change
+from .app_settings import get_app_settings, get_openrouter_key
 from .config import settings
 from .db import SessionLocal
 from .detection import detect
@@ -15,6 +17,24 @@ from .engines import render_monitor
 from .models import Change, Monitor, Snapshot, SnapshotStatus, utcnow
 from .notify import dispatch
 from .storage import blobs
+
+# Importance ratings the AI considers "low value" and subject to the gating policy.
+_LOW_VALUE = {"low", "noise"}
+
+
+async def _maybe_triage(app, monitor, change_result, result):
+    """Best-effort AI triage of a detected change. Returns a Triage or None."""
+    if not (monitor.ai_enabled and app.ai_enabled):
+        return None
+    key = get_openrouter_key(app)
+    if not key:
+        return None
+    has_text = bool((change_result.diff_text or "").strip())
+    image = None if has_text else (change_result.diff_overlay_png or result.screenshot_png)
+    return await triage_change(
+        api_key=key, model=app.ai_model, url=monitor.url, title=result.title,
+        intent=monitor.ai_watch_intent, diff_text=change_result.diff_text, image_png=image,
+    )
 
 # Cap concurrent browser renders to protect a single box.
 _semaphore = asyncio.Semaphore(settings.max_render_concurrency)
@@ -154,10 +174,26 @@ async def check_monitor(monitor_id: int) -> None:
 
             change_result = detect(monitor, prev, result)
             if change_result.changed:
+                # AI triage (best-effort): headline + category + importance.
+                app = await get_app_settings(session)
+                triage = await _maybe_triage(app, monitor, change_result, result)
+                importance = triage.importance if triage else None
+                low_value = importance in _LOW_VALUE
+                policy = monitor.ai_policy or app.ai_low_value_policy  # silent|label|drop
+
+                # "drop": don't even record a low-value change (snapshot is kept).
+                if low_value and policy == "drop":
+                    await session.commit()
+                    return
+
                 text_blob = blobs.put_text(change_result.diff_text) if change_result.diff_text else None
                 visual_blob = (
                     blobs.put_bytes(change_result.diff_overlay_png)
                     if change_result.diff_overlay_png is not None else None
+                )
+                visual_mobile_blob = (
+                    blobs.put_bytes(change_result.diff_overlay_mobile_png)
+                    if change_result.diff_overlay_mobile_png is not None else None
                 )
 
                 change = Change(
@@ -165,14 +201,22 @@ async def check_monitor(monitor_id: int) -> None:
                     from_snapshot_id=prev.id if prev else None,
                     to_snapshot_id=snap.id,
                     change_type=change_result.change_type,
-                    summary=change_result.summary,
+                    # Prefer the AI headline as the human-facing summary.
+                    summary=(triage.headline if triage and triage.headline else change_result.summary),
                     magnitude=change_result.magnitude,
                     diff_blob=text_blob,
                     visual_blob=visual_blob,
+                    visual_mobile_blob=visual_mobile_blob,
+                    ai_headline=triage.headline if triage else None,
+                    ai_category=triage.category if triage else None,
+                    ai_importance=importance,
                 )
                 session.add(change)
                 monitor.last_change_at = utcnow()
                 await session.flush()
-                await dispatch(session, monitor, change)
+
+                # "silent": record the change but don't push/webhook for low value.
+                if not (low_value and policy == "silent"):
+                    await dispatch(session, monitor, change)
 
             await session.commit()

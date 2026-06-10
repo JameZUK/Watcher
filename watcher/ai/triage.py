@@ -1,0 +1,264 @@
+"""Triage a detected website change with an OpenRouter-hosted model.
+
+Given the change (a unified text diff, or — for visual-only changes — a
+screenshot) plus the monitor's URL/title and optional "what to watch for"
+intent, the model returns a concise headline, a category, and an importance
+rating used to write notifications and suppress noise.
+
+All failures are swallowed and surfaced as ``None`` so triage can never break
+the capture pipeline; callers fall back to the heuristic summary.
+"""
+
+from __future__ import annotations
+
+import base64
+import io
+import json
+import logging
+from dataclasses import dataclass
+
+import httpx
+
+logger = logging.getLogger("watcher.ai")
+
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+CATEGORIES = ("price", "stock", "availability", "content", "layout", "cosmetic", "error", "other")
+IMPORTANCES = ("high", "medium", "low", "noise")
+
+_SCHEMA = {
+    "name": "change_triage",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "headline": {"type": "string", "description": "One short sentence a human can act on, e.g. 'Price dropped £299 → £263.99'."},
+            "category": {"type": "string", "enum": list(CATEGORIES)},
+            "importance": {"type": "string", "enum": list(IMPORTANCES)},
+            "detail": {"type": "string", "description": "Optional one-line extra context."},
+        },
+        "required": ["headline", "category", "importance", "detail"],
+    },
+}
+
+_SYSTEM = (
+    "You triage changes detected on a monitored web page. You are given what "
+    "changed (a text diff, or a screenshot of the page with changed regions). "
+    "Respond ONLY with the requested JSON. Write a concise, human-actionable "
+    "headline (no preamble). Classify the change and rate its importance:\n"
+    "- high: meaningful, the user almost certainly wants to know (price/stock/"
+    "availability change, key content update).\n"
+    "- medium: a real content change worth seeing.\n"
+    "- low: minor/peripheral content.\n"
+    "- noise: cosmetic or churn the user does NOT care about (ad/banner "
+    "rotation, carousels, timestamps, view counts, session tokens, reordering).\n"
+    "If a 'what to watch for' instruction is given, rate importance RELATIVE to "
+    "it: a change matching the instruction is high; an unrelated change is low "
+    "or noise even if large."
+)
+
+
+@dataclass
+class Triage:
+    headline: str
+    category: str
+    importance: str
+    detail: str | None = None
+
+
+def _compact_image(png: bytes, *, max_side: int = 1280, quality: int = 70) -> str | None:
+    """Downscale a screenshot and return a JPEG data URL (cost control)."""
+    try:
+        from PIL import Image
+
+        im = Image.open(io.BytesIO(png)).convert("RGB")
+        w, h = im.size
+        scale = min(1.0, max_side / max(w, h))
+        if scale < 1.0:
+            im = im.resize((max(1, int(w * scale)), max(1, int(h * scale))))
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG", quality=quality)
+        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        return f"data:image/jpeg;base64,{b64}"
+    except Exception:
+        return None
+
+
+def _user_content(url, title, intent, diff_text, image_png):
+    lines = [f"URL: {url}"]
+    if title:
+        lines.append(f"Page title: {title}")
+    if intent:
+        lines.append(f'What the user is watching for: "{intent}"')
+
+    if diff_text and diff_text.strip():
+        # Cap the diff so a huge change can't blow up cost.
+        diff = diff_text.strip()
+        if len(diff) > 6000:
+            diff = diff[:6000] + "\n…(diff truncated)…"
+        lines.append("\nUnified diff of the visible text (- old, + new):\n" + diff)
+        return "\n".join(lines)
+
+    # Visual-only change: attach a screenshot if we have one.
+    data_url = _compact_image(image_png) if image_png else None
+    if data_url:
+        lines.append("\nNo text diff — the page changed visually. The image shows the current page.")
+        return [
+            {"type": "text", "text": "\n".join(lines)},
+            {"type": "image_url", "image_url": {"url": data_url}},
+        ]
+    lines.append("\nThe page changed but no diff or screenshot is available.")
+    return "\n".join(lines)
+
+
+def _parse(content: str) -> Triage | None:
+    if not content:
+        return None
+    txt = content.strip()
+    if txt.startswith("```"):
+        txt = txt.strip("`")
+        txt = txt[txt.find("{"):]
+    start, end = txt.find("{"), txt.rfind("}")
+    if start == -1 or end == -1:
+        return None
+    try:
+        data = json.loads(txt[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+    headline = (data.get("headline") or "").strip()
+    if not headline:
+        return None
+    category = (data.get("category") or "other").strip().lower()
+    if category not in CATEGORIES:
+        category = "other"
+    importance = (data.get("importance") or "medium").strip().lower()
+    if importance not in IMPORTANCES:
+        importance = "medium"
+    detail = (data.get("detail") or "").strip() or None
+    return Triage(headline=headline, category=category, importance=importance, detail=detail)
+
+
+async def triage_change(
+    *,
+    api_key: str,
+    model: str,
+    url: str,
+    title: str | None,
+    intent: str | None,
+    diff_text: str | None,
+    image_png: bytes | None = None,
+    timeout: float = 30.0,
+) -> Triage | None:
+    """Call OpenRouter and return a Triage, or None on any failure."""
+    if not api_key:
+        return None
+    body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _SYSTEM},
+            {"role": "user", "content": _user_content(url, title, intent, diff_text, image_png)},
+        ],
+        "temperature": 0.1,
+        "max_tokens": 400,
+        "response_format": {"type": "json_schema", "json_schema": _SCHEMA},
+    }
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+        "X-Title": "Watcher",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(OPENROUTER_URL, json=body, headers=headers)
+        if resp.status_code != 200:
+            logger.warning("OpenRouter triage failed: HTTP %s %s", resp.status_code, resp.text[:200])
+            return None
+        content = resp.json()["choices"][0]["message"]["content"]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("OpenRouter triage error: %s", exc)
+        return None
+    return _parse(content)
+
+
+_SUGGEST_SCHEMA = {
+    "name": "watch_suggestions",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "suggestions": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "3-6 short, self-contained phrases.",
+            }
+        },
+        "required": ["suggestions"],
+    },
+}
+
+_SUGGEST_SYSTEM = (
+    "You help a user configure a website-change monitor. Given the page content, "
+    "propose specific, concrete things worth being alerted about IF they change — "
+    "prices, stock/availability, key values/metrics, dates, or new content. Each "
+    "suggestion must be a short, self-contained phrase the user can drop into a "
+    "'what to watch for' box, e.g. 'Price drops below the current price', 'Product "
+    "comes back in stock', 'A new article is published', 'The version number "
+    "changes'. Give 3-6, tailored to THIS page. Respond ONLY with the JSON."
+)
+
+
+async def suggest_watch_items(
+    *,
+    api_key: str,
+    model: str,
+    url: str,
+    title: str | None,
+    page_text: str,
+    timeout: float = 40.0,
+) -> list[str] | None:
+    """Suggest "what to watch for" items for a page. None on failure."""
+    if not api_key or not (page_text or "").strip():
+        return None
+    text = page_text.strip()
+    if len(text) > 8000:
+        text = text[:8000] + "\n…(truncated)…"
+    user = f"URL: {url}\n" + (f"Title: {title}\n" if title else "") + "\nPage content:\n" + text
+    body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _SUGGEST_SYSTEM},
+            {"role": "user", "content": user},
+        ],
+        "temperature": 0.3,
+        "max_tokens": 500,
+        "response_format": {"type": "json_schema", "json_schema": _SUGGEST_SCHEMA},
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(OPENROUTER_URL, json=body, headers=headers)
+        if resp.status_code != 200:
+            logger.warning("OpenRouter suggest failed: HTTP %s %s", resp.status_code, resp.text[:200])
+            return None
+        content = resp.json()["choices"][0]["message"]["content"]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("OpenRouter suggest error: %s", exc)
+        return None
+    txt = (content or "").strip()
+    start, end = txt.find("{"), txt.rfind("}")
+    if start == -1 or end == -1:
+        return None
+    try:
+        data = json.loads(txt[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+    out, seen = [], set()
+    for item in data.get("suggestions", []):
+        s = (item or "").strip().lstrip("-•").strip()
+        key = s.lower()
+        if s and key not in seen:
+            seen.add(key)
+            out.append(s)
+    return out[:8] or None
