@@ -420,3 +420,18 @@ def test_login_session_code_event():
         assert ai_login.get_session(s.id, 3) is s
         assert ai_login.get_session(s.id, 999) is None
     asyncio.run(_t())
+
+
+def test_credential_for_field_guard():
+    """A credential field is always filled from the stored secret, never free-typed
+    — so the model can't invent (or leak) an email/password into the page."""
+    from watcher.auth.ai_login import _credential_for_field
+    secrets = {"username": "me@x.com", "password": "pw"}
+    assert _credential_for_field({"type": "email", "name": "__email"}, secrets) == "username"
+    assert _credential_for_field({"type": "text", "name": "login"}, secrets) == "username"
+    assert _credential_for_field({"type": "password", "name": "pass"}, secrets) == "password"
+    assert _credential_for_field({"type": "text", "autocomplete": "username"}, secrets) == "username"
+    # not a credential field → free text allowed
+    assert _credential_for_field({"type": "text", "name": "search"}, secrets) is None
+    # secret missing → don't claim the field
+    assert _credential_for_field({"type": "password"}, {"username": "u"}) is None

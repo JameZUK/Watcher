@@ -189,6 +189,7 @@ async def run_agent(
                 pass
             labels = {e.get("idx"): (e.get("label") or e.get("placeholder") or e.get("aria")
                                      or e.get("name") or f"element {e.get('idx')}") for e in elements}
+            elem_by_idx = {e.get("idx"): e for e in elements}
 
             # Stuck detection: if the interactive elements (incl. their filled-ness)
             # don't change across steps, our actions aren't doing anything — almost
@@ -203,6 +204,9 @@ async def run_agent(
             last_sig = sig
             if stuck >= 2 and await _is_bot_wall(page):
                 session.status, session.error = "error", _WALL_MSG
+                return
+            if stuck >= 3:  # input no longer changes the page — captcha / dead end
+                session.status, session.error = "error", _STUCK_MSG
                 return
 
             action = await action_fn(elements=elements, screenshot_png=session.screenshot,
@@ -243,11 +247,24 @@ async def run_agent(
                     except Exception:
                         pass
             elif a == "type_text":
-                session.log.append(f"Enter a value into “{label[:40]}”")
-                try:
-                    await page.fill(sel, action.get("text") or "")
-                except Exception:
-                    pass
+                # Guard rail: the model sometimes free-types (and even invents) an
+                # email into a credential field. If the target clearly is one, fill
+                # the real stored secret instead of whatever text it produced.
+                cred = _credential_for_field(elem_by_idx.get(idx, {}), session.secrets)
+                if cred:
+                    session.log.append(f"Enter {cred} into “{label[:40]}”")
+                    val = session.secrets.get(cred, "")
+                    if val and idx >= 0:
+                        try:
+                            await page.fill(sel, val)
+                        except Exception:
+                            pass
+                else:
+                    session.log.append(f"Enter a value into “{label[:40]}”")
+                    try:
+                        await page.fill(sel, action.get("text") or "")
+                    except Exception:
+                        pass
             elif a == "click":
                 session.log.append(f"Click “{label[:50]}”")
                 try:
@@ -296,6 +313,27 @@ _WALL_MSG = (
     "and paste a session cookie instead (Session cookies, below)."
 )
 
+_STUCK_MSG = (
+    "The login page stopped responding to the agent — almost always a captcha or "
+    "'press & hold' anti-bot check, which can't be automated. Log in manually in "
+    "your own browser and paste a session cookie instead (Session cookies, below)."
+)
+
+
+def _credential_for_field(el: dict, secrets: dict) -> str | None:
+    """If this element is clearly a username/email or password field and we hold
+    that secret, return which one — so we never free-type (or invent) credentials."""
+    t = (el.get("type") or "").lower()
+    blob = " ".join(str(el.get(k, "")) for k in
+                    ("name", "id", "autocomplete", "placeholder", "aria", "label")).lower()
+    if secrets.get("password") and ("password" in t or "password" in blob):
+        return "password"
+    if secrets.get("username") and (t == "email" or any(
+            w in blob for w in ("email", "e-mail", "username", "user-name",
+                                "userid", "user_id", "login", "__email"))):
+        return "username"
+    return None
+
 
 async def _is_bot_wall(page) -> bool:
     """Heuristic: are we on a hard anti-bot interstitial (a Cloudflare/PerimeterX
@@ -310,10 +348,20 @@ async def _is_bot_wall(page) -> bool:
             "() => ((document.body && document.body.innerText) || '').slice(0,3000)")).lower()
     except Exception:
         txt = ""
-    return any(m in txt for m in (
-        "just a moment", "verify you are human", "checking your browser",
-        "are you a robot", "unusual traffic", "px-captcha", "cf-challenge",
-        "enable javascript and cookies to continue"))
+    if any(m in txt for m in (
+            "just a moment", "verify you are human", "verifying you are human",
+            "checking your browser", "are you a robot", "unusual traffic",
+            "px-captcha", "cf-challenge", "enable javascript and cookies to continue",
+            "press & hold", "press and hold", "complete the security check",
+            "human verification", "solve this puzzle")):
+        return True
+    try:  # a captcha widget mounted in an iframe (hCaptcha / reCAPTCHA / PerimeterX)
+        return bool(await page.evaluate(
+            "() => !!document.querySelector("
+            "'iframe[src*=\"hcaptcha\"],iframe[src*=\"recaptcha\"],iframe[src*=\"captcha\"],"
+            "iframe[title*=\"captcha\" i],#px-captcha,[id*=\"px-captcha\"]')"))
+    except Exception:
+        return False
 
 
 def _active_page(ctx, current):
