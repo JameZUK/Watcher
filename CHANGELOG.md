@@ -91,6 +91,15 @@ All of it is generic and site-agnostic — no per-site rules.
   pinned to ~one viewport. BBC News went from ~10% to ~99% rendered; Guardian,
   Amazon, Wikipedia, GOV.UK and eBay were unchanged (no regression). Pre-existing
   issue, unrelated to the banner handling.
+- **Mobile previews of UA-sensitive sites (e.g. Amazon) render correctly.** The
+  Chromium/Playwright engine captured "mobile" by resizing the viewport to 390px
+  while keeping the desktop user-agent, so Amazon served desktop markup at phone
+  width — the page overflowed (~1000px-wide document) and the preview came out
+  far too wide with a large blank area. The mobile preview is now a dedicated
+  phone-emulated pass (mobile UA + touch where supported; UA+viewport fallback on
+  Firefox/WebKit) that re-navigates so the site serves its real mobile layout and
+  re-runs consent handling there. Amazon mobile went from 2000px (broken) to
+  780px with a correct layout; desktop unchanged. (Camoufox already did this.)
 
 ### Notes / limitations
 - An LLM **cannot** solve real image/slider captchas (reCAPTCHA grids, hCaptcha,
