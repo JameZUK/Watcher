@@ -160,7 +160,9 @@ async def run_agent(
     history: list[str] = []
     code_pending = False
     captcha_tries = 0
+    code_entered = False
     close = None
+    ctx = None
     try:
         close, ctx = await _new_context(engine, proxy)
         page = await ctx.new_page()
@@ -171,7 +173,6 @@ async def run_agent(
         stuck = 0
         none_retry = 0
         empty_retry = 0
-        code_entered = False
         for _ in range(MAX_STEPS):
             # Follow popups: federated logins (Glassdoor → Indeed, "Continue with
             # Google/Apple") open the real credential form in a NEW window. If we
@@ -201,7 +202,7 @@ async def run_agent(
             # before asking the model to decide (or wrongly declaring a dead end).
             if not elements and empty_retry < 3:
                 empty_retry += 1
-                await page.wait_for_timeout(1200)
+                await _safe_sleep(page, 1200)
                 continue
             empty_retry = 0
             try:
@@ -248,7 +249,7 @@ async def run_agent(
             if not action:
                 if none_retry < 1:            # a transient hiccup — try once more
                     none_retry += 1
-                    await page.wait_for_timeout(800)
+                    await _safe_sleep(page, 800)
                     continue
                 session.status = "error"
                 session.error = (_WALL_MSG if await _is_bot_wall(page)
@@ -317,6 +318,10 @@ async def run_agent(
                 if idx >= 0:
                     try:
                         await page.fill(sel, code)
+                        # Submit the code ourselves — OTP forms usually accept Enter
+                        # (and often auto-submit), so we don't depend on the model
+                        # finding the right Continue button as the popup is closing.
+                        await page.press(sel, "Enter")
                     except Exception:
                         pass
                 code_pending = True
@@ -334,7 +339,22 @@ async def run_agent(
         session.log.append("Logged in — session saved.")
     except Exception as exc:  # noqa: BLE001
         log.warning("ai-login agent error: %s", exc)
-        if session.status not in ("done",):
+        salvaged = False
+        # If the one-time code was already accepted, a page/popup closing under us
+        # is the success itself (OAuth popups close when login completes) — capture
+        # the session from the context rather than reporting the teardown error.
+        if (session.status != "done" and code_entered and ctx is not None
+                and "closed" in str(exc).lower()):
+            try:
+                state = await ctx.storage_state()
+                session.result_state = state
+                await persist_fn(state)
+                session.status = "done"
+                session.log.append("Logged in — session saved.")
+                salvaged = True
+            except Exception:
+                salvaged = False
+        if not salvaged and session.status not in ("done",):
             session.status, session.error = "error", f"{type(exc).__name__}: {exc}"
     finally:
         if close:
@@ -473,7 +493,7 @@ async def solve_recaptcha(page, solve_fn, log_cb=None, shot_cb=None, *, max_roun
         try:
             desc = fr.locator(".rc-imageselect-desc-no-canonical, .rc-imageselect-desc")
             if not await desc.count():
-                await page.wait_for_timeout(1500)
+                await _safe_sleep(page, 1500)
                 if await _recaptcha_token(page):
                     return True
                 continue
@@ -483,7 +503,7 @@ async def solve_recaptcha(page, solve_fn, log_cb=None, shot_cb=None, *, max_roun
             tiles = fr.locator(".rc-imageselect-tile")
             n = await tiles.count()
             if n == 0:
-                await page.wait_for_timeout(1500)
+                await _safe_sleep(page, 1500)
                 continue
             side = 4 if n > 9 else 3
             rows = cols = side
@@ -503,7 +523,7 @@ async def solve_recaptcha(page, solve_fn, log_cb=None, shot_cb=None, *, max_roun
             if 1 <= c <= n:
                 try:
                     await tiles.nth(c - 1).click(timeout=4000)
-                    await page.wait_for_timeout(250)
+                    await _safe_sleep(page, 250)
                 except Exception:
                     pass
         await _shot()  # show the picks before verifying
@@ -511,7 +531,7 @@ async def solve_recaptcha(page, solve_fn, log_cb=None, shot_cb=None, *, max_roun
             await fr.locator("#recaptcha-verify-button").click(timeout=4000)
         except Exception:
             pass
-        await page.wait_for_timeout(2800)
+        await _safe_sleep(page, 2800)
     return bool(await _recaptcha_token(page))
 
 
