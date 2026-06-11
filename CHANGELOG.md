@@ -48,6 +48,16 @@ All of it is generic and site-agnostic — no per-site rules.
   `hide_banners` (twice) → a final pre-screenshot sweep, on the main frame and
   every child frame.
 
+### Fixed
+- **Full-page screenshots no longer come out tall but mostly blank** on sites
+  that lazy-load content and leave a scroll-lock engaged (e.g. BBC News, where
+  ~90% of the image was empty below the first fold). `reveal_full_content()` now
+  runs before each full-page screenshot (desktop + mobile, both engines): it
+  forces lazy `<img>`/`<iframe>` to load and un-clamps top-level layout wrappers
+  pinned to ~one viewport. BBC News went from ~10% to ~99% rendered; Guardian,
+  Amazon, Wikipedia, GOV.UK and eBay were unchanged (no regression). Pre-existing
+  issue, unrelated to the banner handling.
+
 ### Notes / limitations
 - An LLM **cannot** solve real image/slider captchas (reCAPTCHA grids, hCaptcha,
   DataDome sliders). Those escalate to the "needs your help" alert; the reliable
