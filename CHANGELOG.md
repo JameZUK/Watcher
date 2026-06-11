@@ -57,6 +57,16 @@ All of it is generic and site-agnostic — no per-site rules.
   counts hidden monitors' changes. New `Group.hide_members` column.
 
 ### Changed
+- **Dashboard cards cleaned up across large / compact / list views.** The
+  detection-mode pill ("Smart"/"Text"/…) moved off every thumbnail into quiet
+  footer text, so previews show just the page; only meaningful status badges
+  ("N new", "last check failed") remain on the image. The list view shows status
+  as inline chips in the row instead of overlaying the narrow thumbnail. Mobile
+  fixes: list rows truncate instead of overflowing (and keep a slim mode + when
+  footer plus the status chips), and the dashboard now defaults to the compact
+  view below 640px (an explicit view choice — including large — is remembered
+  and overrides the default). Card markup is shared between the dashboard and
+  group pages via one partial.
 - New `Monitor` columns `block_annoyances` (default on), `consent_clicks`, and
   `consent_ai_tried`, added via idempotent startup migrations.
 - The capture pipeline now runs `click_consent` → auto-dismiss observer →
