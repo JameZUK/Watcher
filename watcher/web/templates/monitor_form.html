@@ -258,7 +258,9 @@
                    :class="manual ? 'border-amber-400/60 cursor-crosshair max-h-[76vh]' : 'border-white/10 max-h-[46vh]'"
                    x-show="hasShot" x-cloak>
                 <img :src="shotUrl" alt="login page" class="block w-full select-none"
-                     @click="manual && relayClick($event)" draggable="false">
+                     @mousedown.prevent="manual && relayDown($event)"
+                     @mouseup.prevent="manual && relayUp($event)"
+                     @mousemove="manual && relayHover($event)" draggable="false">
               </div>
               <p class="text-sm font-medium" :class="errored ? 'text-red-300' : (done ? 'text-emerald-300' : (manual ? 'text-amber-200' : 'text-brand-200'))" x-text="statusLine"></p>
 
@@ -628,17 +630,31 @@ function aiLogin(mid){return {
     try { await fetch(`/monitors/${this.mid}/ai-login/mode?sid=${this.sid}`, {method:'POST', headers:{'X-Requested-With':'fetch'}, body:fd}); } catch(e){}
     this.manual = (m === 'manual'); this._restartPoll();
   },
-  async _input(ev){
+  async _input(ev, quiet){
     try { await fetch(`/monitors/${this.mid}/ai-login/input?sid=${this.sid}`,
       {method:'POST', headers:{'Content-Type':'application/json','X-Requested-With':'fetch'}, body:JSON.stringify(ev)}); } catch(e){}
+    if (quiet) return;   // hover moves don't need an extra refresh; the poll handles it
     // refresh a couple of times so animations (e.g. a captcha tick) show up
     setTimeout(() => this._refreshShot(), 350);
     setTimeout(() => this._refreshShot(), 900);
   },
-  relayClick(ev){
-    const r = ev.target.getBoundingClientRect();
-    if (!r.width || !r.height) return;
-    this._input({type:'click', fx:(ev.clientX-r.left)/r.width, fy:(ev.clientY-r.top)/r.height});
+  _frac(ev){ const r = ev.currentTarget.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    return {fx: Math.min(1, Math.max(0, (ev.clientX-r.left)/r.width)),
+            fy: Math.min(1, Math.max(0, (ev.clientY-r.top)/r.height))}; },
+  relayDown(ev){ this._dragStart = this._frac(ev); },
+  relayUp(ev){
+    const end = this._frac(ev), s = this._dragStart; this._dragStart = null;
+    if (!end) return;
+    const start = s || end;
+    const moved = Math.hypot(end.fx-start.fx, end.fy-start.fy);
+    if (moved > 0.02) this._input({type:'drag', fx:start.fx, fy:start.fy, fx2:end.fx, fy2:end.fy});
+    else this._input({type:'click', fx:start.fx, fy:start.fy});
+  },
+  relayHover(ev){   // throttled hover so the page sees natural cursor motion
+    if (this._dragStart) return;
+    const now = Date.now(); if (this._lastHover && now-this._lastHover < 220) return;
+    this._lastHover = now; const f = this._frac(ev); if (f) this._input({type:'move', ...f}, true);
   },
   relayType(){ if (!this.typeText) return; this._input({type:'type', text:this.typeText}); this.typeText=''; },
   relayKey(k){ this._input({type:'key', key:k}); },

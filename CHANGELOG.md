@@ -9,6 +9,19 @@ provide the credentials, the model drives a real browser through the login,
 pauses for a one-time code if one is needed, and the captured session is saved
 so scheduled checks ride it.
 
+### Fixed
+- **Manual remote control now works reliably on every engine — including
+  Camoufox.** Clicks were landing in the wrong place (or not at all) because
+  Camoufox reports `viewport_size` decoupled from the real CSS viewport; clicks
+  are now mapped via `window.innerWidth/innerHeight`. Mouse input is human-like
+  (cursor glides to the target with real motion, a short press, and per-key
+  typing delays) — but engine-aware: Camoufox humanises input *itself* and does
+  so per `mouse.move`, so passing Playwright's `steps` made a single move take
+  20s+; on Camoufox we now issue one (already-humanised) move. Pressing *Capture
+  & finish* also drains any last queued click/keystroke first. Verified with a
+  precision harness (a 5×5 grid — every click asserted to hit the exact cell, plus
+  a typing check) across chromium, firefox, webkit and camoufox.
+
 ### Added
 - **"Open site & do it manually" button.** Launches the live-control modal
   straight into manual mode on the monitored page — no AI, no credentials needed.

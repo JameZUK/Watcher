@@ -917,8 +917,9 @@ async def ai_login_input(
         ev = await request.json()
     except Exception:
         ev = {}
-    if isinstance(ev, dict) and ev.get("type") in ("click", "dblclick", "type", "key", "scroll"):
-        if len(s._events) < 200:           # bound the queue
+    if isinstance(ev, dict) and ev.get("type") in (
+            "click", "dblclick", "move", "drag", "type", "key", "scroll"):
+        if len(s._events) < 400:           # bound the queue
             s._events.append(ev)
     return JSONResponse({"ok": True})
 

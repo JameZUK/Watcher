@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
+import random
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -78,6 +80,8 @@ class LoginSession:
     #                                      into the final capture
     _events: list = field(default_factory=list)   # queued manual input events
     _finish: bool = False         # user asked to capture the session and finish
+    _mouse: tuple = None          # last cursor position (for human-like movement)
+    _native_human: bool = False   # engine humanises input itself (Camoufox)
 
     def submit_code(self, code: str) -> None:
         self._code = (code or "").strip()
@@ -165,6 +169,7 @@ async def run_agent(
     solve_captcha_fn(target, rows, cols, png) -> cells lets the agent attempt a
     reCAPTCHA image challenge before treating it as a dead end."""
     available = [k for k, v in session.secrets.items() if v]
+    session._native_human = (engine == "camoufox")   # Camoufox humanises input itself
     history: list[str] = []
     code_pending = False
     captcha_tries = 0
@@ -197,6 +202,12 @@ async def run_agent(
 
             # Capture-and-finish can be requested at any time (incl. manual mode).
             if session._finish:
+                # Apply any input the user queued just before pressing finish, so
+                # a last click/keystroke isn't dropped.
+                drain = 0
+                while session._events and drain < 60:
+                    await _manual_step(session, page)
+                    drain += 1
                 await _finish_capture(session, ctx, persist_fn)
                 return
             # Manual remote control: while the user drives, relay their input and
@@ -903,21 +914,85 @@ async def _viewport_css(page) -> tuple[float, float]:
     return float(vs["width"]), float(vs["height"])
 
 
-async def _apply_event(page, ev: dict) -> None:
-    """Relay one user input event to the live page (manual remote control)."""
+async def _human_move(page, session, x: float, y: float) -> None:
+    """Glide the cursor to (x, y) with real motion that ends EXACTLY on target.
+
+    Camoufox humanises mouse movement ITSELF — and it does so PER mouse.move call,
+    so passing Playwright's `steps` (N intermediate moves) makes it ~1s × N (20s+!).
+    So on Camoufox we issue a single move and let it humanise; on the plain engines
+    we use Playwright's fast `steps` interpolation (+ a slight curve)."""
+    x0, y0 = session._mouse or (x, y)
+    try:
+        if session._native_human:                    # Camoufox: one humanised move
+            await page.mouse.move(x, y)
+        else:
+            dist = math.hypot(x - x0, y - y0)
+            steps = max(4, min(24, int(dist / 22)))
+            if dist > 60:                            # gentle curve toward the target
+                mx = x0 + (x - x0) * 0.55 + random.uniform(-14, 14)
+                my = y0 + (y - y0) * 0.55 + random.uniform(-14, 14)
+                await page.mouse.move(mx, my, steps=max(3, steps // 2))
+            await page.mouse.move(x, y, steps=steps)
+    except Exception:
+        pass
+    session._mouse = (x, y)
+
+
+async def _human_press(page, x: float, y: float) -> None:
+    await page.mouse.down()
+    await asyncio.sleep(random.uniform(0.05, 0.13))   # human press duration
+    await page.mouse.up()
+
+
+async def _type_human(page, text: str) -> None:
+    """Type with per-key delays (and occasional longer pauses) — not an instant dump."""
+    for ch in text[:500]:
+        try:
+            await page.keyboard.type(ch)
+        except Exception:
+            return
+        await asyncio.sleep(random.uniform(0.05, 0.16)
+                            if random.random() > 0.08 else random.uniform(0.25, 0.5))
+
+
+async def _apply_event(page, ev: dict, session) -> None:
+    """Relay one user input event to the live page (manual remote control).
+
+    Coordinates arrive as fractions (0..1) of the live screenshot, which is the
+    CSS viewport; we scale by the real innerWidth/innerHeight (page.viewport_size
+    is None under Camoufox)."""
     t = ev.get("type")
     vw, vh = await _viewport_css(page)
+
+    def px(fx, fy):
+        return (max(0.0, min(1.0, float(fx))) * vw, max(0.0, min(1.0, float(fy))) * vh)
+
     if t in ("click", "dblclick"):
-        x = max(0.0, min(1.0, float(ev.get("fx", 0)))) * vw
-        y = max(0.0, min(1.0, float(ev.get("fy", 0)))) * vh
-        await page.mouse.move(x, y)
-        await page.mouse.click(x, y, click_count=2 if t == "dblclick" else 1)
+        x, y = px(ev.get("fx", 0), ev.get("fy", 0))
+        await _human_move(page, session, x, y)
+        await _human_press(page, x, y)
+        if t == "dblclick":
+            await asyncio.sleep(random.uniform(0.06, 0.12))
+            await _human_press(page, x, y)
+    elif t == "move":
+        x, y = px(ev.get("fx", 0), ev.get("fy", 0))
+        await _human_move(page, session, x, y)
+    elif t == "drag":                                # slider captchas, etc.
+        x, y = px(ev.get("fx", 0), ev.get("fy", 0))
+        x2, y2 = px(ev.get("fx2", ev.get("fx", 0)), ev.get("fy2", ev.get("fy", 0)))
+        await _human_move(page, session, x, y)
+        await page.mouse.down()
+        await asyncio.sleep(random.uniform(0.05, 0.12))
+        await _human_move(page, session, x2, y2)
+        await asyncio.sleep(random.uniform(0.05, 0.12))
+        await page.mouse.up()
     elif t == "type":
-        await page.keyboard.type(str(ev.get("text", ""))[:500])
+        await _type_human(page, str(ev.get("text", "")))
     elif t == "key":
         k = str(ev.get("key", ""))
         if k in _ALLOWED_KEYS:
             await page.keyboard.press(k)
+            await asyncio.sleep(random.uniform(0.04, 0.1))
     elif t == "scroll":
         try:
             await page.mouse.wheel(0, float(ev.get("dy", 0)))
@@ -926,19 +1001,32 @@ async def _apply_event(page, ev: dict) -> None:
 
 
 async def _manual_step(session, page) -> None:
-    """One manual-control tick: apply queued user events, refresh the screenshot."""
-    evs, session._events = session._events[:20], session._events[20:]
+    """One manual-control tick: apply queued user events, refresh the screenshot.
+    Refresh between events too, so motion/typing shows up promptly."""
+    evs, session._events = session._events[:12], session._events[12:]
+    # collapse runs of hover 'move' events to just the latest — no point replaying
+    # a stale trail, and it keeps the queue from backing up.
+    compact = []
     for ev in evs:
+        if ev.get("type") == "move" and compact and compact[-1].get("type") == "move":
+            compact[-1] = ev
+        else:
+            compact.append(ev)
+    for ev in compact:
         try:
-            await _apply_event(page, ev)
+            await _apply_event(page, ev, session)
         except Exception:
             pass
-        await _safe_sleep(page, 60)
+        if ev.get("type") != "move":   # refresh after meaningful actions
+            try:
+                session.screenshot = await page.screenshot(full_page=False, type="png")
+            except Exception:
+                pass
     try:
         session.screenshot = await page.screenshot(full_page=False, type="png")
     except Exception:
         pass
-    await _safe_sleep(page, 280)
+    await _safe_sleep(page, 200)
 
 
 async def _finalize_success(session, ctx, persist_fn) -> bool:
