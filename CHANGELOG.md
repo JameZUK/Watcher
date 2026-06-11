@@ -10,10 +10,20 @@ pauses for a one-time code if one is needed, and the captured session is saved
 so scheduled checks ride it.
 
 ### Fixed
+- **Manual-control clicks land where you aim on Camoufox.** Camoufox's live
+  screenshot is a 1280px CROP of a wider page, but clicks were scaled by
+  `innerWidth`, pushing every click far to the right (so the reCAPTCHA checkbox
+  never got hit). Clicks are now mapped to the SCREENSHOT's CSS size (what you
+  actually see). The view also refreshes continuously (a frame is streamed at the
+  start of every tick, ~2×/sec) with a manual ⟳ refresh button, so a click's
+  result isn't "stuck" — though a stealth (Camoufox) click still takes ~1–2s to
+  show because it's humanised. Caught by a rewritten screenshot-driven precision
+  harness (reads the real screenshot, clicks a fraction of it, asserts the click
+  landed at the matching CSS pixel) — 4/4 engines.
 - **Manual remote control now works reliably on every engine — including
   Camoufox.** Clicks were landing in the wrong place (or not at all) because
-  Camoufox reports `viewport_size` decoupled from the real CSS viewport; clicks
-  are now mapped via `window.innerWidth/innerHeight`. Mouse input is human-like
+  Camoufox reports `viewport_size` decoupled from the real CSS viewport. Mouse
+  input is human-like
   (cursor glides to the target with real motion, a short press, and per-key
   typing delays) — but engine-aware: Camoufox humanises input *itself* and does
   so per `mouse.move`, so passing Playwright's `steps` made a single move take

@@ -17,6 +17,7 @@ import asyncio
 import logging
 import math
 import random
+import struct
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -914,6 +915,23 @@ async def _viewport_css(page) -> tuple[float, float]:
     return float(vs["width"]), float(vs["height"])
 
 
+async def _click_scale(page, session) -> tuple[float, float]:
+    """The CSS size that the live SCREENSHOT actually represents — clicks must map
+    to this, NOT innerWidth. Camoufox screenshots a 1280px CROP of a wider page, so
+    scaling by innerWidth would push every click far to the right. The screenshot
+    is the page top-left at 1:1 (CSS px × devicePixelRatio), so divide out the dpr."""
+    shot = session.screenshot
+    if shot and len(shot) >= 24 and shot[:8] == b"\x89PNG\r\n\x1a\n":
+        try:
+            w, h = struct.unpack(">II", shot[16:24])     # PNG IHDR width/height
+            dpr = float(await page.evaluate("() => window.devicePixelRatio || 1")) or 1.0
+            if w and h:
+                return w / dpr, h / dpr
+        except Exception:
+            pass
+    return await _viewport_css(page)
+
+
 async def _human_move(page, session, x: float, y: float) -> None:
     """Glide the cursor to (x, y) with real motion that ends EXACTLY on target.
 
@@ -958,11 +976,10 @@ async def _type_human(page, text: str) -> None:
 async def _apply_event(page, ev: dict, session) -> None:
     """Relay one user input event to the live page (manual remote control).
 
-    Coordinates arrive as fractions (0..1) of the live screenshot, which is the
-    CSS viewport; we scale by the real innerWidth/innerHeight (page.viewport_size
-    is None under Camoufox)."""
+    Coordinates arrive as fractions (0..1) of the live SCREENSHOT, so we scale by
+    the screenshot's CSS size (which can be a crop of the page under Camoufox)."""
     t = ev.get("type")
-    vw, vh = await _viewport_css(page)
+    vw, vh = await _click_scale(page, session)
 
     def px(fx, fy):
         return (max(0.0, min(1.0, float(fx))) * vw, max(0.0, min(1.0, float(fy))) * vh)
@@ -1000,9 +1017,20 @@ async def _apply_event(page, ev: dict, session) -> None:
             pass
 
 
+async def _shot(session, page) -> None:
+    try:
+        session.screenshot = await page.screenshot(full_page=False, type="png")
+    except Exception:
+        pass
+
+
 async def _manual_step(session, page) -> None:
-    """One manual-control tick: apply queued user events, refresh the screenshot.
-    Refresh between events too, so motion/typing shows up promptly."""
+    """One manual-control tick: stream a fresh frame, then apply queued input.
+
+    Screenshot FIRST so the view stays live even when the next action is slow
+    (a Camoufox humanised move blocks ~1.5s) — and so _click_scale always has a
+    current frame to map clicks against."""
+    await _shot(session, page)
     evs, session._events = session._events[:12], session._events[12:]
     # collapse runs of hover 'move' events to just the latest — no point replaying
     # a stale trail, and it keeps the queue from backing up.
@@ -1018,15 +1046,8 @@ async def _manual_step(session, page) -> None:
         except Exception:
             pass
         if ev.get("type") != "move":   # refresh after meaningful actions
-            try:
-                session.screenshot = await page.screenshot(full_page=False, type="png")
-            except Exception:
-                pass
-    try:
-        session.screenshot = await page.screenshot(full_page=False, type="png")
-    except Exception:
-        pass
-    await _safe_sleep(page, 200)
+            await _shot(session, page)
+    await _safe_sleep(page, 120)
 
 
 async def _finalize_success(session, ctx, persist_fn) -> bool:

@@ -1,10 +1,13 @@
-"""Verify manual remote control works PRECISELY across rendering engines.
+"""Verify manual remote control maps clicks CORRECTLY (screenshot-driven) on every
+rendering engine.
 
-A 5x5 grid where every cell records its own index on click (into localStorage,
-which we read back from the captured session state). We click five specific
-cells by fraction and assert the EXACT cells were hit — this catches any
-coordinate scaling/offset error a big-button test would miss. Then we focus an
-input and type, asserting the typed value landed.
+The earlier version computed click fractions the same way the backend scaled
+them, so it was self-consistent and missed a real bug: under Camoufox the live
+screenshot is a CROP of a wider page, so scaling clicks by innerWidth pushed every
+click far to the right. This version is the honest test: it reads the ACTUAL
+screenshot the user would see, clicks at a fraction OF THAT SCREENSHOT, and
+asserts the click landed at the corresponding CSS pixel (fraction × screenshot CSS
+size). It also checks typing.
 
 Run locally (chromium/firefox/camoufox) or in the project container for all four:
     docker run --rm -v "$(pwd)":/host:ro -e PYTHONPATH=/host watcher:img \
@@ -12,34 +15,26 @@ Run locally (chromium/firefox/camoufox) or in the project container for all four
 """
 import asyncio
 import json
+import struct
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import watcher.auth.ai_login as A
 
-PAGE = b"""<!doctype html><html><body style="margin:0;padding:0;font-family:sans-serif">
-<div id="grid" style="position:fixed;inset:0;display:grid;
-     grid-template-columns:repeat(5,1fr);grid-template-rows:repeat(5,1fr)"></div>
-<input id="field" autocomplete="off" style="position:fixed;bottom:0;left:0;width:100%;
-     height:8%;font-size:20px;z-index:10;box-sizing:border-box">
-<script>
-function rec(k,v){ const a=JSON.parse(localStorage.getItem(k)||'[]'); a.push(v);
-  localStorage.setItem(k, JSON.stringify(a)); }
-const g=document.getElementById('grid');
-for(let i=0;i<25;i++){ const c=document.createElement('div'); c.dataset.i=i;
-  c.style.cssText='border:1px solid #333;display:flex;align-items:center;justify-content:center;font-size:20px';
-  c.textContent=i;
-  c.addEventListener('click',e=>rec('clicks', parseInt(e.currentTarget.dataset.i)));
-  g.appendChild(c); }
-const f=document.getElementById('field');
-f.addEventListener('input',()=>localStorage.setItem('typed', f.value));
-</script></body></html>"""
+PAGE = b"""<!doctype html><html><body style="margin:0;padding:0">
+<div id="c" style="position:fixed;inset:0" onclick="
+  var a=JSON.parse(localStorage.getItem('hits')||'[]');
+  a.push(Math.round(event.clientX)+','+Math.round(event.clientY));
+  localStorage.setItem('hits',JSON.stringify(a));"></div>
+<input id="f" autocomplete="off" style="position:fixed;top:0;left:0;width:260px;height:38px;
+  z-index:10;font-size:18px;box-sizing:border-box" oninput="localStorage.setItem('typed',this.value)">
+<script>localStorage.setItem('dpr', String(window.devicePixelRatio||1));</script>
+</body></html>"""
 
-# (row, col) -> index, click at the cell centre. Rows 0..3 stay clear of the
-# bottom input strip.
-CLICKS = [(0, 0), (0, 4), (2, 2), (3, 1), (1, 3)]
-EXPECT_CLICKS = [r * 5 + c for r, c in CLICKS]
+# fractions of the SCREENSHOT to click (avoid the top-left input strip)
+FRACTIONS = [(0.2, 0.25), (0.5, 0.4), (0.78, 0.3), (0.35, 0.65), (0.6, 0.55)]
 TYPED = "abc123"
+TOL = 6  # px tolerance (human-move settles on target; allow rounding/jitter)
 
 
 def _server():
@@ -66,6 +61,10 @@ def _localstorage(state):
     return out
 
 
+def _png_dims(b):
+    return struct.unpack(">II", b[16:24])
+
+
 async def run_engine(engine):
     srv = _server()
     url = f"http://127.0.0.1:{srv.server_address[1]}/"
@@ -81,24 +80,25 @@ async def run_engine(engine):
     sess.mode = "manual"
     task = asyncio.create_task(A.run_agent(sess, stub, persist, engine=engine))
     try:
-        for _ in range(200):
+        for _ in range(250):
             if sess.screenshot is not None:
                 break
             await asyncio.sleep(0.1)
         if sess.status == "error":
             raise RuntimeError(sess.error or "launch failed")
-        # precise clicks on five grid cells
-        for r, c in CLICKS:
-            sess._events.append({"type": "click", "fx": (c + 0.5) / 5, "fy": (r + 0.5) / 5})
-            await asyncio.sleep(0.5)
-        # focus the bottom input and type
-        sess._events.append({"type": "click", "fx": 0.5, "fy": 0.96})
-        await asyncio.sleep(0.4)
+        sw_px, sh_px = _png_dims(sess.screenshot)        # the screenshot the user sees
+        captured["shot"] = (sw_px, sh_px)
+        for fx, fy in FRACTIONS:
+            sess._events.append({"type": "click", "fx": fx, "fy": fy})
+            await asyncio.sleep(0.6)
+        # focus the input (its centre on screen) and type
+        sess._events.append({"type": "click", "fx": 130 / sw_px, "fy": 19 / sh_px})
+        await asyncio.sleep(0.5)
         sess._events.append({"type": "type", "text": TYPED})
         await asyncio.sleep(1.5)
         sess._finish = True
         outcome = "timeout"
-        for _ in range(150):
+        for _ in range(200):
             if sess.status in ("done", "error"):
                 outcome = sess.status
                 break
@@ -122,15 +122,27 @@ async def run_engine(engine):
         srv.shutdown()
 
     ls = _localstorage(captured.get("state") or {})
-    clicks = json.loads(ls.get("clicks", "[]"))
+    dpr = float(ls.get("dpr", "1") or 1)
+    sw_px, sh_px = captured["shot"]
+    sw_css, sh_css = sw_px / dpr, sh_px / dpr
+    hits = [tuple(map(int, s.split(","))) for s in json.loads(ls.get("hits", "[]"))]
     typed = ls.get("typed")
-    clicks_ok = clicks == EXPECT_CLICKS
+
+    detail = []
+    clicks_ok = len(hits) == len(FRACTIONS)
+    for (fx, fy), hit in zip(FRACTIONS, hits):
+        ex, ey = fx * sw_css, fy * sh_css
+        dx, dy = abs(hit[0] - ex), abs(hit[1] - ey)
+        ok = dx <= TOL and dy <= TOL
+        clicks_ok = clicks_ok and ok
+        detail.append(f"f({fx},{fy})->want({ex:.0f},{ey:.0f}) got{hit} d=({dx:.0f},{dy:.0f}){'' if ok else ' X'}")
     type_ok = typed == TYPED
     ok = outcome == "done" and clicks_ok and type_ok
     print(f"[{'PASS' if ok else 'FAIL'}] engine={engine}: outcome={outcome} "
-          f"clicks={clicks} (want {EXPECT_CLICKS}) typed={typed!r}")
+          f"shot={sw_px}x{sh_px} dpr={dpr} clicks_ok={clicks_ok} typed={typed!r}")
     if not ok:
-        print(f"        clicks_ok={clicks_ok} type_ok={type_ok}")
+        for d in detail:
+            print("        ", d)
         for l in sess.log:
             print("        -", l)
     return ok
@@ -143,14 +155,14 @@ async def main():
             r = await run_engine(e)
         except Exception as exc:
             r = ("launch", f"{type(exc).__name__}: {exc}")
-        if isinstance(r, tuple):   # launch failure / not installed
+        if isinstance(r, tuple):
             print(f"[SKIP] engine={e}: not runnable here ({r[1]})")
             results[e] = "skip"
         else:
             results[e] = r
     passed = sum(1 for v in results.values() if v is True)
     skipped = sum(1 for v in results.values() if v == "skip")
-    tested = len(results) - skipped
-    print(f"\n{passed}/{tested} usable engine(s) passed precisely ({skipped} skipped)")
+    print(f"\n{passed}/{len(results) - skipped} usable engine(s) mapped clicks correctly "
+          f"({skipped} skipped)")
 
 asyncio.run(main())

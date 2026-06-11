@@ -278,7 +278,9 @@
                   <button type="button" @click="relayKey('Backspace')" class="btn btn-ghost !py-1 text-xs">⌫</button>
                   <button type="button" @click="relayScroll(-400)" class="btn btn-ghost !py-1 text-xs">▲ scroll</button>
                   <button type="button" @click="relayScroll(400)" class="btn btn-ghost !py-1 text-xs">▼ scroll</button>
+                  <button type="button" @click="_refreshShot()" class="btn btn-ghost !py-1 text-xs ml-auto">⟳ refresh</button>
                 </div>
+                <p class="text-[11px] text-amber-200/70">The view refreshes ~2×/sec; a click can take ~1–2s to show on stealth (Camoufox) renders.</p>
               </div>
 
               <!-- Capture summary (shown once a session is saved) -->
@@ -634,9 +636,9 @@ function aiLogin(mid){return {
     try { await fetch(`/monitors/${this.mid}/ai-login/input?sid=${this.sid}`,
       {method:'POST', headers:{'Content-Type':'application/json','X-Requested-With':'fetch'}, body:JSON.stringify(ev)}); } catch(e){}
     if (quiet) return;   // hover moves don't need an extra refresh; the poll handles it
-    // refresh a couple of times so animations (e.g. a captcha tick) show up
-    setTimeout(() => this._refreshShot(), 350);
-    setTimeout(() => this._refreshShot(), 900);
+    // Camoufox humanises a click over ~1.5s, during which the frame is frozen —
+    // refresh across that window so the result (e.g. a captcha tick) shows up.
+    [300, 700, 1300, 2000].forEach(ms => setTimeout(() => this._refreshShot(), ms));
   },
   _frac(ev){ const r = ev.currentTarget.getBoundingClientRect();
     if (!r.width || !r.height) return null;
