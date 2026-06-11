@@ -739,3 +739,48 @@ def test_cookie_viewer_and_editor():
         return True
 
     assert _run(_t)
+
+
+def test_manual_login_start_needs_no_creds_or_ai():
+    """The 'Open site & do it manually' button starts a manual session without
+    credentials or an AI key (the AI-driven start still requires them)."""
+    async def _t():
+        from watcher.config import settings
+        from watcher.main import create_app
+        from watcher.models import Monitor, User
+        from watcher.auth import ai_login
+        settings.registration_open = True
+        email = _email()
+        transport = httpx.ASGITransport(app=create_app())
+
+        captured = {}
+        async def _fake_run(sess, *a, **k):
+            captured["mode"] = sess.mode
+            captured["url"] = sess.url
+        orig = ai_login.run_agent
+        ai_login.run_agent = _fake_run
+        try:
+            async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                         headers={"Origin": "http://t"}, follow_redirects=True) as c:
+                await c.post("/register", data={"email": email, "password": "password123"})
+                await c.post("/monitors", data={
+                    "url": "https://example.com/page", "engine": "chromium", "detection_mode": "auto",
+                    "interval_minutes": "60", "wait_until": "load", "notify_channels": "inbox", "name": "M"})
+                async with SessionLocal() as s:
+                    u = (await s.execute(select(User).where(User.email == email))).scalar_one()
+                    mid = (await s.execute(select(Monitor.id).where(Monitor.user_id == u.id))).scalars().first()
+
+                # manual=1 → ok even with no AI key and no credentials
+                r = await c.post(f"/monitors/{mid}/ai-login/start", data={"manual": "1"})
+                assert r.status_code == 200 and r.json().get("ok"), r.text
+                assert captured["mode"] == "manual"
+                assert captured["url"] == "https://example.com/page"   # the monitored URL
+
+                # the AI-driven start (no manual) still requires creds/AI
+                r = await c.post(f"/monitors/{mid}/ai-login/start", data={})
+                assert r.status_code == 400 and not r.json().get("ok")
+        finally:
+            ai_login.run_agent = orig
+        return True
+
+    assert _run(_t)

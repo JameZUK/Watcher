@@ -766,31 +766,47 @@ async def ai_login_start(
     monitor = await _owned_monitor(session, user, monitor_id)
     app = await get_app_settings(session)
     key = get_openrouter_key(app)
-    if not (app.ai_enabled and key):
-        return JSONResponse({"ok": False, "error": "AI isn’t configured — an admin must set an OpenRouter key in Settings."}, status_code=400)
 
     form = await request.form()
-    login_url = (form.get("login_url") or "").strip() or monitor.url
-    if url_err := validate_monitor_url(login_url):
-        return JSONResponse({"ok": False, "error": url_err}, status_code=400)
-    username = (form.get("login_username") or "").strip()
-    password = form.get("login_password") or ""
-    # Fall back to stored credentials if the form leaves them blank.
-    if monitor.login_flow and (not username or not password):
-        stored = resolve_secrets(monitor.login_flow)
-        username = username or stored.get("username", "")
-        password = password or stored.get("password", "")
-    if not username or not password:
-        return JSONResponse({"ok": False, "error": "Enter the login URL, username and password."}, status_code=400)
+    # Pure manual mode: open the monitored site and let the user drive it — no AI,
+    # no credentials needed. (Reuses the whole live-control machinery.)
+    manual = _bool(form, "manual")
 
-    sess = ai_login.create_session(monitor.id, user.id, login_url,
+    if manual:
+        target_url = monitor.url
+        username = password = ""
+        if monitor.login_flow:    # keep stored creds for the re-login convenience
+            stored = resolve_secrets(monitor.login_flow)
+            username, password = stored.get("username", ""), stored.get("password", "")
+    else:
+        if not (app.ai_enabled and key):
+            return JSONResponse({"ok": False, "error": "AI isn’t configured — an admin must set an OpenRouter key in Settings."}, status_code=400)
+        target_url = (form.get("login_url") or "").strip() or monitor.url
+        username = (form.get("login_username") or "").strip()
+        password = form.get("login_password") or ""
+        if monitor.login_flow and (not username or not password):
+            stored = resolve_secrets(monitor.login_flow)
+            username = username or stored.get("username", "")
+            password = password or stored.get("password", "")
+        if not username or not password:
+            return JSONResponse({"ok": False, "error": "Enter the login URL, username and password."}, status_code=400)
+
+    if url_err := validate_monitor_url(target_url):
+        return JSONResponse({"ok": False, "error": url_err}, status_code=400)
+
+    sess = ai_login.create_session(monitor.id, user.id, target_url,
                                    {"username": username, "password": password})
+    if manual:
+        sess.mode = "manual"
+        sess.prompt = "Manual control — drive the page, then ‘Capture session & finish’."
     model, base = app.ai_model, app.ai_base_url
     engine = monitor.engine.value
     proxy = monitor.proxy
     creds = {"username": username, "password": password}
 
     async def action_fn(**kw):
+        if not key:
+            return {"action": "fail", "index": -1, "reason": "manual mode"}
         return await ai_login_action(api_key=key, model=model, base_url=base, **kw)
 
     async def solve_captcha_fn(target, rows, cols, png):
@@ -817,7 +833,8 @@ async def ai_login_start(
     import asyncio
     sess._task = asyncio.create_task(ai_login.run_agent(
         sess, action_fn, persist_fn, engine=engine, proxy=proxy,
-        wait_until=monitor.wait_until, solve_captcha_fn=solve_captcha_fn))
+        wait_until=monitor.wait_until,
+        solve_captcha_fn=None if manual else solve_captcha_fn))
     return JSONResponse({"ok": True, "sid": sess.id})
 
 

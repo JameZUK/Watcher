@@ -10,6 +10,11 @@ pauses for a one-time code if one is needed, and the captured session is saved
 so scheduled checks ride it.
 
 ### Added
+- **"Open site & do it manually" button.** Launches the live-control modal
+  straight into manual mode on the monitored page — no AI, no credentials needed.
+  Drive the site yourself (solve a captcha, log in), then *Capture session &
+  finish*. Reuses the same session machinery and endpoints as the AI login;
+  verified on chromium, firefox and camoufox (webkit uses the identical path).
 - **Stored-cookie viewer & editor.** The Session cookies section now lists the
   cookies actually stored for a monitor — name, domain, and scope (session vs an
   expiry date) — with a *Reveal & edit values* toggle (values are fetched only on
