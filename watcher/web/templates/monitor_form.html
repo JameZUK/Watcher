@@ -250,27 +250,46 @@
           (e.g. DataDome / Cloudflare) or reuse a logged-in session. Successful checks roll the cookies
           forward automatically, so the session keeps itself fresh.
         </p>
-        {% if sess and sess.cookies %}
-        <p class="text-xs text-slate-400">
-          {{ sess.cookies|length }} cookie(s) stored{% if m.login_flow.session_valid_until %} ·
-          trusted until {{ m.login_flow.session_valid_until.strftime('%Y-%m-%d %H:%M UTC') }}{% endif %}.
-          Paste below to replace them.
+        <p class="text-xs text-slate-500 leading-relaxed">
+          <span class="text-slate-400 font-medium">Multiple domains &amp; multiple exports:</span> you can paste
+          <span class="text-slate-400">several JSON blocks at once</span> — just drop one export after another in the box
+          (e.g. one for <code class="text-slate-400">glassdoor.co.uk</code> and one for <code class="text-slate-400">indeed.com</code>,
+          which handles Glassdoor's federated sign-in). Tick <span class="text-slate-400">“all domains”</span> below to keep
+          cookies from every domain in the paste. By default a new paste is <span class="text-slate-400">merged into</span> what's
+          already stored (de-duped by name+domain), so you can <span class="text-slate-400">add to</span> the set without
+          re-pasting everything — use the options below to replace or clear instead.
         </p>
+        {% if sess and sess.cookies %}
+        <div class="rounded-xl border border-white/10 bg-white/5 p-3 space-y-1.5">
+          <p class="text-xs text-slate-300 font-medium">{{ sess.cookies|length }} cookie(s) stored{% if m.login_flow.session_valid_until %} ·
+            trusted until {{ m.login_flow.session_valid_until.strftime('%Y-%m-%d %H:%M UTC') }}{% endif %}</p>
+          <div class="flex flex-wrap gap-1.5">
+            {% for domain, items in sess.cookies|groupby('domain') %}
+            <span class="pill text-xs">{{ domain }} <span class="text-slate-500">· {{ items|list|length }}</span></span>
+            {% endfor %}
+          </div>
+        </div>
         {% endif %}
         <textarea name="session_cookies_json" rows="5"
-                  placeholder='[{"name":"datadome","value":"…","domain":".example.com","path":"/","secure":true}]'
+                  placeholder='Paste one or more Cookie Editor exports, e.g.&#10;[ {"name":"gdId","value":"…","domain":".glassdoor.co.uk","path":"/"} ]&#10;[ {"name":"PPID","value":"…","domain":".indeed.com","path":"/"} ]'
                   class="field font-mono text-xs">{{ cookies_json or '' }}</textarea>
         <label class="flex items-start gap-2.5 text-sm text-slate-300">
           <input type="checkbox" name="session_cookies_all_domains" class="mt-0.5 rounded bg-white/10 border-white/20 text-brand-500">
           <span>Keep cookies for <span class="font-medium">all domains</span> in the paste
-            <span class="block text-xs text-slate-500">For federated / SSO logins — e.g. Glassdoor signs in via indeed.com, so paste both sites' cookies together and tick this. Otherwise cookies are limited to this monitor's domain.</span>
+            <span class="block text-xs text-slate-500">For federated / SSO logins — e.g. Glassdoor signs in via indeed.com. Otherwise cookies are limited to this monitor's domain.</span>
           </span>
         </label>
         {% if sess and sess.cookies %}
-        <label class="flex items-center gap-2.5 text-sm text-slate-300">
-          <input type="checkbox" name="session_cookies_clear" class="rounded bg-white/10 border-white/20 text-brand-500">
-          Clear the stored cookies for this monitor
-        </label>
+        <div class="flex flex-wrap gap-x-5 gap-y-2 pt-1">
+          <label class="flex items-center gap-2.5 text-sm text-slate-300">
+            <input type="checkbox" name="session_cookies_replace" class="rounded bg-white/10 border-white/20 text-brand-500">
+            Replace stored cookies <span class="text-xs text-slate-500">(instead of merging the paste in)</span>
+          </label>
+          <label class="flex items-center gap-2.5 text-sm text-red-300">
+            <input type="checkbox" name="session_cookies_clear" class="rounded bg-white/10 border-white/20 text-red-500">
+            Clear all stored cookies
+          </label>
+        </div>
         {% endif %}
       </div>
     </section>

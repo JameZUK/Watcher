@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...ai import configure_monitor, suggest_watch_items, summarize_history
 from ...app_settings import get_app_settings, get_openrouter_key
-from ...auth.login_flows import build_secret_map, cookie_editor_to_storage_state
+from ...auth.login_flows import build_secret_map, cookie_editor_to_storage_state, merge_storage_state
 from ...auth.users import get_current_user
 from ...config import settings
 from ...db import get_session
@@ -228,6 +228,7 @@ def _build_login_flow(monitor: Monitor, form) -> LoginFlow | None:
         allowed_host=None if _all_domains else urlparse(monitor.url or "").hostname,
     )
     clear_session = _bool(form, "session_cookies_clear")
+    replace_session = _bool(form, "session_cookies_replace")
 
     flow = monitor.login_flow or LoginFlow(monitor_id=monitor.id)
 
@@ -244,9 +245,14 @@ def _build_login_flow(monitor: Monitor, form) -> LoginFlow | None:
     else:
         flow.encrypted_secrets = {}
 
-    # Session cookies take precedence and are applied last.
+    # Session cookies, applied last. A fresh paste MERGES into the stored set by
+    # default (so you can add an auth domain without re-pasting everything);
+    # "replace" overrides, "clear" wipes.
     if cookies is not None:
-        flow.session_state = cookies
+        if replace_session or not flow.session_state:
+            flow.session_state = cookies
+        else:
+            flow.session_state = merge_storage_state(flow.session_state, cookies)
         flow.session_valid_until = utcnow() + COOKIE_SESSION_TTL
     if clear_session:
         flow.session_state = None

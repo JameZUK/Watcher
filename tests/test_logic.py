@@ -52,6 +52,31 @@ def test_cookie_editor_cross_domain_scope():
     assert {c["name"] for c in alld["cookies"]} == {"gdId", "PPID"}    # both kept
 
 
+def test_cookie_editor_multiple_blocks():
+    """Several JSON exports pasted in one box (any separator) all parse."""
+    from watcher.auth.login_flows import cookie_editor_to_storage_state
+    two = ('[{"name":"gdId","value":"g","domain":".glassdoor.co.uk"}]\n'
+           '[{"name":"PPID","value":"i","domain":".indeed.com"}]')
+    ss = cookie_editor_to_storage_state(two, allowed_host=None)
+    assert {c["name"] for c in ss["cookies"]} == {"gdId", "PPID"}
+    # comma-separated and a bare single object also work
+    assert len(cookie_editor_to_storage_state(
+        '[{"name":"a","value":"1","domain":".x.com"}],'
+        '{"name":"b","value":"2","domain":".x.com"}', allowed_host=None)["cookies"]) == 2
+
+
+def test_merge_storage_state():
+    from watcher.auth.login_flows import merge_storage_state
+    existing = {"cookies": [{"name": "gdId", "value": "old", "domain": ".glassdoor.co.uk", "path": "/"},
+                            {"name": "keep", "value": "k", "domain": ".glassdoor.co.uk", "path": "/"}], "origins": []}
+    new = {"cookies": [{"name": "gdId", "value": "new", "domain": ".glassdoor.co.uk", "path": "/"},
+                       {"name": "PPID", "value": "i", "domain": ".indeed.com", "path": "/"}], "origins": []}
+    merged = merge_storage_state(existing, new)
+    by = {c["name"]: c["value"] for c in merged["cookies"]}
+    assert by == {"gdId": "new", "keep": "k", "PPID": "i"}     # added + updated, none lost
+    assert merge_storage_state(None, None) is None
+
+
 def test_cookie_domain_scoping():
     from watcher.auth.login_flows import cookie_editor_to_storage_state as conv
     raw = ('[{"name":"a","value":"1","domain":".jbl.com"},'

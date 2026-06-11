@@ -41,10 +41,52 @@ def _domain_allowed(cookie_domain: str, host: str | None) -> bool:
     return bool(d) and (h == d or h.endswith("." + d))
 
 
+def _parse_json_blocks(raw: str) -> list:
+    """Parse one OR MORE concatenated top-level JSON values from `raw`, so a user
+    can paste several Cookie Editor exports (e.g. one per domain) in the same box.
+    Blocks may be separated by whitespace, commas, or semicolons."""
+    dec = json.JSONDecoder()
+    s = raw.strip()
+    out, i, n = [], 0, len(s)
+    while i < n:
+        while i < n and s[i] in " \t\r\n,;":   # skip separators between blocks
+            i += 1
+        if i >= n:
+            break
+        try:
+            val, end = dec.raw_decode(s, i)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"That isn't valid JSON ({exc.msg} at line {exc.lineno}).") from exc
+        out.append(val)
+        i = end
+    if not out:
+        raise ValueError("That isn't valid JSON.")
+    return out
+
+
+def merge_storage_state(existing: dict | None, new: dict | None) -> dict | None:
+    """Merge two storage_state dicts — cookies de-duped by (name, domain, path)
+    with `new` winning, origins de-duped by URL. Either side may be None. So a
+    fresh paste ADDS to / updates the stored set instead of replacing it."""
+    def cks(s): return list((s or {}).get("cookies") or [])
+    def ors(s): return list((s or {}).get("origins") or [])
+    by_key = {}
+    for c in [*cks(existing), *cks(new)]:          # new last → overwrites
+        by_key[(c.get("name"), c.get("domain"), c.get("path", "/"))] = c
+    by_origin = {}
+    for o in [*ors(existing), *ors(new)]:
+        by_origin[o.get("origin")] = o
+    cookies, origins = list(by_key.values())[:200], list(by_origin.values())[:50]
+    if not cookies and not origins:
+        return None
+    return {"cookies": cookies, "origins": origins}
+
+
 def cookie_editor_to_storage_state(raw: str, allowed_host: str | None = None) -> dict | None:
     """Convert a Cookie Editor (cookie-editor.com) JSON export — a bare cookie
     array — or an existing Playwright storage_state into a Playwright
-    storage_state dict ({"cookies": [...], "origins": [...]}).
+    storage_state dict ({"cookies": [...], "origins": [...]}). Accepts SEVERAL
+    JSON blocks pasted together (e.g. cookies from two domains).
 
     Returns None if the input holds no usable cookies. Raises ValueError on
     malformed JSON or an unexpected shape, so callers can surface a clear error.
@@ -52,17 +94,18 @@ def cookie_editor_to_storage_state(raw: str, allowed_host: str | None = None) ->
     raw = (raw or "").strip()
     if not raw:
         return None
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"That isn't valid JSON ({exc.msg} at line {exc.lineno}).") from exc
-
-    if isinstance(data, dict) and "cookies" in data:
-        items, origins = data.get("cookies") or [], data.get("origins") or []
-    elif isinstance(data, list):
-        items, origins = data, []
-    else:
-        raise ValueError("Expected a cookie array (Cookie Editor export) or a storage_state object.")
+    items: list = []
+    origins: list = []
+    for data in _parse_json_blocks(raw):
+        if isinstance(data, dict) and "cookies" in data:
+            items += data.get("cookies") or []
+            origins += data.get("origins") or []
+        elif isinstance(data, list):
+            items += data
+        elif isinstance(data, dict) and data.get("name") and data.get("domain"):
+            items.append(data)          # a single bare cookie object
+        else:
+            raise ValueError("Expected a cookie array (Cookie Editor export) or a storage_state object.")
 
     cookies: list[dict] = []
     for c in items:
