@@ -675,3 +675,67 @@ def test_group_hide_members_from_dashboard():
         return True
 
     assert _run(_t)
+
+
+def test_cookie_viewer_and_editor():
+    """GET lists stored cookies (values hidden unless ?values=1); POST applies
+    edits/deletes; clearing all drops the session."""
+    async def _t():
+        from watcher.config import settings
+        from watcher.main import create_app
+        from watcher.models import LoginFlow, Monitor, User
+        settings.registration_open = True
+        email = _email()
+        transport = httpx.ASGITransport(app=create_app())
+        async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                     headers={"Origin": "http://t"}, follow_redirects=True) as c:
+            await c.post("/register", data={"email": email, "password": "password123"})
+            await c.post("/monitors", data={
+                "url": "https://glassdoor.com", "engine": "camoufox", "detection_mode": "auto",
+                "interval_minutes": "60", "wait_until": "load", "notify_channels": "inbox", "name": "GD"})
+            async with SessionLocal() as s:
+                u = (await s.execute(select(User).where(User.email == email))).scalar_one()
+                mid = (await s.execute(select(Monitor.id).where(Monitor.user_id == u.id))).scalars().first()
+                s.add(LoginFlow(monitor_id=mid, session_state={"cookies": [
+                    {"name": "sess", "value": "SECRET", "domain": ".glassdoor.com", "path": "/", "expires": 1900000000},
+                    {"name": "gdId", "value": "ID", "domain": ".glassdoor.com", "path": "/", "expires": -1},
+                    {"name": "PPID", "value": "PP", "domain": ".indeed.com", "path": "/"},
+                ], "origins": []}))
+                await s.commit()
+
+            # GET without values: rows present, no secret leaked
+            r = await c.get(f"/monitors/{mid}/cookies")
+            assert r.status_code == 200
+            d = r.json()
+            assert d["ok"] and len(d["cookies"]) == 3 and d["summary"]["count"] == 3
+            assert "SECRET" not in r.text
+            # GET with values: secrets included
+            r = await c.get(f"/monitors/{mid}/cookies?values=1")
+            assert any(c["value"] == "SECRET" for c in r.json()["cookies"])
+
+            # POST: delete PPID, change sess value
+            r = await c.post(f"/monitors/{mid}/cookies", json={"cookies": [
+                {"name": "sess", "domain": ".glassdoor.com", "path": "/", "value": "CHANGED"},
+                {"name": "gdId", "domain": ".glassdoor.com", "path": "/"},
+            ]})
+            assert r.status_code == 200 and r.json()["summary"]["count"] == 2
+            async with SessionLocal() as s:
+                m = (await s.execute(select(Monitor).where(Monitor.id == mid)
+                     .options(selectinload(Monitor.login_flow)))).scalar_one()
+                cks = {c["name"]: c for c in m.login_flow.session_state["cookies"]}
+                assert set(cks) == {"sess", "gdId"} and cks["sess"]["value"] == "CHANGED"
+
+            # POST empty → session cleared
+            r = await c.post(f"/monitors/{mid}/cookies", json={"cookies": []})
+            assert r.status_code == 200
+            async with SessionLocal() as s:
+                m = (await s.execute(select(Monitor).where(Monitor.id == mid)
+                     .options(selectinload(Monitor.login_flow)))).scalar_one()
+                assert m.login_flow.session_state is None
+
+            # editor renders on the form page
+            r = await c.get(f"/monitors/{mid}")
+            assert r.status_code == 200
+        return True
+
+    assert _run(_t)

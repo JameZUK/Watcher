@@ -10,6 +10,17 @@ pauses for a one-time code if one is needed, and the captured session is saved
 so scheduled checks ride it.
 
 ### Added
+- **Stored-cookie viewer & editor.** The Session cookies section now lists the
+  cookies actually stored for a monitor — name, domain, and scope (session vs an
+  expiry date) — with a *Reveal & edit values* toggle (values are fetched only on
+  request, never embedded in the page). Delete individual cookies with ✕, edit a
+  value inline, and Save (replaces the stored set; pasting still merges). New
+  `GET/POST /monitors/{id}/cookies` endpoints + `cookie_rows` / `cookie_summary` /
+  `apply_cookie_edits` helpers.
+- **Capture summary after AI login.** When a login finishes, the modal shows a
+  per-domain breakdown of exactly which cookies were captured (count + names per
+  domain), and stays open so you can read it (Done closes + refreshes). The
+  status endpoint returns a `captured` summary.
 - **Manual remote control + AI handoff.** When the agent can't finish (captcha,
   bot wall, OTP not entered, rejected login) it no longer hard-fails — it hands
   control to you: the modal's live view becomes interactive (click and type

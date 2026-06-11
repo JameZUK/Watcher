@@ -272,6 +272,16 @@
                 </div>
               </div>
 
+              <!-- Capture summary (shown once a session is saved) -->
+              <div x-show="captured && captured.count" x-cloak class="rounded-lg bg-emerald-500/[.08] border border-emerald-500/30 p-3 space-y-1.5">
+                <p class="text-sm text-emerald-200"><b x-text="captured ? captured.count : 0"></b> cookies captured:</p>
+                <template x-for="d in (captured ? captured.domains : [])" :key="d.domain">
+                  <div class="text-xs">
+                    <span class="text-slate-300 font-mono" x-text="d.domain"></span>
+                    <span class="text-slate-500" x-text="' — ' + d.names.join(', ')"></span>
+                  </div>
+                </template>
+              </div>
               <ul class="text-xs text-slate-500 space-y-0.5 max-h-24 overflow-y-auto">
                 <template x-for="(l, i) in log" :key="i"><li x-text="l"></li></template>
               </ul>
@@ -288,6 +298,9 @@
                 <button type="button" x-show="!manual" @click="setMode('manual')" class="btn btn-ghost text-sm">Take over manually</button>
                 <button type="button" x-show="manual" @click="setMode('ai')" class="btn btn-ghost text-sm">Let AI continue</button>
                 <button type="button" @click="finish()" class="btn btn-primary text-sm ml-auto">Capture session &amp; finish</button>
+              </div>
+              <div x-show="done" x-cloak class="flex justify-end pt-1">
+                <button type="button" @click="close()" class="btn btn-primary text-sm">Done</button>
               </div>
             </div>
           </div>
@@ -337,15 +350,48 @@
           already stored (de-duped by name+domain), so you can <span class="text-slate-400">add to</span> the set without
           re-pasting everything — use the options below to replace or clear instead.
         </p>
-        {% if sess and sess.cookies %}
-        <div class="rounded-xl border border-white/10 bg-white/5 p-3 space-y-1.5">
-          <p class="text-xs text-slate-300 font-medium">{{ sess.cookies|length }} cookie(s) stored{% if m.login_flow.session_valid_until %} ·
-            trusted until {{ m.login_flow.session_valid_until.strftime('%Y-%m-%d %H:%M UTC') }}{% endif %}</p>
-          <div class="flex flex-wrap gap-1.5">
-            {% for domain, items in sess.cookies|groupby('domain') %}
-            <span class="pill text-xs">{{ domain }} <span class="text-slate-500">· {{ items|list|length }}</span></span>
-            {% endfor %}
+        {% if m and sess and sess.cookies %}
+        <!-- Stored-cookie viewer / editor -->
+        <div class="rounded-xl border border-white/10 bg-white/5 p-3 space-y-2.5" x-data="cookieEditor({{ m.id }})" x-init="load()">
+          <div class="flex items-center justify-between gap-2">
+            <p class="text-xs text-slate-300 font-medium">
+              <span x-text="rows.length"></span> cookie(s) stored{% if m.login_flow.session_valid_until %} ·
+              <span class="text-slate-500">trusted until {{ m.login_flow.session_valid_until.strftime('%Y-%m-%d %H:%M UTC') }}</span>{% endif %}
+            </p>
+            <button type="button" @click="load(true)" x-show="!revealed" class="text-xs text-brand-400 hover:underline">Reveal &amp; edit values</button>
           </div>
+          <div class="max-h-64 overflow-y-auto rounded-lg border border-white/5">
+            <table class="w-full text-xs">
+              <thead class="text-slate-500 bg-white/5">
+                <tr><th class="text-left font-medium px-2 py-1.5">Name</th>
+                    <th class="text-left font-medium px-2 py-1.5">Domain</th>
+                    <th class="text-left font-medium px-2 py-1.5">Scope</th>
+                    <th class="text-left font-medium px-2 py-1.5" x-show="revealed">Value</th>
+                    <th class="px-2 py-1.5"></th></tr>
+              </thead>
+              <tbody>
+                <template x-for="(c, i) in rows" :key="i">
+                  <tr class="border-t border-white/5 align-top">
+                    <td class="px-2 py-1.5 font-mono text-slate-300 break-all" x-text="c.name"></td>
+                    <td class="px-2 py-1.5 text-slate-400 break-all" x-text="c.domain"></td>
+                    <td class="px-2 py-1.5 whitespace-nowrap" :class="c.session ? 'text-amber-300' : 'text-slate-500'" x-text="scope(c)"></td>
+                    <td class="px-2 py-1.5" x-show="revealed">
+                      <input x-model="c.value" @input="dirty=true" class="field !py-1 !text-xs font-mono w-40 sm:w-56">
+                    </td>
+                    <td class="px-2 py-1.5 text-right">
+                      <button type="button" @click="del(i)" class="text-red-400/80 hover:text-red-300" title="Delete cookie">✕</button>
+                    </td>
+                  </tr>
+                </template>
+                <tr x-show="!rows.length"><td colspan="5" class="px-2 py-3 text-center text-slate-500">No cookies.</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="flex items-center gap-3" x-show="dirty || msg">
+            <button type="button" @click="save()" :disabled="saving" class="btn btn-primary !py-1.5 text-xs" x-text="saving ? 'Saving…' : 'Save cookie changes'"></button>
+            <span class="text-xs" :class="msg.startsWith('Saved') ? 'text-emerald-300' : 'text-red-300'" x-text="msg"></span>
+          </div>
+          <p class="text-[11px] text-slate-500">Delete a row with ✕, edit a value after revealing, then Save. Saving here replaces the stored set; pasting below merges in.</p>
         </div>
         {% endif %}
         <textarea name="session_cookies_json" rows="5"
@@ -525,15 +571,43 @@ function aiSection(opts){return {
   },
 }}
 
+// Stored-cookie viewer / editor: list cookies, reveal+edit values, delete rows.
+function cookieEditor(mid){return {
+  mid, rows:[], revealed:false, saving:false, dirty:false, msg:'',
+  async load(reveal){
+    try {
+      const r = await (await fetch(`/monitors/${this.mid}/cookies${reveal ? '?values=1' : ''}`)).json();
+      if (r.ok){ this.rows = (r.cookies || []).map(c => ({...c})); if (reveal) this.revealed = true; }
+    } catch(e){}
+  },
+  scope(c){
+    if (c.session || !c.expires || c.expires < 0) return 'session';
+    try { return new Date(c.expires*1000).toISOString().slice(0,16).replace('T',' '); }
+    catch(e){ return 'persistent'; }
+  },
+  del(i){ this.rows.splice(i, 1); this.dirty = true; },
+  async save(){
+    this.saving = true; this.msg = '';
+    try {
+      const r = await (await fetch(`/monitors/${this.mid}/cookies`, {method:'POST',
+        headers:{'Content-Type':'application/json','X-Requested-With':'fetch'},
+        body: JSON.stringify({cookies: this.rows})})).json();
+      if (r.ok){ this.msg = 'Saved.'; this.dirty = false; setTimeout(() => location.reload(), 700); }
+      else { this.msg = r.error || 'Save failed.'; }
+    } catch(e){ this.msg = 'Save failed.'; }
+    this.saving = false;
+  },
+}}
+
 // Interactive AI login: kick off the agent, poll its status, show the live page,
 // prompt for a one-time code, and reload once the session is saved.
 function aiLogin(mid){return {
   mid, open:false, running:false, done:false, errored:false, needCode:false, manual:false,
-  sid:null, status:'', prompt:'', log:[], code:'', typeText:'', hasShot:false, shotUrl:'', _poll:null,
+  sid:null, status:'', prompt:'', log:[], code:'', typeText:'', hasShot:false, shotUrl:'', captured:null, _poll:null,
   _field(n){ const el = document.querySelector(`[name="${n}"]`); return el ? el.value : ''; },
   get statusLine(){
     if (this.errored) return this.status || 'Login failed.';
-    if (this.done)    return 'Logged in — session saved. Reloading…';
+    if (this.done)    return 'Logged in — session saved.';
     if (this.needCode) return 'Waiting for your one-time code…';
     if (this.manual)  return this.prompt || 'Manual control — drive the page, then Capture session.';
     if (this.status === 'running') return 'Working through the login…';
@@ -587,13 +661,13 @@ function aiLogin(mid){return {
     catch(e){ return; }
     if (!s.ok) return this._fail(s.error || 'This login session expired.');
     this.status = s.status; this.prompt = s.prompt; this.log = s.log || [];
+    this.captured = s.captured || null;
     this.needCode = s.status === 'need_code';
     const wasManual = this.manual;
     this.manual = (s.mode === 'manual');
     if (this.manual !== wasManual) this._restartPoll();
     if (s.has_shot){ this.hasShot = true; this._refreshShot(); }
-    if (s.status === 'done'){ this.done = true; this.running = false; this.manual = false; clearInterval(this._poll);
-      setTimeout(() => location.reload(), 1500); }
+    if (s.status === 'done'){ this.done = true; this.running = false; this.manual = false; clearInterval(this._poll); }
     else if (s.status === 'error'){ this._fail(s.error || 'Login failed.'); }
   },
   async sendCode(){
@@ -606,7 +680,8 @@ function aiLogin(mid){return {
     if (this._poll) clearInterval(this._poll); },
   _reset(){ this.done = this.errored = this.needCode = this.manual = false; this.log = []; this.hasShot = false;
     this.status = ''; this.prompt = ''; this.code = ''; this.typeText = ''; },
-  close(){ if (this._poll) clearInterval(this._poll); this.open = false; this.running = false; },
+  close(){ if (this._poll) clearInterval(this._poll); this.open = false; this.running = false;
+    if (this.done) location.reload(); },   // refresh the form to show the new session
 }}
 </script>
 {% endblock %}

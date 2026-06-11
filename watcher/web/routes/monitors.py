@@ -18,8 +18,11 @@ from ...ai import (ai_login_action, configure_monitor, solve_captcha_grid,
 from ...app_settings import get_app_settings, get_openrouter_key
 from ...auth import ai_login
 from ...auth.login_flows import (
+    apply_cookie_edits,
     build_secret_map,
     cookie_editor_to_storage_state,
+    cookie_rows,
+    cookie_summary,
     mark_session,
     merge_storage_state,
     resolve_secrets,
@@ -827,9 +830,10 @@ async def ai_login_status(
     s = ai_login.get_session(sid, user.id)
     if not s or s.monitor_id != monitor_id:
         return JSONResponse({"ok": False, "error": "This login session has expired — start again."}, status_code=404)
+    captured = cookie_summary(s.result_state) if s.result_state else None
     return JSONResponse({"ok": True, "status": s.status, "prompt": s.prompt,
                          "log": s.log[-14:], "has_shot": s.screenshot is not None,
-                         "error": s.error, "mode": s.mode})
+                         "error": s.error, "mode": s.mode, "captured": captured})
 
 
 @router.get("/monitors/{monitor_id}/ai-login/shot")
@@ -914,6 +918,55 @@ async def ai_login_finish(
         return JSONResponse({"ok": False, "error": "expired"}, status_code=404)
     s._finish = True
     return JSONResponse({"ok": True})
+
+
+# --- Stored-cookie viewer / editor -----------------------------------------
+
+@router.get("/monitors/{monitor_id}/cookies")
+async def cookies_get(
+    monitor_id: int,
+    values: int = 0,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """The monitor's stored session cookies as editable rows. Values are only
+    included when ?values=1 (the UI fetches them on 'reveal')."""
+    monitor = await _owned_monitor(session, user, monitor_id)
+    state = monitor.login_flow.session_state if monitor.login_flow else None
+    rows = cookie_rows(state, with_values=bool(values))
+    return JSONResponse({"ok": True, "cookies": rows, "summary": cookie_summary(state)})
+
+
+@router.post("/monitors/{monitor_id}/cookies")
+async def cookies_save(
+    monitor_id: int,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Replace the monitor's stored cookies with an edited row set (deletes are
+    rows omitted; edits are changed values). Keeps localStorage origins."""
+    monitor = await _owned_monitor(session, user, monitor_id)
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "Invalid request."}, status_code=400)
+    edited = body.get("cookies") if isinstance(body, dict) else None
+    flow = monitor.login_flow
+    if flow is None:
+        return JSONResponse({"ok": False, "error": "This monitor has no stored session."}, status_code=400)
+    try:
+        new_state = apply_cookie_edits(flow.session_state, edited or [])
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    if not new_state["cookies"]:
+        flow.session_state = None
+        flow.session_valid_until = None
+    else:
+        flow.session_state = new_state
+        flow.session_valid_until = utcnow() + COOKIE_SESSION_TTL
+    await session.commit()
+    return JSONResponse({"ok": True, "summary": cookie_summary(flow.session_state)})
 
 
 @router.get("/monitors/{monitor_id}")

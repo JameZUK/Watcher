@@ -159,6 +159,83 @@ def session_cookie_count(flow: LoginFlow | None) -> int:
     return len((flow.session_state or {}).get("cookies", []))
 
 
+def cookie_summary(state: dict | None) -> dict:
+    """A names-only, per-domain summary of a storage_state (safe to show in UI)."""
+    cks = list((state or {}).get("cookies") or [])
+    by_domain: dict[str, list[str]] = {}
+    for c in cks:
+        by_domain.setdefault(c.get("domain") or "?", []).append(c.get("name") or "?")
+    domains = [{"domain": d, "names": sorted(set(n))} for d, n in sorted(by_domain.items())]
+    return {"count": len(cks), "domains": domains}
+
+
+def cookie_rows(state: dict | None, *, with_values: bool = False) -> list[dict]:
+    """Flatten a storage_state's cookies into editable rows. `expires` is -1 for a
+    session cookie; otherwise a unix timestamp. Values omitted unless requested."""
+    rows = []
+    for c in list((state or {}).get("cookies") or []):
+        exp = c.get("expires", -1)
+        try:
+            exp = float(exp)
+        except (TypeError, ValueError):
+            exp = -1
+        row = {
+            "name": c.get("name", ""),
+            "domain": c.get("domain", ""),
+            "path": c.get("path", "/") or "/",
+            "expires": exp,
+            "session": exp in (-1, 0) or exp < 0,
+            "secure": bool(c.get("secure", False)),
+            "httpOnly": bool(c.get("httpOnly", False)),
+            "sameSite": c.get("sameSite", "Lax"),
+        }
+        if with_values:
+            row["value"] = c.get("value", "")
+        rows.append(row)
+    return rows
+
+
+def apply_cookie_edits(state: dict | None, edited: list[dict]) -> dict:
+    """Rebuild a storage_state from an edited row list (origins/localStorage kept).
+
+    Each row needs at least name + domain; a row's value (if present) replaces the
+    stored one, otherwise the existing value for that (name,domain,path) is kept.
+    Rows absent from `edited` are dropped (that's how deletes happen). Raises
+    ValueError on malformed input."""
+    if not isinstance(edited, list):
+        raise ValueError("Expected a list of cookies.")
+    existing = {(c.get("name"), c.get("domain"), c.get("path", "/")): c
+                for c in list((state or {}).get("cookies") or [])}
+    out = []
+    for r in edited:
+        if not isinstance(r, dict):
+            raise ValueError("Each cookie must be an object.")
+        name = (r.get("name") or "").strip()
+        domain = (r.get("domain") or "").strip()
+        if not name or not domain:
+            raise ValueError("Every cookie needs a name and a domain.")
+        path = (r.get("path") or "/").strip() or "/"
+        prev = existing.get((name, domain, path)) or {}
+        value = r.get("value")
+        if value is None:
+            value = prev.get("value", "")
+        exp = r.get("expires", prev.get("expires", -1))
+        try:
+            exp = float(exp)
+        except (TypeError, ValueError):
+            exp = -1
+        ck = {
+            "name": name, "value": str(value), "domain": domain, "path": path,
+            "expires": exp,
+            "httpOnly": bool(r.get("httpOnly", prev.get("httpOnly", False))),
+            "secure": bool(r.get("secure", prev.get("secure", False))),
+            "sameSite": _SAMESITE.get(str(r.get("sameSite", prev.get("sameSite", "Lax"))).lower(),
+                                      r.get("sameSite", prev.get("sameSite", "Lax")) or "Lax"),
+        }
+        out.append(ck)
+    return {"cookies": out, "origins": list((state or {}).get("origins") or [])}
+
+
 def build_secret_map(plain: dict[str, str]) -> dict[str, str]:
     """Encrypt a {name: plaintext} map for storage."""
     return {name: encrypt_secret(value) for name, value in plain.items() if value}

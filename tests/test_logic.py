@@ -422,6 +422,53 @@ def test_login_session_code_event():
     asyncio.run(_t())
 
 
+def test_cookie_summary_and_rows():
+    from watcher.auth.login_flows import cookie_rows, cookie_summary
+    state = {"cookies": [
+        {"name": "sess", "value": "secret1", "domain": ".glassdoor.com", "path": "/", "expires": 1800000000},
+        {"name": "gdId", "value": "secret2", "domain": ".glassdoor.com", "path": "/", "expires": -1},
+        {"name": "PPID", "value": "secret3", "domain": ".indeed.com", "path": "/"},
+    ], "origins": [{"origin": "https://x"}]}
+    s = cookie_summary(state)
+    assert s["count"] == 3
+    doms = {d["domain"]: d["names"] for d in s["domains"]}
+    assert doms[".glassdoor.com"] == ["gdId", "sess"] and doms[".indeed.com"] == ["PPID"]
+    # rows hide values unless asked; scope reflects expiry
+    rows = cookie_rows(state)
+    assert all("value" not in r for r in rows)
+    by = {r["name"]: r for r in rows}
+    assert by["sess"]["session"] is False and by["gdId"]["session"] is True
+    assert by["PPID"]["session"] is True   # no expiry → session
+    assert "value" in cookie_rows(state, with_values=True)[0]
+
+
+def test_apply_cookie_edits():
+    from watcher.auth.login_flows import apply_cookie_edits
+    state = {"cookies": [
+        {"name": "a", "value": "v1", "domain": ".x.com", "path": "/", "expires": 123, "httpOnly": True},
+        {"name": "b", "value": "v2", "domain": ".x.com", "path": "/"},
+        {"name": "c", "value": "v3", "domain": ".y.com", "path": "/"},
+    ], "origins": [{"origin": "https://x.com"}]}
+    # delete 'c' (omit it), edit a's value, keep b's value implicitly (no value key)
+    edited = [
+        {"name": "a", "domain": ".x.com", "path": "/", "value": "NEW"},
+        {"name": "b", "domain": ".x.com", "path": "/"},
+    ]
+    out = apply_cookie_edits(state, edited)
+    names = {c["name"]: c for c in out["cookies"]}
+    assert set(names) == {"a", "b"}                 # c deleted
+    assert names["a"]["value"] == "NEW"             # value edited
+    assert names["a"]["httpOnly"] is True           # other attrs preserved
+    assert names["b"]["value"] == "v2"              # unchanged value kept
+    assert out["origins"] == state["origins"]       # localStorage preserved
+    # validation
+    import pytest as _pt
+    with _pt.raises(ValueError):
+        apply_cookie_edits(state, [{"name": "", "domain": ".x.com"}])
+    with _pt.raises(ValueError):
+        apply_cookie_edits(state, "not a list")
+
+
 def test_login_flow_save_preserves_session():
     """Re-saving a monitor with the SAME login steps must NOT wipe a session the
     AI login (or a cookie paste) captured — only a CHANGE to the steps does."""
