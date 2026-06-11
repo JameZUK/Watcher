@@ -192,11 +192,19 @@ html.view-small .mon-meta { padding: 0.6rem 0.7rem; gap: 0.35rem; }
 html.view-small .mon-foot { margin-top: 0.1rem; font-size: 0.68rem; }
 html.view-small .mon-cfg { display: none; }
 
-/* List: horizontal rows with a small fixed thumbnail. */
+/* Inline status chips live in the meta row; only the list view shows them
+   (large/small use the badges overlaid on the thumbnail instead). */
+.mon-inline { display: none; }
+
+/* List: horizontal rows with a small fixed thumbnail. Thumbnail overlay badges
+   are awkward on the narrow image, so list shows status inline in the row. */
 html.view-list .mon-grid { display: flex; flex-direction: column; gap: 0.5rem; }
 html.view-list .mon-card { flex-direction: row; align-items: stretch; border-radius: 0.85rem; }
 html.view-list .mon-preview { width: 9rem; flex: none; }
 html.view-list .mon-meta { flex: 1; flex-direction: row; align-items: center; gap: 1rem; padding: 0.55rem 0.9rem; }
+html.view-list .mon-name { flex: 1; }
+html.view-list .mon-badge { display: none; }
+html.view-list .mon-inline { display: flex; align-items: center; gap: 0.4rem; }
 html.view-list .mon-foot { margin-top: 0; flex: none; text-align: right; flex-direction: column; align-items: flex-end; gap: 0.1rem; }
 @media (max-width: 520px) {
   html.view-list .mon-preview { width: 5.5rem; }

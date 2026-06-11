@@ -20,20 +20,25 @@
         </div>
       {% endif %}
       {% if unacked.get(m.id) %}
-      <span class="absolute top-3 right-3 pill pill-amber font-semibold backdrop-blur">{{ unacked[m.id] }} new</span>
+      <span class="mon-badge absolute top-3 right-3 pill pill-amber font-semibold backdrop-blur">{{ unacked[m.id] }} new</span>
       {% endif %}
       {% if m.id in blocked %}
-      <span class="absolute bottom-3 left-3 pill backdrop-blur" style="background:rgba(239,68,68,.18);border-color:rgba(239,68,68,.35);color:#fca5a5;">⚠ last check failed</span>
+      <span class="mon-badge absolute bottom-3 left-3 pill backdrop-blur" style="background:rgba(239,68,68,.18);border-color:rgba(239,68,68,.35);color:#fca5a5;">⚠ last check failed</span>
       {% endif %}
     </div>
     <!-- Meta -->
     <div class="mon-meta p-4 flex flex-col gap-3 flex-1">
-      <div class="flex items-start gap-2">
+      <div class="mon-name flex items-start gap-2 min-w-0">
         <span class="dot {{ 'dot-err' if m.id in blocked else ('dot-live' if m.enabled else 'dot-paused') }} mt-1.5 shrink-0"></span>
         <div class="min-w-0">
           <h3 class="font-semibold text-white truncate group-hover:text-brand-400 transition">{{ name }}</h3>
           <p class="text-xs truncate" title="{{ m.url }}"><span class="text-slate-400">{{ m.url|url_host }}</span><span class="text-slate-600">{{ m.url|url_path_short(28) }}</span></p>
         </div>
+      </div>
+      <!-- Inline status (list view only — overlays are hidden there) -->
+      <div class="mon-inline shrink-0">
+        {% if unacked.get(m.id) %}<span class="pill pill-amber font-semibold shrink-0">{{ unacked[m.id] }} new</span>{% endif %}
+        {% if m.id in blocked %}<span class="pill shrink-0" style="background:rgba(239,68,68,.18);border-color:rgba(239,68,68,.4);color:#fca5a5;">⚠ failed</span>{% endif %}
       </div>
       <div class="mon-foot mt-auto flex items-center justify-between gap-2 text-xs text-slate-500">
         <span class="truncate">{{ mode_label.get(m.detection_mode.value, m.detection_mode.value) }}<span class="mon-cfg"> · every {{ m.interval_seconds|interval }} · {{ m.engine.value }}</span></span>
