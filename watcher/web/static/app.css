@@ -201,13 +201,14 @@ html.view-small .mon-cfg { display: none; }
 html.view-list .mon-grid { display: flex; flex-direction: column; gap: 0.5rem; }
 html.view-list .mon-card { flex-direction: row; align-items: stretch; border-radius: 0.85rem; }
 html.view-list .mon-preview { width: 9rem; flex: none; }
-html.view-list .mon-meta { flex: 1; flex-direction: row; align-items: center; gap: 1rem; padding: 0.55rem 0.9rem; }
-html.view-list .mon-name { flex: 1; }
+html.view-list .mon-meta { flex: 1; min-width: 0; flex-direction: row; align-items: center; gap: 1rem; padding: 0.55rem 0.9rem; }
+html.view-list .mon-name { flex: 1; min-width: 0; }
 html.view-list .mon-badge { display: none; }
-html.view-list .mon-inline { display: flex; align-items: center; gap: 0.4rem; }
+html.view-list .mon-inline { display: flex; align-items: center; gap: 0.4rem; flex: none; }
 html.view-list .mon-foot { margin-top: 0; flex: none; text-align: right; flex-direction: column; align-items: flex-end; gap: 0.1rem; }
 @media (max-width: 520px) {
-  html.view-list .mon-preview { width: 5.5rem; }
+  html.view-list .mon-preview { width: 4.5rem; }
+  html.view-list .mon-meta { gap: 0.55rem; padding: 0.5rem 0.7rem; }
   html.view-list .mon-foot { display: none; }
 }
 
