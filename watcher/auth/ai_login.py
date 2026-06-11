@@ -225,6 +225,18 @@ async def run_agent(
                     and not any(m in _u for m in ("/auth", "login", "signin", "sign-in"))):
                 break
 
+            # Regression after the code: if we're back at the social-login wall
+            # ("Continue with Google/Apple/email"), the code was rejected or the
+            # automated login was blocked — stop with a useful message instead of
+            # re-clicking the wall until the step budget runs out.
+            if code_entered and any(
+                    ("continue with apple" in (e.get("label") or "").lower())
+                    or ("continue with google" in (e.get("label") or "").lower())
+                    or ("apple or email" in (e.get("label") or "").lower())
+                    for e in elements):
+                session.status, session.error = "error", _CODE_FAIL_MSG
+                return
+
             # Stuck detection: if the interactive elements (incl. their filled-ness)
             # don't change across steps, our actions aren't doing anything — almost
             # always an anti-bot / bot-detection wall on the login page.
@@ -315,15 +327,10 @@ async def run_agent(
                     session.status, session.error = "error", "Timed out waiting for the code."
                     return
                 session.status = "running"
+                n_inputs = sum(1 for e in elements if e.get("tag") == "input")
                 if idx >= 0:
-                    try:
-                        await page.fill(sel, code)
-                        # Submit the code ourselves — OTP forms usually accept Enter
-                        # (and often auto-submit), so we don't depend on the model
-                        # finding the right Continue button as the popup is closing.
-                        await page.press(sel, "Enter")
-                    except Exception:
-                        pass
+                    await _enter_code(page, sel, code)
+                session.log.append(f"Code entered ({n_inputs} field(s) on the page).")
                 code_pending = True
                 code_entered = True
             await _safe_sleep(page, 900)
@@ -367,8 +374,15 @@ _WALL_MSG = (
     "and paste a session cookie instead (Session cookies, below)."
 )
 
+_CODE_FAIL_MSG = (
+    "After the one-time code the site returned to its login screen — the code was "
+    "rejected or the automated login was blocked (anti-bot scoring). Try again, or "
+    "log in manually in your own browser and paste a session cookie instead "
+    "(Session cookies, below)."
+)
+
 _STUCK_MSG = (
-    "The login page stopped responding to the agent — almost always a captcha or "
+    "The login page stopped responding to the agent — almost always a captcha or"
     "'press & hold' anti-bot check, which can't be automated. Log in manually in "
     "your own browser and paste a session cookie instead (Session cookies, below)."
 )
@@ -549,6 +563,38 @@ def _active_page(ctx, current):
         return current
     real = [p for p in open_pages if (p.url and not p.url.startswith("about:"))]
     return (real or open_pages)[-1]
+
+
+async def _enter_code(page, sel: str, code: str) -> None:
+    """Type a one-time code with real keystrokes.
+
+    page.fill() sets .value directly and skips the keypress events that OTP
+    widgets rely on — especially multi-box inputs that auto-advance per digit —
+    so the code silently doesn't register. Focus + keyboard.type fixes both the
+    single-field and split-box cases; then submit with Enter, and click a
+    Continue/Verify button as a fallback for forms that need an explicit submit.
+    """
+    try:
+        await page.focus(sel)
+        await page.keyboard.type(code, delay=60)
+    except Exception:
+        try:
+            await page.fill(sel, code)
+        except Exception:
+            pass
+    try:
+        await page.keyboard.press("Enter")
+    except Exception:
+        pass
+    # Fallback explicit submit for forms that don't act on Enter.
+    try:
+        btn = page.locator(
+            "button:has-text('Verify'), button:has-text('Continue'), "
+            "button:has-text('Submit'), button[type=submit]").first
+        if await btn.count() and await btn.is_visible():
+            await btn.click(timeout=3000)
+    except Exception:
+        pass
 
 
 async def _safe_sleep(page, ms: int) -> None:
