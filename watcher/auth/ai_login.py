@@ -83,6 +83,8 @@ class LoginSession:
     _finish: bool = False         # user asked to capture the session and finish
     _mouse: tuple = None          # last cursor position (for human-like movement)
     _native_human: bool = False   # engine humanises input itself (Camoufox)
+    _shot_needs_stop: bool = False  # this page never stops loading; halt before shot
+    _shot_url: str = ""           # url the above was decided for
 
     def submit_code(self, code: str) -> None:
         self._code = (code or "").strip()
@@ -184,7 +186,20 @@ async def run_agent(
         close, ctx = await _new_context(engine, proxy)
         page = await ctx.new_page()
         session.log.append(f"Opening {session.url}")
-        await page.goto(session.url, wait_until=wait_until, timeout=45000)
+        # Navigate resiliently: return as soon as the server responds ("commit")
+        # and NEVER hard-fail on a slow/blocked load — otherwise the user sees a
+        # blank modal for 45s and then an error (e.g. Glassdoor's Cloudflare wall
+        # on chromium never satisfies a 'load' wait). The loop below streams the
+        # page as it renders, and waits for it to settle for the AI path.
+        try:
+            # domcontentloaded fires when the DOM is parsed — it does NOT wait for
+            # images/sub-resources/'load', so a slow tracker can't hang us, and the
+            # screenshot has real content to capture.
+            await page.goto(session.url, wait_until="domcontentloaded", timeout=30000)
+        except Exception as exc:
+            session.log.append(f"(page still loading — {type(exc).__name__})")
+        await _safe_sleep(page, 500)
+        await _shot(session, page)          # show something immediately
 
         last_sig = None
         stuck = 0
@@ -249,10 +264,7 @@ async def run_agent(
                 await _safe_sleep(page, 1200)
                 continue
             empty_retry = 0
-            try:
-                session.screenshot = await page.screenshot(full_page=False, type="png")
-            except Exception:
-                pass
+            await _shot(session, page)
             labels = {e.get("idx"): (e.get("label") or e.get("placeholder") or e.get("aria")
                                      or e.get("name") or f"element {e.get('idx')}") for e in elements}
             elem_by_idx = {e.get("idx"): e for e in elements}
@@ -1018,8 +1030,31 @@ async def _apply_event(page, ev: dict, session) -> None:
 
 
 async def _shot(session, page) -> None:
+    """Capture the live view. page.screenshot() refuses to capture while the page
+    is 'loading' (it waits for fonts/stability) — and real sites (Glassdoor) keep
+    loading forever via trackers, so it times out and nothing shows. So: try a
+    quick normal capture; if that times out, halt pending network with window.stop()
+    and capture the current rendered state. We remember per-URL that a page needs
+    the stop so we don't pay the timeout every frame."""
     try:
-        session.screenshot = await page.screenshot(full_page=False, type="png")
+        cur = page.url or ""
+    except Exception:
+        cur = ""
+    if cur != session._shot_url:          # new page → re-probe the fast path
+        session._shot_url = cur
+        session._shot_needs_stop = False
+    if not session._shot_needs_stop:
+        try:
+            session.screenshot = await page.screenshot(full_page=False, type="png", timeout=1500)
+            return
+        except Exception:
+            session._shot_needs_stop = True
+    try:
+        await page.evaluate("() => { try { window.stop(); } catch (e) {} }")
+    except Exception:
+        pass
+    try:
+        session.screenshot = await page.screenshot(full_page=False, type="png", timeout=4000)
     except Exception:
         pass
 

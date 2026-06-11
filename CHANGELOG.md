@@ -10,6 +10,17 @@ pauses for a one-time code if one is needed, and the captured session is saved
 so scheduled checks ride it.
 
 ### Fixed
+- **Manual login now shows a screenshot (it didn't).** The initial `page.goto`
+  used a strict load wait, so on a site that never finishes loading (Glassdoor's
+  trackers, or its Cloudflare wall on chromium) it blocked for 45s and then
+  errored — with a blank modal the whole time. Now navigation uses
+  `domcontentloaded` and never hard-fails, and the screenshotter captures the
+  *current* rendered state even while the page keeps loading (it halts pending
+  network with `window.stop()` when Playwright would otherwise wait forever for
+  fonts/'load'). A frame now appears in ~2s. Verified on chromium, firefox and
+  camoufox; webkit shows it for normal pages but can't capture a never-loading
+  page (a Playwright/webkit limitation — its screenshot waits for the `load`
+  event that never fires).
 - **Manual-control clicks land where you aim on Camoufox.** Camoufox's live
   screenshot is a 1280px CROP of a wider page, but clicks were scaled by
   `innerWidth`, pushing every click far to the right (so the reCAPTCHA checkbox

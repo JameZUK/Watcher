@@ -148,21 +148,97 @@ async def run_engine(engine):
     return ok
 
 
+SLOW_PAGE = (b"<!doctype html><html><body style='background:#0a0'>"
+             b"<h1>VISIBLE CONTENT</h1><img src='/hang'></body></html>")
+
+
+def _slow_server():
+    import time
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            if self.path == "/hang":
+                time.sleep(60)            # a resource that never finishes → 'load' never fires
+                return
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(SLOW_PAGE)))
+            self.end_headers()
+            self.wfile.write(SLOW_PAGE)
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+async def slow_load_check(engine):
+    """A real page that never reaches 'load' (a hanging tracker) must still show a
+    screenshot promptly in manual mode and NOT abort — this is the Glassdoor case."""
+    import time as _t
+    srv = _slow_server()
+    url = f"http://127.0.0.1:{srv.server_address[1]}/"
+
+    async def stub(**k):
+        return {"action": "fail", "index": -1, "secret": "", "text": "", "reason": "m"}
+
+    async def persist(s):
+        pass
+    sess = A.create_session(1, 1, url, {})
+    sess.mode = "manual"
+    task = asyncio.create_task(A.run_agent(sess, stub, persist, engine=engine, wait_until="load"))
+    t0 = _t.monotonic()
+    first = None
+    try:
+        for _ in range(150):
+            if sess.screenshot is not None:
+                first = _t.monotonic() - t0
+                break
+            if sess.status == "error":
+                break
+            await asyncio.sleep(0.1)
+    finally:
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except BaseException:
+                pass
+        srv.shutdown()
+    ok = first is not None and sess.status != "error"
+    print(f"[{'PASS' if ok else 'FAIL'}] engine={engine} slow-load: "
+          f"screenshot{'@%.1fs' % first if first else '=NONE'} status={sess.status} "
+          f"bytes={len(sess.screenshot or b'')}")
+    if not ok:
+        print("        log:", sess.log)
+    return ok
+
+
 async def main():
     results = {}
     for e in ["chromium", "firefox", "webkit", "camoufox"]:
         try:
-            r = await run_engine(e)
+            click_r = await run_engine(e)
         except Exception as exc:
-            r = ("launch", f"{type(exc).__name__}: {exc}")
-        if isinstance(r, tuple):
-            print(f"[SKIP] engine={e}: not runnable here ({r[1]})")
+            click_r = ("launch", f"{type(exc).__name__}: {exc}")
+        if isinstance(click_r, tuple):
+            print(f"[SKIP] engine={e}: not runnable here ({click_r[1]})")
             results[e] = "skip"
+            continue
+        slow_r = await slow_load_check(e)
+        # KNOWN LIMITATION: webkit's screenshot waits for the page 'load' event,
+        # which never fires on a never-loading page (Glassdoor-style hanging
+        # tracker) — no Playwright API can bypass it. webkit still works on normal
+        # pages (the click-mapping check uses one), so don't count it as a failure.
+        if e == "webkit" and click_r is True and not slow_r:
+            print("        (webkit slow-load is a known Playwright limitation; normal pages OK)")
+            results[e] = "webkit-limit"
         else:
-            results[e] = r
-    passed = sum(1 for v in results.values() if v is True)
+            results[e] = bool(click_r) and bool(slow_r)
+    full = sum(1 for v in results.values() if v is True)
     skipped = sum(1 for v in results.values() if v == "skip")
-    print(f"\n{passed}/{len(results) - skipped} usable engine(s) mapped clicks correctly "
-          f"({skipped} skipped)")
+    limited = sum(1 for v in results.values() if v == "webkit-limit")
+    print(f"\n{full}/{len(results) - skipped - limited} engine(s) fully pass "
+          f"(clicks + slow-load); {limited} works on normal pages only (webkit); {skipped} skipped")
 
 asyncio.run(main())
