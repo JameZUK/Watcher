@@ -136,6 +136,12 @@ def get_session(sid: str, user_id: int) -> LoginSession | None:
     return s if (s and s.user_id == user_id) else None
 
 
+# A fixed login viewport so the live screenshot ALWAYS shows the whole interactive
+# width — without this, Camoufox renders wider than its 1280px screenshot and the
+# right of the page (e.g. a login modal) is cropped off the manual view.
+_LOGIN_VIEWPORT = {"width": 1280, "height": 800}
+
+
 async def _new_context(engine: str, proxy: str | None):
     """Yield (closer, context) for the requested engine. Camoufox for stealth
     logins (Glassdoor/Indeed), else a plain Playwright browser."""
@@ -144,9 +150,13 @@ async def _new_context(engine: str, proxy: str | None):
         kwargs["proxy"] = {"server": proxy}
     if engine == "camoufox":
         from camoufox.async_api import AsyncCamoufox
-        cm = AsyncCamoufox(humanize=True, **kwargs)
+        # window=() pins Camoufox's window so innerWidth matches the screenshot
+        # (it otherwise picks a random, wider fingerprint size → cropped view).
+        cm = AsyncCamoufox(humanize=True,
+                           window=(_LOGIN_VIEWPORT["width"], _LOGIN_VIEWPORT["height"]),
+                           **kwargs)
         browser = await cm.__aenter__()
-        ctx = await browser.new_context()
+        ctx = await browser.new_context(viewport=dict(_LOGIN_VIEWPORT))
         ctx.set_default_timeout(15000)
 
         async def close():
@@ -159,7 +169,7 @@ async def _new_context(engine: str, proxy: str | None):
     pw = await async_playwright().__aenter__()
     btype = getattr(pw, engine if engine in ("chromium", "firefox", "webkit") else "chromium")
     browser = await btype.launch(**kwargs)
-    ctx = await browser.new_context()
+    ctx = await browser.new_context(viewport=dict(_LOGIN_VIEWPORT))
     ctx.set_default_timeout(15000)
 
     async def close():
@@ -1045,13 +1055,28 @@ async def _apply_event(page, ev: dict, session) -> None:
             pass
 
 
+async def _shot_clip(page):
+    """Capture exactly the visible page (innerWidth × innerHeight), so the live
+    view never crops the page (Camoufox renders wider than the viewport) and never
+    pads it with blank space (Camoufox's innerHeight < the viewport). Reading the
+    sizes each frame means it auto-adapts to whatever window the engine chose."""
+    try:
+        vw, vh = await page.evaluate("() => [Math.ceil(window.innerWidth), Math.ceil(window.innerHeight)]")
+        if vw and vh:
+            return {"x": 0, "y": 0, "width": int(vw), "height": int(vh)}
+    except Exception:
+        pass
+    return None
+
+
 async def _shot(session, page) -> None:
     """Capture the live view. page.screenshot() refuses to capture while the page
     is 'loading' (it waits for fonts/stability) — and real sites (Glassdoor) keep
     loading forever via trackers, so it times out and nothing shows. So: try a
     quick normal capture; if that times out, halt pending network with window.stop()
     and capture the current rendered state. We remember per-URL that a page needs
-    the stop so we don't pay the timeout every frame."""
+    the stop so we don't pay the timeout every frame. The clip keeps the view to
+    exactly the visible page on every engine/window size."""
     try:
         cur = page.url or ""
     except Exception:
@@ -1059,9 +1084,11 @@ async def _shot(session, page) -> None:
     if cur != session._shot_url:          # new page → re-probe the fast path
         session._shot_url = cur
         session._shot_needs_stop = False
+    clip = await _shot_clip(page)
+    kw = {"clip": clip} if clip else {"full_page": False}
     if not session._shot_needs_stop:
         try:
-            session.screenshot = await page.screenshot(full_page=False, type="png", timeout=1500)
+            session.screenshot = await page.screenshot(type="png", timeout=1500, **kw)
             return
         except Exception:
             session._shot_needs_stop = True
@@ -1070,7 +1097,7 @@ async def _shot(session, page) -> None:
     except Exception:
         pass
     try:
-        session.screenshot = await page.screenshot(full_page=False, type="png", timeout=4000)
+        session.screenshot = await page.screenshot(type="png", timeout=4000, **kw)
     except Exception:
         pass
 
