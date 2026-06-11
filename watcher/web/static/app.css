@@ -208,8 +208,11 @@ html.view-list .mon-inline { display: flex; align-items: center; gap: 0.4rem; fl
 html.view-list .mon-foot { margin-top: 0; flex: none; text-align: right; flex-direction: column; align-items: flex-end; gap: 0.1rem; }
 @media (max-width: 520px) {
   html.view-list .mon-preview { width: 4.5rem; }
-  html.view-list .mon-meta { gap: 0.55rem; padding: 0.5rem 0.7rem; }
-  html.view-list .mon-foot { display: none; }
+  html.view-list .mon-meta { gap: 0.5rem; padding: 0.5rem 0.65rem; }
+  /* Keep a slim footer (just the mode + when) so every row still reads, plus
+     the status chips. The interval/engine is dropped for space. */
+  html.view-list .mon-cfg { display: none; }
+  html.view-list .mon-foot { font-size: 0.66rem; gap: 0; }
 }
 
 /* Opaque surface for dropdowns/popovers (the translucent .glass is too see-
