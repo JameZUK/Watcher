@@ -20,6 +20,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
+from .login_flows import merge_storage_state
+
 log = logging.getLogger("watcher.ailogin")
 
 MAX_STEPS = 14
@@ -70,6 +72,9 @@ class LoginSession:
     _code: str | None = None
     _code_event: asyncio.Event | None = None
     _task: object = None          # strong ref so the agent task isn't GC'd
+    _interim_state: dict | None = None   # cookies snapshotted while the SSO popup
+    #                                      was still open (e.g. indeed.com), merged
+    #                                      into the final capture
 
     def submit_code(self, code: str) -> None:
         self._code = (code or "").strip()
@@ -225,6 +230,14 @@ async def run_agent(
                 _n_open = 1
             if _n_open > 1:
                 popup_seen = True
+                # Keep the freshest snapshot of the SSO popup's cookies while it's
+                # open (merge so we never lose an earlier domain's cookies).
+                if code_entered:
+                    try:
+                        snap = await ctx.storage_state()
+                        session._interim_state = merge_storage_state(session._interim_state, snap)
+                    except Exception:
+                        pass
 
             # Post-code state handling: signed in (success), bounced back to the
             # social-login wall (rejected), or mid-transition (wait it out).
@@ -406,6 +419,13 @@ async def run_agent(
                 # with "No input fields or buttons visible to enter the code".
                 code_entered = True
                 await _safe_sleep(page, 1500)  # let the code submission take effect
+                # Snapshot cookies NOW, while the SSO popup (e.g. indeed.com) is
+                # still open — the identity provider often clears its cookies once
+                # the popup closes, so the final capture would miss them.
+                try:
+                    session._interim_state = await ctx.storage_state()
+                except Exception:
+                    pass
             else:
                 await _safe_sleep(page, 900)
             # If this step opened a federated-login popup, wait for it to register
@@ -424,11 +444,17 @@ async def run_agent(
         session.log.append("Checking the saved session works…")
         works = await _verify_session(ctx, session.url)
         state = await ctx.storage_state()
+        # Fold in cookies captured while the SSO popup was open (e.g. indeed.com),
+        # which the provider may have cleared by now.
+        state = merge_storage_state(session._interim_state, state) or state
         if works:
             session.result_state = state
             await persist_fn(state)
             session.status = "done"
-            session.log.append("Logged in — session saved.")
+            doms = sorted({(c.get("domain") or "?") for c in (state.get("cookies") or [])})
+            session.log.append(
+                f"Logged in — session saved ({len(state.get('cookies') or [])} cookies"
+                f"{(' across ' + ', '.join(doms)) if doms else ''}).")
         else:
             session.status, session.error = "error", _SESSION_REJECTED_MSG
     except Exception as exc:  # noqa: BLE001
@@ -825,6 +851,7 @@ async def _salvage_session(session, ctx, persist_fn) -> bool:
         state = await ctx.storage_state()
     except Exception:
         return False
+    state = merge_storage_state(session._interim_state, state) or state
     if not state.get("cookies"):
         return False
     session.result_state = state
