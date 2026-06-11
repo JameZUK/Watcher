@@ -186,19 +186,92 @@ async def run_scenario(name, scenario, code_btn, expect, model_fn=model):
                 return
             await asyncio.sleep(0.15)
     asyncio.create_task(feed())
-    try:
-        await asyncio.wait_for(A.run_agent(sess, stub, persist, engine="chromium"), timeout=70)
-    except asyncio.TimeoutError:
-        sess.status = "timeout"
+
+    # Dead-ends now hand control to the user (manual mode) instead of hard-failing,
+    # so the outcome is one of: done / error / manual-handoff.
+    task = asyncio.create_task(A.run_agent(sess, stub, persist, engine="chromium"))
+    got = "timeout"
+    for _ in range(350):
+        if sess.status in ("done", "error"):
+            got = sess.status
+            break
+        if sess.mode == "manual":
+            got = "manual"
+            break
+        await asyncio.sleep(0.2)
+    if not task.done():
+        task.cancel()
+        try:
+            await task
+        except BaseException:
+            pass
     srv.shutdown()
-    got = sess.status
     ok = (got == expect)
-    print(f"[{'PASS' if ok else 'FAIL'}] {name}: status={got} expect={expect}"
+    print(f"[{'PASS' if ok else 'FAIL'}] {name}: outcome={got} expect={expect}"
           f" cookies={captured.get('cookies')}")
     if not ok:
         for l in sess.log:
             print("        -", l)
-        print("        err:", sess.error)
+        print("        err:", sess.error, "mode:", sess.mode)
+    return ok
+
+
+async def test_manual_capture():
+    """Manual remote control: take over from the start, relay input, then 'Capture
+    session & finish' grabs the (valid) session."""
+    PAGE = (b"<!doctype html><html><body><div>Signed in. Welcome.</div>"
+            b"<input id='probe'><script>document.cookie='sess=ok;path=/';</script></body></html>")
+
+    class H(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html')
+            self.send_header('Content-Length', str(len(PAGE)))
+            self.end_headers()
+            self.wfile.write(PAGE)
+    srv = ThreadingHTTPServer(('127.0.0.1', 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{srv.server_address[1]}/"
+    captured = {}
+
+    async def stub(**k):
+        return {"action": "fail", "index": -1, "secret": "", "text": "", "reason": "n/a"}
+
+    async def persist(state):
+        captured['cookies'] = [c['name'] for c in (state.get('cookies') or [])]
+    sess = A.create_session(1, 1, url, {"username": "u", "password": "p"})
+    sess.mode = "manual"   # user drives from the start
+    task = asyncio.create_task(A.run_agent(sess, stub, persist, engine="chromium"))
+    for _ in range(100):
+        if sess.screenshot is not None:
+            break
+        await asyncio.sleep(0.1)
+    sess._events.append({"type": "type", "text": "hello"})    # exercise the relay
+    sess._events.append({"type": "click", "fx": 0.5, "fy": 0.5})
+    await asyncio.sleep(0.6)
+    sess._finish = True
+    got = "timeout"
+    for _ in range(100):
+        if sess.status in ("done", "error"):
+            got = sess.status
+            break
+        await asyncio.sleep(0.1)
+    if not task.done():
+        task.cancel()
+        try:
+            await task
+        except BaseException:
+            pass
+    srv.shutdown()
+    ok = (got == "done" and "sess" in (captured.get('cookies') or []))
+    print(f"[{'PASS' if ok else 'FAIL'}] I manual control + finish captures session:"
+          f" outcome={got} cookies={captured.get('cookies')}")
+    if not ok:
+        for l in sess.log:
+            print("        -", l)
     return ok
 
 
@@ -209,11 +282,12 @@ async def main():
     results.append(await run_scenario("B single-field needs Continue click", "button", "inline", "done"))
     results.append(await run_scenario("C multi-box auto-advance", "multibox", "none", "done"))
     results.append(await run_scenario("D transitional 'verifying' then success", "verify", "none", "done"))
-    results.append(await run_scenario("E code rejected -> bounce to wall", "reject", "none", "error"))
+    results.append(await run_scenario("E code rejected -> hands off to manual", "reject", "none", "manual"))
     results.append(await run_scenario("F weak model keeps clicking Google/Apple", "enter", "none",
                                       "done", model_fn=model_dumb))
     results.append(await run_scenario("G popup closes but opener doesn't reload", "noreload", "none", "done"))
-    results.append(await run_scenario("H popup closes but session invalid (rejected)", "rejectclose", "none", "error"))
+    results.append(await run_scenario("H popup closes but session invalid -> manual", "rejectclose", "none", "manual"))
+    results.append(await test_manual_capture())
     print(f"\n{sum(results)}/{len(results)} scenarios passed")
 
 asyncio.run(main())

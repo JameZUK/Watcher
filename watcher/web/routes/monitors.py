@@ -829,7 +829,7 @@ async def ai_login_status(
         return JSONResponse({"ok": False, "error": "This login session has expired — start again."}, status_code=404)
     return JSONResponse({"ok": True, "status": s.status, "prompt": s.prompt,
                          "log": s.log[-14:], "has_shot": s.screenshot is not None,
-                         "error": s.error})
+                         "error": s.error, "mode": s.mode})
 
 
 @router.get("/monitors/{monitor_id}/ai-login/shot")
@@ -857,6 +857,62 @@ async def ai_login_code(
         return JSONResponse({"ok": False, "error": "expired"}, status_code=404)
     form = await request.form()
     s.submit_code((form.get("code") or "").strip())
+    return JSONResponse({"ok": True})
+
+
+@router.post("/monitors/{monitor_id}/ai-login/mode")
+async def ai_login_mode(
+    monitor_id: int, sid: str,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Switch between AI control and manual remote control."""
+    s = ai_login.get_session(sid, user.id)
+    if not s or s.monitor_id != monitor_id:
+        return JSONResponse({"ok": False, "error": "expired"}, status_code=404)
+    form = await request.form()
+    mode = (form.get("mode") or "").strip()
+    if mode in ("ai", "manual"):
+        s.mode = mode
+        s.prompt = "" if mode == "ai" else (s.prompt or "Manual control — drive the page, then ‘Capture session & finish’.")
+    return JSONResponse({"ok": True, "mode": s.mode})
+
+
+@router.post("/monitors/{monitor_id}/ai-login/input")
+async def ai_login_input(
+    monitor_id: int, sid: str,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Relay one manual input event (click/type/key/scroll) to the live browser."""
+    s = ai_login.get_session(sid, user.id)
+    if not s or s.monitor_id != monitor_id:
+        return JSONResponse({"ok": False, "error": "expired"}, status_code=404)
+    if s.mode != "manual":
+        return JSONResponse({"ok": False, "error": "not in manual mode"}, status_code=409)
+    try:
+        ev = await request.json()
+    except Exception:
+        ev = {}
+    if isinstance(ev, dict) and ev.get("type") in ("click", "dblclick", "type", "key", "scroll"):
+        if len(s._events) < 200:           # bound the queue
+            s._events.append(ev)
+    return JSONResponse({"ok": True})
+
+
+@router.post("/monitors/{monitor_id}/ai-login/finish")
+async def ai_login_finish(
+    monitor_id: int, sid: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """User asks to capture the current session and finish."""
+    s = ai_login.get_session(sid, user.id)
+    if not s or s.monitor_id != monitor_id:
+        return JSONResponse({"ok": False, "error": "expired"}, status_code=404)
+    s._finish = True
     return JSONResponse({"ok": True})
 
 

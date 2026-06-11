@@ -69,12 +69,15 @@ class LoginSession:
     screenshot: bytes | None = None
     result_state: dict | None = None
     created_at: float = field(default_factory=time.monotonic)
+    mode: str = "ai"              # "ai" (agent drives) | "manual" (user drives)
     _code: str | None = None
     _code_event: asyncio.Event | None = None
     _task: object = None          # strong ref so the agent task isn't GC'd
     _interim_state: dict | None = None   # cookies snapshotted while the SSO popup
     #                                      was still open (e.g. indeed.com), merged
     #                                      into the final capture
+    _events: list = field(default_factory=list)   # queued manual input events
+    _finish: bool = False         # user asked to capture the session and finish
 
     def submit_code(self, code: str) -> None:
         self._code = (code or "").strip()
@@ -181,11 +184,32 @@ async def run_agent(
         stuck = 0
         none_retry = 0
         empty_retry = 0
-        for _ in range(MAX_STEPS):
+        ai_steps = 0
+        while True:
+            if _expired(session):
+                if session.status != "done":
+                    session.status, session.error = "error", "Login timed out."
+                return
             # Follow popups: federated logins (Glassdoor → Indeed, "Continue with
             # Google/Apple") open the real credential form in a NEW window. If we
             # kept observing the opener it would look frozen forever.
             page = _active_page(ctx, page)
+
+            # Capture-and-finish can be requested at any time (incl. manual mode).
+            if session._finish:
+                await _finish_capture(session, ctx, persist_fn)
+                return
+            # Manual remote control: while the user drives, relay their input and
+            # stream screenshots — don't run the AI agent.
+            if session.mode == "manual":
+                await _manual_step(session, page)
+                continue
+            # AI is driving. Cap automatic steps, then hand off to the user.
+            if ai_steps >= MAX_STEPS:
+                _handoff(session, "the assistant ran out of automatic steps")
+                continue
+            ai_steps += 1
+
             await _settle(page)
 
             # A reCAPTCHA image challenge can't be driven via the element list —
@@ -257,22 +281,28 @@ async def run_agent(
                 if popup_seen:
                     # Popup-based federated login: the popup closing IS the success.
                     if _n_open <= 1:
-                        break  # signed in — capture the session
+                        if await _finalize_success(session, ctx, persist_fn):
+                            return
+                        _handoff(session, "the login didn't fully complete")
+                        continue
                     if _social_wall:   # popup still open, back at the wall → rejected
                         wall_after_code += 1
                         if wall_after_code >= 2:
-                            session.status, session.error = "error", _CODE_FAIL_MSG
-                            return
+                            _handoff(session, "the login was rejected after the code")
+                            continue
                 else:
                     # Direct (same-page) login: judge by the UI — nothing login-ish
                     # left means we're in.
                     if not _has_cred and not _has_code and not _on_auth and not _social_wall:
-                        break
+                        if await _finalize_success(session, ctx, persist_fn):
+                            return
+                        _handoff(session, "the login didn't fully complete")
+                        continue
                     if _social_wall:
                         wall_after_code += 1
                         if wall_after_code >= 2:
-                            session.status, session.error = "error", _CODE_FAIL_MSG
-                            return
+                            _handoff(session, "the login was rejected after the code")
+                            continue
 
             # Stuck detection: if the interactive elements (incl. their filled-ness)
             # don't change across steps, our actions aren't doing anything — almost
@@ -286,14 +316,14 @@ async def run_agent(
             stuck = stuck + 1 if (sig == last_sig and history) else 0
             last_sig = sig
             if stuck >= 2 and await _is_bot_wall(page):
-                session.status, session.error = "error", _WALL_MSG
-                return
+                _handoff(session, "an anti-bot / captcha check is blocking the agent")
+                continue
             if stuck >= 3:  # input no longer changes the page — captcha / dead end
                 if code_entered and popup_seen and _popup_closed(ctx) and await _salvage_session(
                         session, ctx, persist_fn):
                     return
-                session.status, session.error = "error", _STUCK_MSG
-                return
+                _handoff(session, "the page stopped responding to the agent")
+                continue
 
             action = await action_fn(elements=elements, screenshot_png=session.screenshot,
                                      available=available, history=history, code_pending=code_pending)
@@ -310,10 +340,8 @@ async def run_agent(
                 if code_entered and popup_seen and _popup_closed(ctx) and await _salvage_session(
                         session, ctx, persist_fn):
                     return
-                session.status = "error"
-                session.error = (_WALL_MSG if await _is_bot_wall(page)
-                                 else "The assistant couldn't work out the next step on this page.")
-                return
+                _handoff(session, "the assistant couldn't work out the next step")
+                continue
             none_retry = 0
             a = action.get("action")
             _raw_idx = action.get("index", -1)
@@ -328,7 +356,10 @@ async def run_agent(
                 _pages_before = 1
 
             if a == "done":
-                break
+                if await _finalize_success(session, ctx, persist_fn):
+                    return
+                _handoff(session, "the login didn't fully complete")
+                continue
             if a == "fail":
                 # Right after the code the page is often mid-transition (a brief
                 # "verifying…" / blank state) — don't accept the model's give-up
@@ -340,11 +371,8 @@ async def run_agent(
                 if code_entered and popup_seen and _popup_closed(ctx) and await _salvage_session(
                         session, ctx, persist_fn):
                     return
-                session.status = "error"
-                session.error = (action.get("reason") or "Login could not proceed.")
-                if await _is_bot_wall(page):
-                    session.error = _WALL_MSG
-                return
+                _handoff(session, action.get("reason") or "the assistant couldn't proceed")
+                continue
             if a == "type":
                 if idx < 0:
                     # No field to type into yet (e.g. the social-chooser wall) —
@@ -406,8 +434,8 @@ async def run_agent(
                 session.log.append("Waiting for your one-time code…")
                 code = await session._wait_for_code()
                 if code is None:
-                    session.status, session.error = "error", "Timed out waiting for the code."
-                    return
+                    _handoff(session, "no one-time code was entered")
+                    continue
                 session.status = "running"
                 n_inputs = sum(1 for e in elements if e.get("tag") == "input")
                 if idx >= 0:
@@ -431,32 +459,7 @@ async def run_agent(
             # If this step opened a federated-login popup, wait for it to register
             # and navigate before the next loop, so we follow it (not the opener).
             await _await_popup(ctx, _pages_before, page)
-        else:
-            if not (code_entered and popup_seen and _popup_closed(ctx) and await _salvage_session(
-                    session, ctx, persist_fn)):
-                session.status, session.error = "error", "Gave up after too many steps."
-            return
-
-        # The flow finished — but "finished" isn't "logged in". Verify the captured
-        # session actually grants access (reload and check it no longer shows a
-        # sign-in page) before claiming success, so a login the site silently
-        # rejected (anti-bot) isn't reported as a win.
-        session.log.append("Checking the saved session works…")
-        works = await _verify_session(ctx, session.url)
-        state = await ctx.storage_state()
-        # Fold in cookies captured while the SSO popup was open (e.g. indeed.com),
-        # which the provider may have cleared by now.
-        state = merge_storage_state(session._interim_state, state) or state
-        if works:
-            session.result_state = state
-            await persist_fn(state)
-            session.status = "done"
-            doms = sorted({(c.get("domain") or "?") for c in (state.get("cookies") or [])})
-            session.log.append(
-                f"Logged in — session saved ({len(state.get('cookies') or [])} cookies"
-                f"{(' across ' + ', '.join(doms)) if doms else ''}).")
-        else:
-            session.status, session.error = "error", _SESSION_REJECTED_MSG
+            continue
     except Exception as exc:  # noqa: BLE001
         log.warning("ai-login agent error: %s", exc)
         # Once the code is in and the login popup has closed, the login has
@@ -863,6 +866,109 @@ async def _salvage_session(session, ctx, persist_fn) -> bool:
     session.error = None
     session.log.append("Logged in — session saved.")
     return True
+
+
+def _expired(session) -> bool:
+    return (time.monotonic() - session.created_at) > SESSION_TTL
+
+
+def _handoff(session, reason: str) -> None:
+    """Hand control to the user instead of hard-failing — the core of the manual
+    fallback. The AI agent pauses; the modal lets the user drive the live page."""
+    session.mode = "manual"
+    session.status = "running"
+    session.error = None
+    session.prompt = (f"{reason} — take over: click/type on the page below, finish "
+                      "the login, then press ‘Capture session & finish’.")
+    session.log.append(f"Handed control to you — {reason}.")
+
+
+_ALLOWED_KEYS = {
+    "Enter", "Tab", "Backspace", "Escape", "Delete", "Home", "End",
+    "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "PageUp", "PageDown",
+}
+
+
+async def _apply_event(page, ev: dict) -> None:
+    """Relay one user input event to the live page (manual remote control)."""
+    t = ev.get("type")
+    try:
+        vs = page.viewport_size or {"width": 1280, "height": 720}
+    except Exception:
+        vs = {"width": 1280, "height": 720}
+    if t in ("click", "dblclick"):
+        x = max(0.0, min(1.0, float(ev.get("fx", 0)))) * vs["width"]
+        y = max(0.0, min(1.0, float(ev.get("fy", 0)))) * vs["height"]
+        await page.mouse.click(x, y, click_count=2 if t == "dblclick" else 1)
+    elif t == "type":
+        await page.keyboard.type(str(ev.get("text", ""))[:500])
+    elif t == "key":
+        k = str(ev.get("key", ""))
+        if k in _ALLOWED_KEYS:
+            await page.keyboard.press(k)
+    elif t == "scroll":
+        try:
+            await page.mouse.wheel(0, float(ev.get("dy", 0)))
+        except Exception:
+            pass
+
+
+async def _manual_step(session, page) -> None:
+    """One manual-control tick: apply queued user events, refresh the screenshot."""
+    evs, session._events = session._events[:20], session._events[20:]
+    for ev in evs:
+        try:
+            await _apply_event(page, ev)
+        except Exception:
+            pass
+        await _safe_sleep(page, 60)
+    try:
+        session.screenshot = await page.screenshot(full_page=False, type="png")
+    except Exception:
+        pass
+    await _safe_sleep(page, 280)
+
+
+async def _finalize_success(session, ctx, persist_fn) -> bool:
+    """The agent thinks login completed — verify it actually grants access, then
+    capture + persist. Returns True if done; False means it didn't really work
+    (caller hands off to manual) and nothing is saved."""
+    session.log.append("Checking the saved session works…")
+    works = await _verify_session(ctx, session.url)
+    try:
+        state = await ctx.storage_state()
+    except Exception:
+        state = {"cookies": [], "origins": []}
+    state = merge_storage_state(session._interim_state, state) or state
+    if not works:
+        return False
+    session.result_state = state
+    await persist_fn(state)
+    session.status = "done"
+    cks = state.get("cookies") or []
+    doms = sorted({(c.get("domain") or "?") for c in cks})
+    session.log.append(f"Logged in — session saved ({len(cks)} cookies"
+                       f"{(' across ' + ', '.join(doms)) if doms else ''}).")
+    return True
+
+
+async def _finish_capture(session, ctx, persist_fn) -> None:
+    """User pressed ‘Capture session & finish’ — verify, capture (incl. SSO-popup
+    cookies), persist, and report whether the session looks logged-in."""
+    works = await _verify_session(ctx, session.url)
+    try:
+        state = await ctx.storage_state()
+    except Exception:
+        state = {"cookies": [], "origins": []}
+    state = merge_storage_state(session._interim_state, state) or state
+    session.result_state = state
+    await persist_fn(state)
+    session.status = "done"
+    cks = state.get("cookies") or []
+    doms = sorted({(c.get("domain") or "?") for c in cks})
+    note = "" if works else " (warning: a reload still showed a sign-in page — it may not be valid)"
+    session.log.append(
+        f"Session captured ({len(cks)} cookies across {', '.join(doms) or 'no domains'}){note}.")
 
 
 async def _safe_sleep(page, ms: int) -> None:

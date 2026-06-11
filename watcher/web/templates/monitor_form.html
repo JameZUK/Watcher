@@ -228,7 +228,7 @@
           <div class="flex items-start justify-between gap-3">
             <div class="min-w-0">
               <p class="text-sm font-medium text-white">Log in automatically with AI</p>
-              <p class="text-xs text-slate-400 mt-0.5">Fill the login URL, username and password above, then let the assistant drive the login in a real browser — it pauses for a one-time code if the site sends one, and saves the session. {% if lf and lf.session_state %}<span class="text-emerald-300">A session is currently saved.</span>{% endif %}</p>
+              <p class="text-xs text-slate-400 mt-0.5">Fill the login URL, username and password above, then let the assistant drive the login in a real browser — it pauses for a one-time code if the site sends one, and saves the session. If it gets stuck (captcha / bot check) it hands control to you: click &amp; type on the live page yourself, then press <b>Capture session &amp; finish</b>. {% if lf and lf.session_state %}<span class="text-emerald-300">A session is currently saved.</span>{% endif %}</p>
             </div>
             <button type="button" @click="start()" :disabled="running" :class="running && 'opacity-70 cursor-wait'" class="btn btn-primary text-sm shrink-0">
               <svg viewBox="0 0 24 24" class="h-4 w-4" :class="running && 'animate-spin'" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4m0 12v4M4.9 4.9l2.8 2.8m8.6 8.6 2.8 2.8M2 12h4m12 0h4"/></svg>
@@ -241,13 +241,37 @@
                class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/75">
             <div class="glass rounded-2xl w-full max-w-lg p-5 space-y-3">
               <div class="flex items-center justify-between">
-                <h3 class="font-semibold text-white">AI login</h3>
+                <h3 class="font-semibold text-white">AI login
+                  <span x-show="manual" x-cloak class="pill ml-1.5 !bg-amber-500/20 !text-amber-200">manual control</span>
+                </h3>
                 <button type="button" @click="close()" class="btn btn-ghost !px-2.5 !py-1">✕</button>
               </div>
-              <div class="rounded-lg overflow-hidden border border-white/10 bg-black/40 max-h-[42vh] overflow-y-auto" x-show="hasShot" x-cloak>
-                <img :src="shotUrl" alt="login page" class="block w-full">
+              <!-- Live view. In manual mode it's clickable/typeable and relays to the browser. -->
+              <div class="rounded-lg overflow-hidden border bg-black/40 max-h-[46vh] overflow-y-auto"
+                   :class="manual ? 'border-amber-400/60 cursor-crosshair' : 'border-white/10'"
+                   x-show="hasShot" x-cloak>
+                <img :src="shotUrl" alt="login page" class="block w-full select-none"
+                     @click="manual && relayClick($event)" draggable="false">
               </div>
-              <p class="text-sm font-medium" :class="errored ? 'text-red-300' : (done ? 'text-emerald-300' : 'text-brand-200')" x-text="statusLine"></p>
+              <p class="text-sm font-medium" :class="errored ? 'text-red-300' : (done ? 'text-emerald-300' : (manual ? 'text-amber-200' : 'text-brand-200'))" x-text="statusLine"></p>
+
+              <!-- Manual remote-control toolbar -->
+              <div x-show="manual && !done" x-cloak class="space-y-2 rounded-lg bg-amber-500/[.08] border border-amber-500/30 p-3">
+                <p class="text-xs text-amber-200/90">Click directly on the page above. Type below and press Type/Enter. When you can see you're logged in, press <b>Capture session &amp; finish</b>.</p>
+                <div class="flex gap-2">
+                  <input x-model="typeText" placeholder="Type here, then ↵ / Type" class="field !py-2 flex-1"
+                         @keydown.enter.prevent="relayType()">
+                  <button type="button" @click="relayType()" class="btn btn-ghost text-sm shrink-0">Type</button>
+                </div>
+                <div class="flex flex-wrap gap-1.5">
+                  <button type="button" @click="relayKey('Enter')" class="btn btn-ghost !py-1 text-xs">↵ Enter</button>
+                  <button type="button" @click="relayKey('Tab')" class="btn btn-ghost !py-1 text-xs">⇥ Tab</button>
+                  <button type="button" @click="relayKey('Backspace')" class="btn btn-ghost !py-1 text-xs">⌫</button>
+                  <button type="button" @click="relayScroll(-400)" class="btn btn-ghost !py-1 text-xs">▲ scroll</button>
+                  <button type="button" @click="relayScroll(400)" class="btn btn-ghost !py-1 text-xs">▼ scroll</button>
+                </div>
+              </div>
+
               <ul class="text-xs text-slate-500 space-y-0.5 max-h-24 overflow-y-auto">
                 <template x-for="(l, i) in log" :key="i"><li x-text="l"></li></template>
               </ul>
@@ -257,6 +281,13 @@
                   <input x-model="code" inputmode="numeric" autocomplete="one-time-code" placeholder="Enter code" class="field !py-2 flex-1" @keydown.enter.prevent="sendCode()">
                   <button type="button" @click="sendCode()" class="btn btn-primary text-sm shrink-0">Submit</button>
                 </div>
+              </div>
+
+              <!-- Mode controls -->
+              <div x-show="!done && !errored" x-cloak class="flex flex-wrap gap-2 pt-1">
+                <button type="button" x-show="!manual" @click="setMode('manual')" class="btn btn-ghost text-sm">Take over manually</button>
+                <button type="button" x-show="manual" @click="setMode('ai')" class="btn btn-ghost text-sm">Let AI continue</button>
+                <button type="button" @click="finish()" class="btn btn-primary text-sm ml-auto">Capture session &amp; finish</button>
               </div>
             </div>
           </div>
@@ -497,16 +528,40 @@ function aiSection(opts){return {
 // Interactive AI login: kick off the agent, poll its status, show the live page,
 // prompt for a one-time code, and reload once the session is saved.
 function aiLogin(mid){return {
-  mid, open:false, running:false, done:false, errored:false, needCode:false,
-  sid:null, status:'', prompt:'', log:[], code:'', hasShot:false, shotUrl:'', _poll:null,
+  mid, open:false, running:false, done:false, errored:false, needCode:false, manual:false,
+  sid:null, status:'', prompt:'', log:[], code:'', typeText:'', hasShot:false, shotUrl:'', _poll:null,
   _field(n){ const el = document.querySelector(`[name="${n}"]`); return el ? el.value : ''; },
   get statusLine(){
     if (this.errored) return this.status || 'Login failed.';
     if (this.done)    return 'Logged in — session saved. Reloading…';
     if (this.needCode) return 'Waiting for your one-time code…';
+    if (this.manual)  return this.prompt || 'Manual control — drive the page, then Capture session.';
     if (this.status === 'running') return 'Working through the login…';
     return this.status || 'Starting…';
   },
+  _restartPoll(){ if (this._poll) clearInterval(this._poll);
+    this._poll = setInterval(() => this._tick(), this.manual ? 700 : 1500); },
+  _refreshShot(){ if (this.sid) this.shotUrl = `/monitors/${this.mid}/ai-login/shot?sid=${this.sid}&t=${Date.now()}`; },
+  async setMode(m){
+    const fd = new FormData(); fd.append('mode', m);
+    try { await fetch(`/monitors/${this.mid}/ai-login/mode?sid=${this.sid}`, {method:'POST', headers:{'X-Requested-With':'fetch'}, body:fd}); } catch(e){}
+    this.manual = (m === 'manual'); this._restartPoll();
+  },
+  async _input(ev){
+    try { await fetch(`/monitors/${this.mid}/ai-login/input?sid=${this.sid}`,
+      {method:'POST', headers:{'Content-Type':'application/json','X-Requested-With':'fetch'}, body:JSON.stringify(ev)}); } catch(e){}
+    setTimeout(() => this._refreshShot(), 450);
+  },
+  relayClick(ev){
+    const r = ev.target.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    this._input({type:'click', fx:(ev.clientX-r.left)/r.width, fy:(ev.clientY-r.top)/r.height});
+  },
+  relayType(){ if (!this.typeText) return; this._input({type:'type', text:this.typeText}); this.typeText=''; },
+  relayKey(k){ this._input({type:'key', key:k}); },
+  relayScroll(dy){ this._input({type:'scroll', dy}); },
+  async finish(){ this.status='running';
+    try { await fetch(`/monitors/${this.mid}/ai-login/finish?sid=${this.sid}`, {method:'POST', headers:{'X-Requested-With':'fetch'}}); } catch(e){} },
   async start(){
     if (this.running) return;
     const username = this._field('login_username').trim();
@@ -524,7 +579,7 @@ function aiLogin(mid){return {
     } catch(e){ return this._fail('Could not start the login.'); }
     if (!d || !d.ok) return this._fail((d && d.error) || 'Could not start the login.');
     this.sid = d.sid;
-    this._poll = setInterval(() => this._tick(), 1500);
+    this._restartPoll();
   },
   async _tick(){
     let s;
@@ -533,8 +588,11 @@ function aiLogin(mid){return {
     if (!s.ok) return this._fail(s.error || 'This login session expired.');
     this.status = s.status; this.prompt = s.prompt; this.log = s.log || [];
     this.needCode = s.status === 'need_code';
-    if (s.has_shot){ this.hasShot = true; this.shotUrl = `/monitors/${this.mid}/ai-login/shot?sid=${this.sid}&t=${Date.now()}`; }
-    if (s.status === 'done'){ this.done = true; this.running = false; clearInterval(this._poll);
+    const wasManual = this.manual;
+    this.manual = (s.mode === 'manual');
+    if (this.manual !== wasManual) this._restartPoll();
+    if (s.has_shot){ this.hasShot = true; this._refreshShot(); }
+    if (s.status === 'done'){ this.done = true; this.running = false; this.manual = false; clearInterval(this._poll);
       setTimeout(() => location.reload(), 1500); }
     else if (s.status === 'error'){ this._fail(s.error || 'Login failed.'); }
   },
@@ -546,8 +604,8 @@ function aiLogin(mid){return {
   },
   _fail(m){ this.errored = true; this.running = false; this.needCode = false; this.status = m;
     if (this._poll) clearInterval(this._poll); },
-  _reset(){ this.done = this.errored = this.needCode = false; this.log = []; this.hasShot = false;
-    this.status = ''; this.prompt = ''; this.code = ''; },
+  _reset(){ this.done = this.errored = this.needCode = this.manual = false; this.log = []; this.hasShot = false;
+    this.status = ''; this.prompt = ''; this.code = ''; this.typeText = ''; },
   close(){ if (this._poll) clearInterval(this._poll); this.open = false; this.running = false; },
 }}
 </script>

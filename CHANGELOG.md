@@ -10,6 +10,13 @@ pauses for a one-time code if one is needed, and the captured session is saved
 so scheduled checks ride it.
 
 ### Added
+- **Manual remote control + AI handoff.** When the agent can't finish (captcha,
+  bot wall, OTP not entered, rejected login) it no longer hard-fails — it hands
+  control to you: the modal's live view becomes interactive (click and type
+  relayed straight to the headless browser, plus Enter/Tab/scroll), and a
+  *"Capture session & finish"* button verifies + saves whatever session you've
+  reached. You can also hit *"Take over manually"* at any time and *"Let AI
+  continue"* to hand it back. Endpoints: `/ai-login/{mode,input,finish}`.
 - **Interactive AI login agent.** A new per-monitor *"Log in automatically with
   AI"* panel: enter the login URL + username + password and the agent opens a
   real browser and decides each step from a screenshot + the page's interactive
