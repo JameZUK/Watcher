@@ -145,28 +145,40 @@ _BANNER_HEURISTIC_JS = r"""() => {
     }
     try { c.style.setProperty('display', 'none', 'important'); out.hidden++; } catch (e) {}
   }
-  // 2) generic interstitial modals (sign-in promos, newsletter/app nags, etc.)
-  // that aren't consent banners. Universal & content-safe: only TRUE modals
-  // (role=dialog / aria-modal) are considered, and we only ever click an
-  // explicit close affordance — never blind-hide — so real content modals
-  // (lightboxes, age gates, required dialogs) are left untouched.
+  // 2) generic dismissable overlays/banners that aren't consent prompts — sign-in
+  // promos, newsletter/app nags, toasts (e.g. BBC's "Close sign in banner").
+  // Content-safe: we ONLY click an explicit close/dismiss control, never hide, so
+  // real content/modals (lightboxes, age gates) are left untouched.
   const closeRx = /^(close|no thanks|no,? thanks|not now|maybe later|dismiss|skip|×|✕|✖|⨯|✗)$/i;
-  const ariaCloseRx = /\b(close|dismiss|no thanks)\b/i;
-  for (const el of document.querySelectorAll('[role="dialog"],[aria-modal="true"]')) {
-    let cs; try { cs = getComputedStyle(el); } catch (e) { continue; }
-    if (!vis(el)) continue;
-    const r = el.getBoundingClientRect();
-    if (r.width < 200 || r.height < 120) continue;          // tooltips/popovers: skip
-    let closeBtn = null;
+  // "Close <thing>" only for UI-ish things (so we never click "Close account").
+  const closePhraseRx = /^(close|dismiss|hide)\b.*\b(banner|message|dialog|popup|pop-?up|notification|notice|modal|overlay|bar|sign[- ]?in|promo|panel|toast|alert|prompt)\b/i;
+  const ariaCloseRx = /^(close|dismiss|no thanks)\b/i;
+  const findClose = (el) => {
     for (const b of el.querySelectorAll('button,a[href],[role="button"]')) {
       const br = b.getBoundingClientRect();
       if (br.width < 4 || br.height < 4) continue;
       const txt = ((b.innerText || b.value || '')).trim();
-      const aria = (b.getAttribute('aria-label') || '') + ' ' + (b.getAttribute('title') || '');
-      if ((txt && txt.length <= 20 && closeRx.test(txt)) || ariaCloseRx.test(aria)) { closeBtn = b; break; }
+      const aria = ((b.getAttribute('aria-label') || b.getAttribute('title') || '')).trim();
+      if ((txt && txt.length <= 40 && (closeRx.test(txt) || closePhraseRx.test(txt)))
+          || (aria && (ariaCloseRx.test(aria) || closePhraseRx.test(aria)))) return b;
     }
-    if (closeBtn) { try { closeBtn.click(); out.clicked++; } catch (e) {} }
+    return null;
+  };
+  const closers = new Set();
+  const cont = 'div,section,aside,[role="dialog"],[role="alertdialog"],[aria-modal="true"],[role="banner"],[class*="banner" i],[class*="promo" i]';
+  for (const el of document.querySelectorAll(cont)) {
+    let cs; try { cs = getComputedStyle(el); } catch (e) { continue; }
+    if (!vis(el)) continue;
+    const r = el.getBoundingClientRect();
+    const modal = el.matches('[role="dialog"],[role="alertdialog"],[aria-modal="true"]');
+    // a banner is wide, not tiny, and not most of the page (that'd be content)
+    const bannerish = r.width >= innerWidth * 0.4 && r.height >= 40 && r.height <= innerHeight * 0.7;
+    if (modal) { if (r.width < 200 || r.height < 120) continue; }
+    else if (!bannerish) continue;
+    const b = findClose(el);
+    if (b) closers.add(b);
   }
+  for (const b of closers) { try { b.click(); out.clicked++; } catch (e) {} }
   // undo scroll-lock the banner may have applied
   document.documentElement.style.setProperty('overflow', 'auto', 'important');
   if (document.body) {
@@ -319,6 +331,54 @@ async def hide_banners(page, monitor: Monitor) -> list | None:
     return list(dict.fromkeys(walls))[:2] or None
 
 
+# Detect a LARGE positioned overlay still covering the page after every automatic
+# pass — a paywall / full-screen interstitial the heuristic couldn't dismiss.
+# High-precision: positioned + big + has a control, so it's an obstruction, not a
+# header/toolbar/widget or static article content. Its HTML feeds the AI fallback.
+_OBSTRUCTION_JS = r"""() => {
+  const vis = (el) => { let cs; try{cs=getComputedStyle(el);}catch(e){return false;}
+    if (cs.display==='none'||cs.visibility==='hidden'||parseFloat(cs.opacity||'1')===0) return false;
+    return true; };
+  const cands = [];
+  for (const el of document.querySelectorAll('div,section,aside,dialog,[role="dialog"],[role="alertdialog"]')) {
+    let cs; try{cs=getComputedStyle(el);}catch(e){continue;}
+    if(!vis(el))continue;
+    const positioned = cs.position==='fixed'||cs.position==='sticky'||(cs.position==='absolute'&&parseInt(cs.zIndex||'0',10)>=50);
+    if(!positioned)continue;                                   // an obstruction overlays content
+    const r = el.getBoundingClientRect();
+    const big = (r.width*r.height)>=innerWidth*innerHeight*0.35 && r.width>=innerWidth*0.5 && r.height>=innerHeight*0.3;
+    if(!big)continue;
+    const t=(el.innerText||''); if(t.length<8||t.length>4000)continue;
+    if(!el.querySelector('button,a[href],[role="button"],input'))continue;   // has an actionable control
+    cands.push(el);
+  }
+  const overlays = cands.filter(el => !cands.some(o => o!==el && o.contains(el)));
+  const out=[];
+  for(const c of overlays.slice(0,1)){
+    let html=(c.outerHTML||'').replace(/<(script|style|svg|path|noscript)[\s\S]*?<\/\1>/gi,'');
+    out.push(html.slice(0,4000));
+  }
+  return out;
+}"""
+
+
+async def detect_obstructions(page, monitor: Monitor) -> list | None:
+    """HTML of any large positioned overlay still covering the page after the
+    automatic passes (a paywall / interstitial the heuristic couldn't dismiss),
+    main + same-origin frames. Feeds the AI dismiss-selector fallback. None if clear."""
+    if not getattr(monitor, "block_annoyances", True):
+        return None
+    found: list[str] = []
+    for frame in page.frames:
+        try:
+            found += await frame.evaluate(_OBSTRUCTION_JS) or []
+        except Exception:
+            pass
+        if found:
+            break
+    return list(dict.fromkeys(found))[:1] or None
+
+
 async def replay_login(page, monitor: Monitor) -> None:
     """Run the monitor's login flow steps, substituting decrypted secrets."""
     flow = monitor.login_flow
@@ -461,9 +521,14 @@ async def capture(page, response, monitor: Monitor, mobile: bool = True) -> Rend
 
     # Final sweep right before the screenshot so a banner that mounted during
     # text extraction is gone from the image too. Its walls (any blocking banner
-    # we could only hide, not accept) feed the runner's optional AI fallback.
+    # we could only hide, not accept) PLUS any large positioned overlay still
+    # covering the page (a paywall/interstitial the heuristic couldn't dismiss)
+    # feed the runner's optional AI dismiss-selector fallback.
     try:
-        result.unhandled_consent_html = await hide_banners(page, monitor)
+        walls = await hide_banners(page, monitor) or []
+        obstr = await detect_obstructions(page, monitor) or []
+        merged = list(dict.fromkeys([*walls, *obstr]))[:2]
+        result.unhandled_consent_html = merged or None
     except Exception:
         result.unhandled_consent_html = None
 

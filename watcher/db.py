@@ -58,7 +58,7 @@ _ADDED_COLUMNS = {
         "consecutive_failures": "INTEGER DEFAULT 0",
         "tags": "JSON", "adaptive_interval": "BOOLEAN DEFAULT 0",
         "group_id": "INTEGER", "block_annoyances": "BOOLEAN DEFAULT 1",
-        "consent_clicks": "JSON",
+        "consent_clicks": "JSON", "consent_ai_tried": "BOOLEAN DEFAULT 0",
     },
     "groups": {
         "watch_intent": "TEXT", "kind": "VARCHAR(16) DEFAULT 'price'",

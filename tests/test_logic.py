@@ -287,7 +287,7 @@ def _consent_args(monkeypatch, *, returned_selectors, ai_on=True, key="k",
     monkeypatch.setattr(R, "get_openrouter_key", lambda app: key)
 
     app = N(ai_enabled=ai_on, ai_model="m", ai_base_url=None)
-    monitor = N(block_annoyances=True, ai_enabled=True, id=1,
+    monitor = N(block_annoyances=True, ai_enabled=True, id=1, consent_ai_tried=False,
                 url="https://x", consent_clicks=list(existing or []))
     result = N(unhandled_consent_html=list(walls) if walls else None)
     return R, app, monitor, result, _fake_suggest
@@ -299,6 +299,19 @@ def test_maybe_learn_consent_caches_selectors(monkeypatch):
         monkeypatch, returned_selectors=["#accept-all", "button.ok"])
     asyncio.run(R._maybe_learn_consent(app, monitor, result))
     assert monitor.consent_clicks == ["#accept-all", "button.ok"]
+    assert monitor.consent_ai_tried is True
+
+
+def test_maybe_learn_consent_one_shot_even_when_ai_returns_nothing(monkeypatch):
+    """A persistent overlay the AI can't solve must NOT re-spend tokens: after one
+    empty result, consent_ai_tried is set and a second call is a no-op."""
+    import asyncio
+    R, app, monitor, result, stub = _consent_args(monkeypatch, returned_selectors=None)
+    asyncio.run(R._maybe_learn_consent(app, monitor, result))
+    assert monitor.consent_ai_tried is True and monitor.consent_clicks == []
+    stub.kw = None                      # reset call marker
+    asyncio.run(R._maybe_learn_consent(app, monitor, result))
+    assert stub.kw is None              # not called again — bounded to one attempt
 
 
 def test_maybe_learn_consent_skips_when_no_wall(monkeypatch):

@@ -141,16 +141,18 @@ async def _extract_value(app, monitor, result):
 
 async def _maybe_learn_consent(app, monitor, result) -> None:
     """Self-healing AI fallback: when the automatic handler leaves a consent
-    banner showing, ask the model for dismiss selectors ONCE and cache them on
-    the monitor so the next render clears it. No-op unless AI is on, the monitor
-    blocks annoyances, a banner remains, and we haven't already learned/​been told
-    selectors (so cost is bounded to ~one call per site)."""
+    banner / large overlay showing, ask the model ONCE for dismiss selectors and
+    cache them on the monitor so the next render clears it. No-op unless AI is on,
+    the monitor blocks annoyances, and an obstruction remains. Bounded to a SINGLE
+    AI call per monitor (consent_ai_tried), even when the model returns nothing,
+    so a persistent unsolvable overlay can't re-spend tokens every render."""
     if not getattr(monitor, "block_annoyances", True):
         return
     snippets = getattr(result, "unhandled_consent_html", None)
     if not snippets:
         return
-    if monitor.consent_clicks:           # already have manual/learned selectors — don't re-spend
+    # Already have manual/learned selectors, or already spent our one AI attempt.
+    if monitor.consent_clicks or getattr(monitor, "consent_ai_tried", False):
         return
     if not (monitor.ai_enabled and app.ai_enabled):
         return
@@ -158,6 +160,7 @@ async def _maybe_learn_consent(app, monitor, result) -> None:
     if not key:
         return
     from .ai import suggest_consent_selectors
+    monitor.consent_ai_tried = True          # one-shot, regardless of outcome
     sels = await suggest_consent_selectors(
         api_key=key, model=app.ai_model, base_url=app.ai_base_url,
         url=monitor.url, html_snippets=snippets,
