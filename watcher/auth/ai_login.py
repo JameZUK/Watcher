@@ -85,6 +85,7 @@ class LoginSession:
     _native_human: bool = False   # engine humanises input itself (Camoufox)
     _shot_needs_stop: bool = False  # this page never stops loading; halt before shot
     _shot_url: str = ""           # url the above was decided for
+    _shot_url_since: float = 0.0  # when we first saw _shot_url (grace before halting)
 
     def submit_code(self, code: str) -> None:
         self._code = (code or "").strip()
@@ -1059,9 +1060,12 @@ async def _shot_clip(page):
     """Capture exactly the visible page (innerWidth × innerHeight), so the live
     view never crops the page (Camoufox renders wider than the viewport) and never
     pads it with blank space (Camoufox's innerHeight < the viewport). Reading the
-    sizes each frame means it auto-adapts to whatever window the engine chose."""
+    sizes each frame means it auto-adapts to whatever window the engine chose.
+    Bounded so a mid-navigation evaluate can't block the stream."""
     try:
-        vw, vh = await page.evaluate("() => [Math.ceil(window.innerWidth), Math.ceil(window.innerHeight)]")
+        vw, vh = await asyncio.wait_for(
+            page.evaluate("() => [Math.ceil(window.innerWidth), Math.ceil(window.innerHeight)]"),
+            timeout=1.2)
         if vw and vh:
             return {"x": 0, "y": 0, "width": int(vw), "height": int(vh)}
     except Exception:
@@ -1077,12 +1081,14 @@ async def _shot(session, page) -> None:
     and capture the current rendered state. We remember per-URL that a page needs
     the stop so we don't pay the timeout every frame. The clip keeps the view to
     exactly the visible page on every engine/window size."""
+    now = time.monotonic()
     try:
         cur = page.url or ""
     except Exception:
         cur = ""
     if cur != session._shot_url:          # new page → re-probe the fast path
         session._shot_url = cur
+        session._shot_url_since = now
         session._shot_needs_stop = False
     clip = await _shot_clip(page)
     kw = {"clip": clip} if clip else {"full_page": False}
@@ -1091,6 +1097,12 @@ async def _shot(session, page) -> None:
             session.screenshot = await page.screenshot(type="png", timeout=1500, **kw)
             return
         except Exception:
+            # Only escalate to window.stop() once the URL has been STABLE a moment.
+            # Halting mid-navigation aborts a redirect (e.g. the OAuth handoff
+            # oauth2/code → secure.indeed.com), which hangs the login. While the URL
+            # is fresh, just skip the frame and let the redirect proceed.
+            if (now - session._shot_url_since) < 3.0:
+                return
             session._shot_needs_stop = True
     try:
         await page.evaluate("() => { try { window.stop(); } catch (e) {} }")
