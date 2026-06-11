@@ -234,6 +234,24 @@ def test_netsec_blocks_internal_targets_and_encodings():
     assert validate_proxy(None) is None
 
 
+def test_looks_blocked_detects_antibot_walls():
+    """A cold deep-link that hit an anti-bot wall (4xx or a short challenge
+    interstitial) is flagged for a warm-up retry; real content is not."""
+    from watcher.engines._common import _looks_blocked
+    # HTTP status walls
+    assert _looks_blocked(N(status=403), "")
+    assert _looks_blocked(N(status=401), "anything")
+    assert _looks_blocked(N(status=429), "")
+    # short challenge interstitial at HTTP 200 (Glassdoor "Humans only")
+    assert _looks_blocked(N(status=200), "Humans only\nWe use advanced security systems")
+    assert _looks_blocked(None, "Just a moment...")
+    # real content is NOT blocked
+    assert not _looks_blocked(N(status=200), "x" * 4000)
+    # a long page that merely mentions a phrase isn't a challenge
+    assert not _looks_blocked(N(status=200), "great company " * 200 + "humans only")
+    assert not _looks_blocked(N(status=200), "normal page content here")
+
+
 def test_render_gate_is_transient_tolerant():
     """The render-time SSRF gate blocks resolved-internal/bad-scheme targets but
     NOT a transient resolution failure (so a DNS blip can't auto-pause a monitor)."""

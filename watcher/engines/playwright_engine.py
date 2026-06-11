@@ -18,6 +18,7 @@ from ._common import (
     replay_login,
     reveal_full_content,
     setup_blocking,
+    warm_up_if_blocked,
 )
 from .base import RenderResult
 
@@ -80,6 +81,10 @@ class PlaywrightRenderer:
                     wait_until=monitor.wait_until,
                     timeout=monitor.wait_timeout_ms,
                 )
+                # Site-root warm-up to clear a cold-deep-link anti-bot wall.
+                warmed = await warm_up_if_blocked(page, response, monitor)
+                if warmed is not None:
+                    response = warmed
                 await do_wait(page, monitor)
                 await apply_actions(page, monitor)
 

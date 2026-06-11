@@ -6,6 +6,7 @@ and capture are identical regardless of the underlying browser.
 
 from __future__ import annotations
 
+import asyncio
 import json as _json
 from urllib.parse import urlparse
 
@@ -490,6 +491,63 @@ async def do_wait(page, monitor: Monitor) -> None:
             await page.wait_for_selector(monitor.wait_selector, timeout=monitor.wait_timeout_ms)
         except Exception:
             pass
+
+
+# Signatures of anti-bot interstitials that a clearance cookie typically clears.
+_CHALLENGE_TEXT = (
+    "humans only", "just a moment", "checking your browser",
+    "verify you are human", "cf-browser-verification", "enable javascript and cookies",
+)
+
+
+async def _body_text(page) -> str:
+    try:
+        return await asyncio.wait_for(
+            page.evaluate("() => (document.body && document.body.innerText) || ''"),
+            timeout=3,
+        )
+    except Exception:
+        return ""
+
+
+def _looks_blocked(response, body_text: str) -> bool:
+    """A cold deep-link hit an anti-bot wall (HTTP 401/403/429 or a known
+    challenge interstitial) rather than real content."""
+    if response is not None and getattr(response, "status", None) in (401, 403, 429):
+        return True
+    low = (body_text or "").lower()
+    # Short page + a challenge phrase → interstitial, not content.
+    return len(low) < 1500 and any(sig in low for sig in _CHALLENGE_TEXT)
+
+
+async def warm_up_if_blocked(page, response, monitor: Monitor):
+    """Recover a cold deep-link that anti-bot turned away.
+
+    Many sites (Cloudflare, and Glassdoor's review pagination) reject a request
+    that lands straight on a deep URL with an empty cookie jar, but serve the
+    same page once the browser holds a clearance cookie obtained from the site
+    root. If the first navigation looks blocked, visit the origin to pick up
+    that cookie, then retry the target with a same-site referer (in the SAME
+    context, so the cookie carries over). Returns the new response on a retry,
+    else None. Never raises — a failed warm-up just leaves the original result.
+    """
+    if not _looks_blocked(response, await _body_text(page)):
+        return None
+    u = urlparse(monitor.url)
+    if not u.scheme or not u.netloc:
+        return None
+    origin = f"{u.scheme}://{u.netloc}/"
+    if origin.rstrip("/") == monitor.url.rstrip("/"):
+        return None  # the target IS the root — nothing to warm up from
+    try:
+        await page.goto(origin, wait_until=monitor.wait_until, timeout=monitor.wait_timeout_ms)
+        await asyncio.sleep(1.5)
+        return await page.goto(
+            monitor.url, wait_until=monitor.wait_until,
+            timeout=monitor.wait_timeout_ms, referer=origin,
+        )
+    except Exception:
+        return None
 
 
 async def capture(page, response, monitor: Monitor, mobile: bool = True) -> RenderResult:

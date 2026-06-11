@@ -26,6 +26,7 @@ from ._common import (
     replay_login,
     reveal_full_content,
     setup_blocking,
+    warm_up_if_blocked,
 )
 from .base import RenderResult
 
@@ -70,6 +71,12 @@ class CamoufoxRenderer:
                     wait_until=monitor.wait_until,
                     timeout=monitor.wait_timeout_ms,
                 )
+                # A cold deep-link can hit an anti-bot wall (e.g. Glassdoor's
+                # "Humans only"); a site-root warm-up that banks a clearance
+                # cookie usually clears it. No-op when the first hit succeeded.
+                warmed = await warm_up_if_blocked(page, response, monitor)
+                if warmed is not None:
+                    response = warmed
                 await do_wait(page, monitor)
                 await apply_actions(page, monitor)
 
