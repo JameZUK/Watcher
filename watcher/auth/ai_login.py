@@ -162,6 +162,9 @@ async def run_agent(
         session.log.append(f"Opening {session.url}")
         await page.goto(session.url, wait_until=wait_until, timeout=45000)
 
+        last_sig = None
+        stuck = 0
+        none_retry = 0
         for _ in range(MAX_STEPS):
             await _settle(page)
             try:
@@ -172,16 +175,36 @@ async def run_agent(
                 session.screenshot = await page.screenshot(full_page=False, type="png")
             except Exception:
                 pass
+            labels = {e.get("idx"): (e.get("label") or e.get("placeholder") or e.get("aria")
+                                     or e.get("name") or f"element {e.get('idx')}") for e in elements}
+
+            # Stuck detection: if the interactive elements (incl. their filled-ness)
+            # don't change across steps, our actions aren't doing anything — almost
+            # always an anti-bot / bot-detection wall on the login page.
+            sig = tuple((e.get("tag"), e.get("type"), e.get("label"), e.get("filled")) for e in elements)
+            stuck = stuck + 1 if (sig == last_sig and history) else 0
+            last_sig = sig
+            if stuck >= 2 and await _is_bot_wall(page):
+                session.status, session.error = "error", _WALL_MSG
+                return
 
             action = await action_fn(elements=elements, screenshot_png=session.screenshot,
                                      available=available, history=history, code_pending=code_pending)
             code_pending = False
             if not action:
-                session.status, session.error = "error", "The assistant couldn't decide a next step."
+                if none_retry < 1:            # a transient hiccup — try once more
+                    none_retry += 1
+                    await page.wait_for_timeout(800)
+                    continue
+                session.status = "error"
+                session.error = (_WALL_MSG if await _is_bot_wall(page)
+                                 else "The assistant couldn't work out the next step on this page.")
                 return
+            none_retry = 0
             a = action.get("action")
             _raw_idx = action.get("index", -1)
             idx = int(_raw_idx) if _raw_idx is not None else -1   # NB: index 0 is valid
+            label = labels.get(idx, f"element {idx}")
             sel = f'[data-ai-idx="{idx}"]'
             history.append(f"{a}{('#' + str(idx)) if idx >= 0 else ''}"
                            f"{(' ' + action['secret']) if action.get('secret') else ''}")
@@ -190,24 +213,26 @@ async def run_agent(
                 break
             if a == "fail":
                 session.status = "error"
-                session.error = action.get("reason") or "Login could not proceed."
+                session.error = (action.get("reason") or "Login could not proceed.")
+                if await _is_bot_wall(page):
+                    session.error = _WALL_MSG
                 return
             if a == "type":
                 val = session.secrets.get(action.get("secret") or "", "")
-                session.log.append(f"Enter {action.get('secret') or 'value'}")
+                session.log.append(f"Enter {action.get('secret') or 'value'} into “{label[:40]}”")
                 if val and idx >= 0:
                     try:
                         await page.fill(sel, val)
                     except Exception:
                         pass
             elif a == "type_text":
-                session.log.append("Enter a value")
+                session.log.append(f"Enter a value into “{label[:40]}”")
                 try:
                     await page.fill(sel, action.get("text") or "")
                 except Exception:
                     pass
             elif a == "click":
-                session.log.append(f"Click “{_elem_label(action, idx)}”")
+                session.log.append(f"Click “{label[:50]}”")
                 try:
                     await page.click(sel, timeout=8000)
                 except Exception:
@@ -248,8 +273,29 @@ async def run_agent(
             await close()
 
 
-def _elem_label(action: dict, idx: int) -> str:
-    return action.get("reason") or f"element {idx}"
+_WALL_MSG = (
+    "The site is showing an anti-bot / bot-detection check on its login page, so "
+    "automated login can't get through it. Log in manually in your own browser "
+    "and paste a session cookie instead (Session cookies, below)."
+)
+
+
+async def _is_bot_wall(page) -> bool:
+    """Heuristic: are we stuck on an anti-bot / bot-detection / challenge page?"""
+    try:
+        url = (page.url or "").lower()
+    except Exception:
+        url = ""
+    if any(m in url for m in ("bot-detection", "/cdn-cgi/", "challenge", "captcha")):
+        return True
+    try:
+        txt = (await page.evaluate(
+            "() => ((document.body && document.body.innerText) || '').slice(0,3000)")).lower()
+    except Exception:
+        txt = ""
+    return any(m in txt for m in (
+        "just a moment", "verify you are human", "unusual activity", "are you a robot",
+        "checking your browser", "access denied", "bot detection", "px-captcha"))
 
 
 async def _settle(page) -> None:
