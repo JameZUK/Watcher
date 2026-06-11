@@ -422,6 +422,26 @@ def test_login_session_code_event():
     asyncio.run(_t())
 
 
+def test_login_flow_save_preserves_session():
+    """Re-saving a monitor with the SAME login steps must NOT wipe a session the
+    AI login (or a cookie paste) captured — only a CHANGE to the steps does."""
+    from watcher.web.routes.monitors import _build_login_flow
+    from watcher.models import LoginFlow, Monitor
+
+    saved = {"cookies": [{"name": "sess", "domain": "example.com"}]}
+    steps = [{"action": "goto", "url": "https://example.com/login"}]
+
+    monitor = Monitor(id=1, url="https://example.com/page")
+    monitor.login_flow = LoginFlow(monitor_id=1, steps=list(steps), session_state=dict(saved))
+    out = _build_login_flow(monitor, {"login_enabled": "1", "login_url": "https://example.com/login"})
+    assert out.session_state == saved   # same config → session preserved
+
+    # Changing the login URL DOES invalidate the stale session.
+    monitor.login_flow = LoginFlow(monitor_id=1, steps=list(steps), session_state=dict(saved))
+    out2 = _build_login_flow(monitor, {"login_enabled": "1", "login_url": "https://example.com/other"})
+    assert out2.session_state is None
+
+
 def test_is_code_field():
     """One-time-code fields are recognised (so a filled code page is never
     mistaken for the signed-in page, and credentials aren't typed into them)."""

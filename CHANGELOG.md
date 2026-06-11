@@ -57,6 +57,11 @@ so scheduled checks ride it.
   For federated logins, the credential popup closing IS the success — so a
   successful login is now captured even when the original page doesn't refresh to
   a signed-in state. A staying-open popup back at the wall is still a rejection.
+- **Saving the monitor no longer wipes a captured session.** Re-saving a monitor
+  whose login section was filled in cleared `session_state` whenever login steps
+  existed — so a session the AI login (or a cookie paste) had just stored was
+  destroyed on the next form save, leaving checks with no cookies. The session is
+  now only invalidated when the login steps actually **change**.
 - **The saved session is now verified before success is claimed.** After the flow
   finishes, the page is reloaded with the captured session and checked that it no
   longer shows a sign-in page. This catches a login the site *silently rejected*

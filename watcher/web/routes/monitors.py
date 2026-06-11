@@ -241,13 +241,15 @@ def _build_login_flow(monitor: Monitor, form) -> LoginFlow | None:
     flow = monitor.login_flow or LoginFlow(monitor_id=monitor.id)
 
     # Steps mirror the login section exactly: unticking the box removes them.
+    old_steps = flow.steps
     flow.steps = steps
     if login_enabled:
         new_secrets = build_secret_map({k: v for k, v in secrets_plain.items() if v})
         flow.encrypted_secrets = {**(flow.encrypted_secrets or {}), **new_secrets}
-        if steps:
-            # Newly configured steps invalidate any stale captured session,
-            # unless the same submit also pastes a fresh cookie set (below).
+        if steps and steps != old_steps:
+            # Only a CHANGE to the login steps invalidates a captured session —
+            # re-saving the same config must NOT wipe a session the AI login (or a
+            # cookie paste) stored. A fresh cookie paste below can still override.
             flow.session_state = None
             flow.session_valid_until = None
     else:
