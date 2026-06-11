@@ -508,14 +508,18 @@ _CONSENT_SCHEMA = {
 }
 
 _CONSENT_SYSTEM = (
-    "You are given the HTML of a cookie/consent/privacy banner or modal that a "
-    "headless browser FAILED to dismiss automatically. Return 1-4 CSS selectors "
-    "that, clicked IN ORDER, accept or close it so the underlying page is usable. "
-    "Prefer an 'accept all' / 'agree' / 'OK' / 'got it' control; otherwise a "
-    "close / 'X' button. NEVER choose 'reject', 'decline', 'manage', or "
-    "'settings' (they open more dialogs). Use the most stable selector available "
-    "(id, data-* attribute, aria-label, or a unique class) and make it valid CSS "
-    "that querySelector accepts. Respond ONLY with the JSON."
+    "You are given the HTML of an overlay obscuring a web page that a headless "
+    "browser FAILED to dismiss automatically — a cookie/consent/privacy banner, "
+    "or a promotional / sign-in / newsletter / app-install interstitial. Return "
+    "1-4 CSS selectors that, clicked IN ORDER, accept or close it so the "
+    "underlying page is usable. For consent: prefer an 'accept all' / 'agree' / "
+    "'OK' control. For a promo/sign-in nag: prefer its close / dismiss / 'X' / "
+    "'no thanks' / 'continue without' control. NEVER choose 'reject', 'decline', "
+    "'manage', 'settings', or 'sign in' / 'register' (those open more dialogs or "
+    "navigate away). If the HTML is an image/slider CAPTCHA or anti-bot challenge "
+    "you cannot dismiss by a single click, return an EMPTY selectors array. Use "
+    "the most stable selector (id, data-* attribute, aria-label, or unique class) "
+    "and make it valid CSS that querySelector accepts. Respond ONLY with the JSON."
 )
 
 

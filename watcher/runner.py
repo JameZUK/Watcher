@@ -294,6 +294,27 @@ def _blocked_reason(result) -> str | None:
     return None
 
 
+_HELP_MARKERS = ("datadome", "cloudflare", "perimeterx", "incapsula", "anti-bot",
+                 "captcha", "challenge", "waf", "http 401", "http 403", "access denied")
+
+
+def _help_hint(reason: str | None) -> str:
+    """If a failure looks like a captcha / anti-bot wall or a login gate, append
+    concrete, actionable guidance so the alert tells the user how to fix it. A
+    headless browser (even stealth) can't solve an image/slider captcha, so the
+    honest remedy is a real session cookie."""
+    r = (reason or "").lower()
+    if not any(m in r for m in _HELP_MARKERS):
+        return ""
+    return (
+        "\n\nNeeds your help: this page is guarded by a captcha / anti-bot system "
+        "(or requires login) that automated stealth can't reliably pass. Open this "
+        "monitor → Session cookies and paste a Cookie Editor JSON export taken from "
+        "a browser where the page loads normally — sign in first for login-gated "
+        "pages. That carries the clearance/login cookie so future checks succeed."
+    )
+
+
 async def check_monitor(monitor_id: int) -> None:
     """Run one full check cycle for a monitor. Safe to call concurrently."""
     async with _semaphore:
@@ -342,14 +363,17 @@ async def check_monitor(monitor_id: int) -> None:
             monitor.last_checked_at = utcnow()
 
             if not result.ok:
-                await _fail(session, monitor, snap, error=result.error, http_status=result.http_status)
+                await _fail(session, monitor, snap,
+                            error=(result.error or "") + _help_hint(result.error),
+                            http_status=result.http_status)
                 return
 
             # Surface anti-bot blocks / challenge pages as errors rather than
-            # silently storing an empty "ok" snapshot.
+            # silently storing an empty "ok" snapshot. A captcha/anti-bot block
+            # gets actionable "add session cookies" guidance in the alert.
             blocked = _blocked_reason(result)
             if blocked:
-                await _fail(session, monitor, snap, error=blocked,
+                await _fail(session, monitor, snap, error=blocked + _help_hint(blocked),
                             http_status=result.http_status, title=result.title)
                 return
 

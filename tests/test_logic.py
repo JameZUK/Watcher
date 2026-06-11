@@ -326,3 +326,20 @@ def test_maybe_learn_consent_skips_when_ai_off(monkeypatch):
     asyncio.run(R._maybe_learn_consent(app, monitor, result))
     assert monitor.consent_clicks == []
     assert stub.kw is None
+
+
+# --- captcha/anti-bot "needs help" alert hint --------------------------------
+
+def test_help_hint_fires_on_antibot_and_login():
+    from watcher.runner import _help_hint
+    for reason in ("Blocked — HTTP 403 · DataDome anti-bot protection",
+                   "Blocked — HTTP 401 · Cloudflare anti-bot protection",
+                   "Blocked — PerimeterX challenge page (no content rendered)"):
+        h = _help_hint(reason)
+        assert "Needs your help" in h and "Session cookies" in h, reason
+
+def test_help_hint_silent_on_ordinary_errors():
+    from watcher.runner import _help_hint
+    assert _help_hint("Timeout 30000ms exceeded") == ""
+    assert _help_hint("net::ERR_NAME_NOT_RESOLVED") == ""
+    assert _help_hint(None) == ""
