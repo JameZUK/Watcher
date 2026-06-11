@@ -22,7 +22,6 @@
       {% if unacked.get(m.id) %}
       <span class="absolute top-3 right-3 pill pill-amber font-semibold backdrop-blur">{{ unacked[m.id] }} new</span>
       {% endif %}
-      <span class="absolute top-3 left-3 pill backdrop-blur">{{ mode_label.get(m.detection_mode.value, m.detection_mode.value) }}</span>
       {% if m.id in blocked %}
       <span class="absolute bottom-3 left-3 pill backdrop-blur" style="background:rgba(239,68,68,.18);border-color:rgba(239,68,68,.35);color:#fca5a5;">⚠ last check failed</span>
       {% endif %}
@@ -36,9 +35,9 @@
           <p class="text-xs truncate" title="{{ m.url }}"><span class="text-slate-400">{{ m.url|url_host }}</span><span class="text-slate-600">{{ m.url|url_path_short(28) }}</span></p>
         </div>
       </div>
-      <div class="mon-foot mt-auto flex items-center justify-between text-xs text-slate-500">
-        <span>every {{ m.interval_seconds|interval }} · {{ m.engine.value }}</span>
-        <span class="{{ 'text-amber-400' if m.last_change_at else '' }}">
+      <div class="mon-foot mt-auto flex items-center justify-between gap-2 text-xs text-slate-500">
+        <span class="truncate">{{ mode_label.get(m.detection_mode.value, m.detection_mode.value) }} · every {{ m.interval_seconds|interval }} · {{ m.engine.value }}</span>
+        <span class="shrink-0 {{ 'text-amber-400' if m.last_change_at else '' }}">
           {% if m.last_change_at %}changed {{ m.last_change_at|timeago }}{% else %}checked {{ m.last_checked_at|timeago }}{% endif %}
         </span>
       </div>
