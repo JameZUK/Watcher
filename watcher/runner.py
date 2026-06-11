@@ -202,8 +202,13 @@ def _is_transient(result) -> bool:
     return result.http_status is None or result.http_status >= 500
 
 
-async def _fail(session, monitor, snap, *, error, http_status, title=None) -> None:
-    """Record an error snapshot, bump the failure streak, and alert / auto-pause."""
+async def _fail(session, monitor, snap, *, error, http_status, title=None, result=None) -> None:
+    """Record an error snapshot, bump the failure streak, and alert / auto-pause.
+
+    When a render produced a page (a block / captcha / challenge interstitial),
+    `result` carries it — we persist the screenshot + HTML on the error snapshot
+    so block pages can be reviewed afterwards (they're content-addressed, so
+    repeated identical blocks dedupe to a single blob)."""
     flow = monitor.login_flow
     if flow and flow.session_state and not session_is_valid(flow):
         error = (error or "Check failed") + (
@@ -213,6 +218,20 @@ async def _fail(session, monitor, snap, *, error, http_status, title=None) -> No
     snap.error = error
     snap.http_status = http_status
     snap.title = title
+    if result is not None:
+        try:
+            if result.screenshot_png:
+                snap.screenshot_blob = blobs.put_bytes(result.screenshot_png)
+            if getattr(result, "screenshot_mobile_png", None):
+                snap.screenshot_mobile_blob = blobs.put_bytes(result.screenshot_mobile_png)
+            if result.html:
+                snap.html_blob = blobs.put_text(result.html)
+                snap.dom_hash = _hash(result.html)
+            if result.title and not snap.title:
+                snap.title = result.title
+        except Exception:
+            logging.getLogger("watcher").warning(
+                "could not persist block-page capture for monitor %s", monitor.id)
     session.add(snap)
     prev = monitor.consecutive_failures or 0
     monitor.consecutive_failures = prev + 1
@@ -368,16 +387,17 @@ async def check_monitor(monitor_id: int) -> None:
             if not result.ok:
                 await _fail(session, monitor, snap,
                             error=(result.error or "") + _help_hint(result.error),
-                            http_status=result.http_status)
+                            http_status=result.http_status, result=result)
                 return
 
             # Surface anti-bot blocks / challenge pages as errors rather than
             # silently storing an empty "ok" snapshot. A captcha/anti-bot block
-            # gets actionable "add session cookies" guidance in the alert.
+            # gets actionable "add session cookies" guidance in the alert, and the
+            # block page itself is saved (result=) for later review.
             blocked = _blocked_reason(result)
             if blocked:
                 await _fail(session, monitor, snap, error=blocked + _help_hint(blocked),
-                            http_status=result.http_status, title=result.title)
+                            http_status=result.http_status, title=result.title, result=result)
                 return
 
             # A render that yielded no usable artifacts (e.g. the browser/driver
@@ -386,7 +406,7 @@ async def check_monitor(monitor_id: int) -> None:
                         result.screenshot_png)):
                 await _fail(session, monitor, snap,
                             error="Empty render — the browser returned no content (engine/driver crash or block)",
-                            http_status=result.http_status, title=result.title)
+                            http_status=result.http_status, title=result.title, result=result)
                 return
 
             # Success — clear any failure streak (and announce a recovery).

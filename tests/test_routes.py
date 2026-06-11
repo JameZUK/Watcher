@@ -571,3 +571,60 @@ def test_check_now_returns_json_and_status_polls():
         return True
 
     assert _run(_t)
+
+
+# --- block-page capture: store the interstitial on failure --------------------
+
+def test_blocked_render_persists_block_page():
+    """A blocked/challenge render saves its screenshot + HTML on the error
+    snapshot (content-addressed), and the detail page surfaces it for review."""
+    async def _t():
+        from types import SimpleNamespace
+        from watcher.config import settings
+        from watcher.main import create_app
+        from watcher import runner
+        from watcher.storage import blobs
+        from watcher.models import User, Monitor, Snapshot, Engine, DetectionMode, SnapshotStatus
+        settings.registration_open = True
+        app = create_app()
+        transport = httpx.ASGITransport(app=app)
+        email = _email()
+        async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                     headers={"Origin": "http://t"}, follow_redirects=True) as c:
+            await c.post("/register", data={"email": email, "password": "password123"})
+            await c.post("/login", data={"email": email, "password": "password123"})
+            async with SessionLocal() as s:
+                u = (await s.execute(select(User).where(User.email == email))).scalar_one()
+                m = Monitor(user_id=u.id, url="https://uk.jbl.test/p", name="JBL", engine=Engine.camoufox,
+                            detection_mode=DetectionMode.text, interval_seconds=3600)
+                s.add(m); await s.flush(); mid = m.id; await s.commit()
+
+            png = b"\x89PNG\r\n block-interstitial-pixels"
+            fake = SimpleNamespace(screenshot_png=png, screenshot_mobile_png=None,
+                                   html="<title>jbl.com</title>Access is temporarily restricted", title="jbl.com")
+            async with SessionLocal() as s:
+                # selectinload login_flow so _fail's session-expiry check works
+                m = (await s.execute(select(Monitor).where(Monitor.id == mid)
+                     .options(selectinload(Monitor.login_flow)))).scalar_one()
+                snap = Snapshot(monitor_id=mid)
+                await runner._fail(s, m, snap,
+                                   error="Blocked — HTTP 403 · DataDome anti-bot protection",
+                                   http_status=403, title="jbl.com", result=fake)
+                sid = snap.id
+
+            async with SessionLocal() as s:
+                snap = (await s.execute(select(Snapshot).where(Snapshot.id == sid))).scalar_one()
+                assert snap.status == SnapshotStatus.error
+                assert snap.screenshot_blob and blobs.get_bytes(snap.screenshot_blob) == png
+                assert snap.html_blob  # block-page HTML stored too
+
+            # detail page surfaces the captured block page
+            r = await c.get(f"/monitors/{mid}")
+            assert r.status_code == 200
+            assert "View the captured block page" in r.text
+            assert "blocked / challenge page" in r.text     # history badge
+            # and the image is servable
+            assert (await c.get(f"/monitors/{mid}/snapshots/{sid}/image")).status_code == 200
+        return True
+
+    assert _run(_t)

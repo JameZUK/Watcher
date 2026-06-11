@@ -61,6 +61,13 @@
         {% if 'anti-bot' in (latest.error or '') or 'challenge' in (latest.error or '') %}
         <p class="text-xs text-red-300/70 mt-1.5">This site uses bot protection. Try the <span class="font-medium">Camoufox</span> engine, a slower interval, or a residential proxy — though some sites can't be monitored automatically.</p>
         {% endif %}
+        {% if latest.screenshot_blob %}
+        <button type="button" @click="$store.lb.open('/monitors/{{ monitor.id }}/snapshots/{{ latest.id }}/image')"
+                class="mt-2 inline-flex items-center gap-1.5 text-xs font-medium text-red-200 hover:text-white underline decoration-red-400/40">
+          <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></svg>
+          View the captured block page
+        </button>
+        {% endif %}
       </div>
     </div>
     {% endif %}
@@ -99,8 +106,8 @@
     {% set csids = changes|map(attribute='to_snapshot_id')|list %}
     {% set ns = namespace(items=[]) %}
     {% for s in snapshots|reverse %}
-      {% if s.status.value == 'ok' and s.screenshot_blob %}
-        {% set ns.items = ns.items + [ {'id': s.id, 'ago': (s.taken_at|timeago), 'changed': (s.id in csids), 'mobile': (s.screenshot_mobile_blob is not none)} ] %}
+      {% if s.screenshot_blob %}
+        {% set ns.items = ns.items + [ {'id': s.id, 'ago': (s.taken_at|timeago), 'changed': (s.id in csids), 'mobile': (s.screenshot_mobile_blob is not none), 'blocked': (s.status.value == 'error')} ] %}
       {% endif %}
     {% endfor %}
     <section class="glass rounded-2xl overflow-hidden" x-data='timeMachine({{ ns.items|tojson }}, {{ monitor.id }})'>
@@ -132,7 +139,8 @@
                    class="block cursor-zoom-in self-start"
                    :class="$store.device.isMobile && frames[i] && frames[i].mobile ? 'w-[380px] max-w-full my-5 rounded-2xl border border-white/12 shadow-xl' : 'w-full'">
             </div>
-            <span class="absolute top-3 left-3 pill pill-amber backdrop-blur" x-show="frames[i] && frames[i].changed">change detected</span>
+            <span class="absolute top-3 left-3 pill pill-amber backdrop-blur" x-show="frames[i] && frames[i].changed && !frames[i].blocked">change detected</span>
+            <span class="absolute top-3 left-3 pill backdrop-blur" style="background:rgba(239,68,68,.18);border-color:rgba(239,68,68,.4);color:#fca5a5;" x-show="frames[i] && frames[i].blocked" x-cloak>⚠ blocked / challenge page</span>
             <span class="absolute top-3 right-3 pill backdrop-blur" x-show="$store.device.isMobile && frames[i] && !frames[i].mobile" x-cloak>desktop only · no mobile capture yet</span>
             <!-- "more below" hint, only when the capture overflows the stage -->
             <div class="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/55 to-transparent" x-show="scrollable" x-cloak></div>
