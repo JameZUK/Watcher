@@ -40,6 +40,14 @@ All of it is generic and site-agnostic — no per-site rules.
 - **`scripts/test_consent.py`** — a recursive multi-site validation harness
   (renders through Camoufox so Cloudflare-protected sites actually load; reports
   surviving banners, "walls", and late-appearing banners).
+- **Block / challenge pages are now captured for review.** Previously a blocked
+  render stored only the error text and threw the page away; now the failure
+  path persists the interstitial's screenshot + HTML on the error snapshot
+  (content-addressed, so a repeated identical block dedupes to one image). The
+  "Last check failed" banner gains a *"View the captured block page"* link, and
+  the History scrubber includes block pages tagged *"blocked / challenge page"* —
+  so you can actually see what a site (e.g. DataDome on JBL) served, and improve
+  the handling from real evidence.
 
 ### Changed
 - New `Monitor` columns `block_annoyances` (default on), `consent_clicks`, and
