@@ -2,6 +2,62 @@
 
 All notable changes to Watcher are documented here. Dates are ISO-8601.
 
+## 2026-06-11 — AI-assisted login (with captcha solving)
+
+Turn "This page requires login" into an automated, watch-it-happen flow: you
+provide the credentials, the model drives a real browser through the login,
+pauses for a one-time code if one is needed, and the captured session is saved
+so scheduled checks ride it.
+
+### Added
+- **Interactive AI login agent.** A new per-monitor *"Log in automatically with
+  AI"* panel: enter the login URL + username + password and the agent opens a
+  real browser and decides each step from a screenshot + the page's interactive
+  elements (observe → decide → act). It fills credentials (the model never sees
+  the values — they're injected), clicks through multi-step and social-login
+  screens, and on success persists the session cookies to the monitor. A live
+  screenshot + step log stream into the modal as it works. New
+  `watcher/auth/ai_login.py`, `ai.ai_login_action`, and `/monitors/{id}/ai-login/*`
+  endpoints; credentials are stored encrypted for one-click re-login.
+- **Follows federated-login popups.** Logins that open the credential form in a
+  new window (e.g. Glassdoor → Indeed "Continue with email", Google/Apple) are
+  tracked — the agent switches to the freshest open page each step instead of
+  staring at the now-frozen opener, and switches back once the popup closes.
+- **One-time code (OTP/2FA) live prompt.** When the site asks for an emailed/SMS
+  code, the agent pauses, the modal shows a code box, and it resumes with what
+  you enter — handling the early-submit race so a code typed before it asks
+  isn't lost.
+- **reCAPTCHA image-challenge solving (best effort).** When a reCAPTCHA grid
+  gates the login, the agent screenshots the grid, asks the vision model which
+  squares match ("select all squares with buses"), clicks them and verifies,
+  looping a few rounds until a token is minted — then continues the login. The
+  challenge is shown live in the modal. New `ai.solve_captcha_grid` +
+  `ai_login.solve_recaptcha`. Honest limits below.
+
+### Fixed
+- Credentials are **never free-typed or invented** — a field that is clearly a
+  username/email or password is always filled from the stored secret, even if
+  the model tries to type a literal (it once hallucinated `testuser@example.com`).
+- A successful login whose OAuth popup closed on completion is now **captured**
+  instead of crashing on the cleanup wait (`TargetClosedError`); once a code has
+  been entered, returning to the signed-in site with no credential fields left
+  is treated as success and the session is saved immediately.
+- The agent recognises a genuine anti-bot wall / captcha it can't pass and stops
+  with a clear, actionable message (use Session cookies) rather than a vague
+  "couldn't work out the next step".
+
+### Notes / limitations
+- Captcha solving is **best effort and stochastic.** reCAPTCHA Enterprise also
+  scores the browser's behaviour, not just the answer, so a correct pick can
+  still be re-challenged; the agent retries a few times then falls back to the
+  session-cookie message. A stronger vision model raises the hit rate on the
+  harder 4×4 single-image grids. Each attempt costs one vision call on the
+  configured model.
+- Some sites (notably ones behind aggressive bot-detection) gate the login
+  behind a captcha on **every** automated attempt; for those, session-cookie
+  injection (log in once in your own browser, paste the cookies) remains the
+  reliable path.
+
 ## 2026-06-11 — Automatic cookie / consent / ad & overlay handling
 
 Render pages the way a person sees them after dismissing the noise, so
@@ -112,10 +168,13 @@ All of it is generic and site-agnostic — no per-site rules.
   780px with a correct layout; desktop unchanged. (Camoufox already did this.)
 
 ### Notes / limitations
-- An LLM **cannot** solve real image/slider captchas (reCAPTCHA grids, hCaptcha,
-  DataDome sliders). Those escalate to the "needs your help" alert; the reliable
-  fix is session-cookie injection or a residential proxy. Engine choice
-  (Firefox vs Camoufox) does not affect IP-reputation-based DataDome blocking.
+- During a normal *render* (not the AI login agent) an image/slider captcha or
+  anti-bot wall still escalates to the "needs your help" alert; the reliable fix
+  is session-cookie injection or a residential proxy. (The AI login agent *can*
+  now attempt reCAPTCHA image grids — see the AI-assisted login entry above —
+  but slider/DataDome challenges remain unsolved.) Engine choice (Firefox vs
+  Camoufox) does not
+  affect IP-reputation-based DataDome blocking.
 - The app runs as a long-lived uvicorn without `--reload`; code changes require
   a restart to take effect, and existing snapshots keep their previous
   screenshots — only checks after a restart render clean.
