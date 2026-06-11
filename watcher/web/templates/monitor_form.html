@@ -239,7 +239,8 @@
           <!-- Live login modal -->
           <div x-show="open" x-cloak @keydown.escape.window="close()"
                class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/75">
-            <div class="glass rounded-2xl w-full max-w-lg p-5 space-y-3">
+            <div class="glass rounded-2xl w-full p-5 space-y-3 transition-all"
+                 :class="manual ? 'max-w-5xl' : 'max-w-lg'">
               <div class="flex items-center justify-between">
                 <h3 class="font-semibold text-white">AI login
                   <span x-show="manual" x-cloak class="pill ml-1.5 !bg-amber-500/20 !text-amber-200">manual control</span>
@@ -247,8 +248,8 @@
                 <button type="button" @click="close()" class="btn btn-ghost !px-2.5 !py-1">✕</button>
               </div>
               <!-- Live view. In manual mode it's clickable/typeable and relays to the browser. -->
-              <div class="rounded-lg overflow-hidden border bg-black/40 max-h-[46vh] overflow-y-auto"
-                   :class="manual ? 'border-amber-400/60 cursor-crosshair' : 'border-white/10'"
+              <div class="rounded-lg overflow-hidden border bg-black/40 overflow-y-auto"
+                   :class="manual ? 'border-amber-400/60 cursor-crosshair max-h-[76vh]' : 'border-white/10 max-h-[46vh]'"
                    x-show="hasShot" x-cloak>
                 <img :src="shotUrl" alt="login page" class="block w-full select-none"
                      @click="manual && relayClick($event)" draggable="false">
@@ -614,7 +615,7 @@ function aiLogin(mid){return {
     return this.status || 'Starting…';
   },
   _restartPoll(){ if (this._poll) clearInterval(this._poll);
-    this._poll = setInterval(() => this._tick(), this.manual ? 700 : 1500); },
+    this._poll = setInterval(() => this._tick(), this.manual ? 500 : 1500); },
   _refreshShot(){ if (this.sid) this.shotUrl = `/monitors/${this.mid}/ai-login/shot?sid=${this.sid}&t=${Date.now()}`; },
   async setMode(m){
     const fd = new FormData(); fd.append('mode', m);
@@ -624,7 +625,9 @@ function aiLogin(mid){return {
   async _input(ev){
     try { await fetch(`/monitors/${this.mid}/ai-login/input?sid=${this.sid}`,
       {method:'POST', headers:{'Content-Type':'application/json','X-Requested-With':'fetch'}, body:JSON.stringify(ev)}); } catch(e){}
-    setTimeout(() => this._refreshShot(), 450);
+    // refresh a couple of times so animations (e.g. a captcha tick) show up
+    setTimeout(() => this._refreshShot(), 350);
+    setTimeout(() => this._refreshShot(), 900);
   },
   relayClick(ev){
     const r = ev.target.getBoundingClientRect();

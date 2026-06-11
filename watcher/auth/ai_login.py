@@ -889,16 +889,28 @@ _ALLOWED_KEYS = {
 }
 
 
+async def _viewport_css(page) -> tuple[float, float]:
+    """The real CSS viewport (what full_page=False screenshots cover and what
+    page.mouse uses). page.viewport_size is None under Camoufox's no-viewport
+    mode, so read window.innerWidth/innerHeight from the page itself."""
+    try:
+        vw, vh = await page.evaluate("() => [window.innerWidth, window.innerHeight]")
+        if vw and vh:
+            return float(vw), float(vh)
+    except Exception:
+        pass
+    vs = (page.viewport_size if hasattr(page, "viewport_size") else None) or {"width": 1280, "height": 720}
+    return float(vs["width"]), float(vs["height"])
+
+
 async def _apply_event(page, ev: dict) -> None:
     """Relay one user input event to the live page (manual remote control)."""
     t = ev.get("type")
-    try:
-        vs = page.viewport_size or {"width": 1280, "height": 720}
-    except Exception:
-        vs = {"width": 1280, "height": 720}
+    vw, vh = await _viewport_css(page)
     if t in ("click", "dblclick"):
-        x = max(0.0, min(1.0, float(ev.get("fx", 0)))) * vs["width"]
-        y = max(0.0, min(1.0, float(ev.get("fy", 0)))) * vs["height"]
+        x = max(0.0, min(1.0, float(ev.get("fx", 0)))) * vw
+        y = max(0.0, min(1.0, float(ev.get("fy", 0)))) * vh
+        await page.mouse.move(x, y)
         await page.mouse.click(x, y, click_count=2 if t == "dblclick" else 1)
     elif t == "type":
         await page.keyboard.type(str(ev.get("text", ""))[:500])
