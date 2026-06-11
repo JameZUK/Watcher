@@ -3,10 +3,10 @@ services:
     build: .
     image: watcher:latest
     ports:
-      # Bound to loopback: put a TLS-terminating reverse proxy (Caddy/nginx/
-      # Traefik) in front for public exposure. Use "8000:8000" only on a
-      # trusted network.
-      - "127.0.0.1:8000:8000"
+      # Bound to all interfaces for remote access on a trusted network. There is
+      # NO TLS here — for anything internet-facing, put a TLS-terminating reverse
+      # proxy (Caddy/nginx/Traefik) in front and bind this back to "127.0.0.1:8000:8000".
+      - "0.0.0.0:8000:8000"
     # Secrets (WATCHER_SECRET_KEY, WATCHER_ENCRYPTION_KEY, …) are read from .env
     # by Compose on the HOST — so the same keys carry over and stored encrypted
     # credentials stay decryptable. .env's WATCHER_DATA_DIR is a host path; the
