@@ -171,6 +171,7 @@ async def run_agent(
         stuck = 0
         none_retry = 0
         empty_retry = 0
+        code_entered = False
         for _ in range(MAX_STEPS):
             # Follow popups: federated logins (Glassdoor → Indeed, "Continue with
             # Google/Apple") open the real credential form in a NEW window. If we
@@ -183,8 +184,10 @@ async def run_agent(
             if solve_captcha_fn and captcha_tries < 4 and await _has_recaptcha_challenge(page):
                 captcha_tries += 1
                 session.log.append("Solving image captcha…")
+                def _set_shot(b):
+                    session.screenshot = b
                 solved = await solve_recaptcha(page, solve_captcha_fn,
-                                               log_cb=session.log.append)
+                                               log_cb=session.log.append, shot_cb=_set_shot)
                 session.log.append("Captcha passed — continuing." if solved
                                    else "Couldn't pass the captcha this time.")
                 await _settle(page)
@@ -208,6 +211,18 @@ async def run_agent(
             labels = {e.get("idx"): (e.get("label") or e.get("placeholder") or e.get("aria")
                                      or e.get("name") or f"element {e.get('idx')}") for e in elements}
             elem_by_idx = {e.get("idx"): e for e in elements}
+
+            # Success after the one-time code: the OAuth popup closes and we land
+            # back on the signed-in site with no credential fields left — capture
+            # the session rather than waiting for the model to notice.
+            try:
+                _u = (page.url or "").lower()
+            except Exception:
+                _u = ""
+            if (code_entered and elements
+                    and not any((e.get("type") in ("password", "email")) for e in elements)
+                    and not any(m in _u for m in ("/auth", "login", "signin", "sign-in"))):
+                break
 
             # Stuck detection: if the interactive elements (incl. their filled-ness)
             # don't change across steps, our actions aren't doing anything — almost
@@ -305,7 +320,8 @@ async def run_agent(
                     except Exception:
                         pass
                 code_pending = True
-            await page.wait_for_timeout(900)
+                code_entered = True
+            await _safe_sleep(page, 900)
         else:
             session.status, session.error = "error", "Gave up after too many steps."
             return
@@ -427,17 +443,25 @@ async def _open_recaptcha_if_needed(page) -> None:
             return
 
 
-async def solve_recaptcha(page, solve_fn, log_cb=None, *, max_rounds: int = 6) -> bool:
+async def solve_recaptcha(page, solve_fn, log_cb=None, shot_cb=None, *, max_rounds: int = 6) -> bool:
     """Best-effort: drive a reCAPTCHA image challenge with a vision model.
 
     `solve_fn(target, rows, cols, png) -> list[int]` returns the 1-based cells to
-    click. Returns True if a response token gets minted (the challenge passed).
-    reCAPTCHA Enterprise also behaviour-scores the browser, so even correct picks
-    can be rejected and re-challenged — we cap the attempts and report honestly.
+    click. `shot_cb(png)` (optional) receives a live screenshot so the UI can show
+    the challenge being solved. Returns True if a response token gets minted (the
+    challenge passed). reCAPTCHA Enterprise also behaviour-scores the browser, so
+    even correct picks can be rejected and re-challenged — we cap attempts.
     """
     def _log(m):
         if log_cb:
             log_cb(m)
+
+    async def _shot():
+        if shot_cb:
+            try:
+                shot_cb(await page.screenshot(full_page=False, type="png"))
+            except Exception:
+                pass
 
     await _open_recaptcha_if_needed(page)
     for _ in range(max_rounds):
@@ -470,6 +494,7 @@ async def solve_recaptcha(page, solve_fn, log_cb=None, *, max_rounds: int = 6) -
             _log(f"captcha read error: {type(exc).__name__}")
             return False
 
+        await _shot()  # show the challenge in the UI
         cells = await solve_fn(target, rows, cols, png)
         _log(f"Captcha “{target}”: picking {len(cells or [])} of {n} squares")
         if not cells:
@@ -481,6 +506,7 @@ async def solve_recaptcha(page, solve_fn, log_cb=None, *, max_rounds: int = 6) -
                     await page.wait_for_timeout(250)
                 except Exception:
                     pass
+        await _shot()  # show the picks before verifying
         try:
             await fr.locator("#recaptcha-verify-button").click(timeout=4000)
         except Exception:
@@ -503,6 +529,15 @@ def _active_page(ctx, current):
         return current
     real = [p for p in open_pages if (p.url and not p.url.startswith("about:"))]
     return (real or open_pages)[-1]
+
+
+async def _safe_sleep(page, ms: int) -> None:
+    """wait_for_timeout that tolerates the page having just closed (e.g. an OAuth
+    popup that vanished the instant login completed)."""
+    try:
+        await page.wait_for_timeout(ms)
+    except Exception:
+        pass
 
 
 async def _settle(page) -> None:
