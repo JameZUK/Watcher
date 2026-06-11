@@ -260,6 +260,12 @@
         <textarea name="session_cookies_json" rows="5"
                   placeholder='[{"name":"datadome","value":"…","domain":".example.com","path":"/","secure":true}]'
                   class="field font-mono text-xs">{{ cookies_json or '' }}</textarea>
+        <label class="flex items-start gap-2.5 text-sm text-slate-300">
+          <input type="checkbox" name="session_cookies_all_domains" class="mt-0.5 rounded bg-white/10 border-white/20 text-brand-500">
+          <span>Keep cookies for <span class="font-medium">all domains</span> in the paste
+            <span class="block text-xs text-slate-500">For federated / SSO logins — e.g. Glassdoor signs in via indeed.com, so paste both sites' cookies together and tick this. Otherwise cookies are limited to this monitor's domain.</span>
+          </span>
+        </label>
         {% if sess and sess.cookies %}
         <label class="flex items-center gap-2.5 text-sm text-slate-300">
           <input type="checkbox" name="session_cookies_clear" class="rounded bg-white/10 border-white/20 text-brand-500">

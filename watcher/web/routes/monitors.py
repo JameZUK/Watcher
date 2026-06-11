@@ -219,8 +219,13 @@ def _build_login_flow(monitor: Monitor, form) -> LoginFlow | None:
             steps.append({"action": "wait", "selector": form["login_success_selector"].strip()})
 
     # --- Pasted Cookie Editor JSON (independent of the login checkbox) ---
-    cookies = cookie_editor_to_storage_state(   # may raise; cookies scoped to the monitor host
-        form.get("session_cookies_json", ""), allowed_host=urlparse(monitor.url or "").hostname,
+    # Normally cookies are scoped to the monitor host. Federated/SSO logins (e.g.
+    # Glassdoor signs in via indeed.com) need the auth domain's cookies too, so an
+    # opt-in keeps cookies for ALL domains in the paste.
+    _all_domains = _bool(form, "session_cookies_all_domains")
+    cookies = cookie_editor_to_storage_state(   # may raise
+        form.get("session_cookies_json", ""),
+        allowed_host=None if _all_domains else urlparse(monitor.url or "").hostname,
     )
     clear_session = _bool(form, "session_cookies_clear")
 

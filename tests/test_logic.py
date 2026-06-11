@@ -40,6 +40,18 @@ def test_cookie_editor_errors():
         cookie_editor_to_storage_state("[]")
 
 
+def test_cookie_editor_cross_domain_scope():
+    """Host-scoping keeps only the monitor's domain (Glassdoor); the all-domains
+    path (allowed_host=None) also keeps federated auth cookies (Indeed)."""
+    from watcher.auth.login_flows import cookie_editor_to_storage_state
+    raw = ('[{"name":"gdId","value":"g","domain":".glassdoor.co.uk","path":"/"},'
+           '{"name":"PPID","value":"i","domain":".indeed.com","path":"/"}]')
+    scoped = cookie_editor_to_storage_state(raw, allowed_host="www.glassdoor.co.uk")
+    assert [c["name"] for c in scoped["cookies"]] == ["gdId"]          # indeed dropped
+    alld = cookie_editor_to_storage_state(raw, allowed_host=None)
+    assert {c["name"] for c in alld["cookies"]} == {"gdId", "PPID"}    # both kept
+
+
 def test_cookie_domain_scoping():
     from watcher.auth.login_flows import cookie_editor_to_storage_state as conv
     raw = ('[{"name":"a","value":"1","domain":".jbl.com"},'
