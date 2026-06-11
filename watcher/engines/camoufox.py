@@ -24,6 +24,7 @@ from ._common import (
     hide_banners,
     install_consent_autodismiss,
     replay_login,
+    reveal_full_content,
     setup_blocking,
 )
 from .base import RenderResult
@@ -141,6 +142,7 @@ class CamoufoxRenderer:
             await click_consent(page, monitor)
             await install_consent_autodismiss(page, monitor)
             await hide_banners(page, monitor)
+            await reveal_full_content(page, monitor)
 
             # Don't store a blocked/empty challenge page as the "mobile" preview.
             try:

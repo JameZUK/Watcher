@@ -379,6 +379,54 @@ async def detect_obstructions(page, monitor: Monitor) -> list | None:
     return list(dict.fromkeys(found))[:1] or None
 
 
+# Reveal the full page before a full-page screenshot: force lazy media to load,
+# and release any leftover scroll-lock (a banner/modal locks the page to ~100vh
+# with clipped overflow; if that isn't fully released the screenshot is a tall,
+# mostly-blank image with content only in the first fold — e.g. BBC News). Only
+# un-clamps top-level LAYOUT wrappers that are clamped to ~one viewport, so media
+# components with intentional heights are left alone.
+_REVEAL_CONTENT_JS = r"""() => {
+  for (const el of document.querySelectorAll('img[loading="lazy"],iframe[loading="lazy"]')) {
+    try { el.loading = 'eager'; } catch (e) {}
+  }
+  const vh = innerHeight;
+  const sel = 'html,body,body > div,body > div > div,main,[role="main"],'
+            + '#root,#app,#__next,[class*="page" i],[class*="app" i],[class*="layout" i],[id*="main" i]';
+  let n = 0;
+  for (const el of document.querySelectorAll(sel)) {
+    const r = el.getBoundingClientRect();
+    if (r.height > vh + 4 || r.height < 100) continue;     // only ~viewport-clamped shells
+    let cs; try { cs = getComputedStyle(el); } catch (e) { continue; }
+    el.style.setProperty('height', 'auto', 'important');
+    el.style.setProperty('max-height', 'none', 'important');
+    el.style.setProperty('min-height', '0', 'important');
+    if (cs.overflowY === 'hidden' || cs.overflow === 'hidden' || cs.overflow === 'clip')
+      el.style.setProperty('overflow', 'visible', 'important');
+    if (cs.position === 'fixed') el.style.setProperty('position', 'static', 'important');
+    n++;
+  }
+  return n;
+}"""
+
+
+async def reveal_full_content(page, monitor: Monitor) -> None:
+    """Release leftover scroll-locks and force lazy media to load so a full-page
+    screenshot captures the whole page, not a tall mostly-blank image. Best-effort;
+    runs on the main frame + same-origin child frames, then waits briefly for the
+    now-eager images to fetch. No-op when the monitor opts out."""
+    if not getattr(monitor, "block_annoyances", True):
+        return
+    for frame in page.frames:
+        try:
+            await frame.evaluate(_REVEAL_CONTENT_JS)
+        except Exception:
+            pass
+    try:
+        await page.wait_for_timeout(900)   # let the now-eager lazy images load
+    except Exception:
+        pass
+
+
 async def replay_login(page, monitor: Monitor) -> None:
     """Run the monitor's login flow steps, substituting decrypted secrets."""
     flow = monitor.login_flow
@@ -532,6 +580,10 @@ async def capture(page, response, monitor: Monitor, mobile: bool = True) -> Rend
     except Exception:
         result.unhandled_consent_html = None
 
+    # Reveal the full page (force lazy media, release leftover scroll-locks) so
+    # the full-page screenshot isn't a tall mostly-blank image.
+    await reveal_full_content(page, monitor)
+
     # Full-page screenshot at the desktop viewport (PNG).
     try:
         result.screenshot_png = await page.screenshot(full_page=True, type="png")
@@ -548,6 +600,7 @@ async def capture(page, response, monitor: Monitor, mobile: bool = True) -> Rend
             {"width": settings.mobile_viewport_width, "height": settings.mobile_viewport_height}
         )
         await page.wait_for_timeout(450)
+        await reveal_full_content(page, monitor)   # re-reveal at the mobile size
         result.screenshot_mobile_png = await page.screenshot(full_page=True, type="png")
     except Exception:
         result.screenshot_mobile_png = None
