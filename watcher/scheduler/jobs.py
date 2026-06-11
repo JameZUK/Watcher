@@ -42,11 +42,23 @@ def _effective_interval(monitor: Monitor) -> int:
     return max(monitor.interval_seconds, settings.min_interval_seconds)
 
 
+# Monitors with a check currently queued or running, so the UI can show a live
+# "Checking…" state (best-effort; a rare manual+scheduled overlap may clear early).
+_inflight: set[int] = set()
+
+
+def is_checking(monitor_id: int) -> bool:
+    return monitor_id in _inflight
+
+
 async def _run_check(monitor_id: int) -> None:
+    _inflight.add(monitor_id)
     try:
         await check_monitor(monitor_id)
     except Exception:  # noqa: BLE001
         log.exception("check failed for monitor %s", monitor_id)
+    finally:
+        _inflight.discard(monitor_id)
 
 
 def reschedule_monitor(monitor: Monitor) -> None:
@@ -93,6 +105,7 @@ def retune_interval(monitor_id: int, interval_seconds: int) -> None:
 
 def trigger_now(monitor_id: int) -> None:
     """Fire a one-off immediate check (does not disturb the recurring job)."""
+    _inflight.add(monitor_id)   # reflect "checking" immediately, before the job starts
     scheduler.add_job(_run_check, args=[monitor_id], id=f"now-{monitor_id}",
                       replace_existing=True, max_instances=1)
 

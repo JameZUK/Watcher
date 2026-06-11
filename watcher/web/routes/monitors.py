@@ -38,7 +38,7 @@ COOKIE_SESSION_TTL = timedelta(days=7)
 
 # Cap bulk import to avoid mass-creation / render-pool exhaustion.
 _IMPORT_CAP = 500
-from ...scheduler import reschedule_monitor, trigger_now, unschedule_monitor
+from ...scheduler import is_checking, reschedule_monitor, trigger_now, unschedule_monitor
 from ...storage import blobs
 from .. import templates
 
@@ -673,13 +673,23 @@ async def toggle_monitor(
     return RedirectResponse(f"/monitors/{monitor.id}", status_code=303)
 
 
+async def _latest_snapshot_id(session, monitor_id: int) -> int:
+    return (await session.execute(
+        select(Snapshot.id).where(Snapshot.monitor_id == monitor_id)
+        .order_by(Snapshot.id.desc()).limit(1))).scalar_one_or_none() or 0
+
+
 @router.post("/monitors/{monitor_id}/check")
 async def check_monitor_now(
     monitor_id: int,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
+    """Queue an immediate check. Returns JSON so the UI can show a live
+    "Checking…" state and poll /check-status for the new capture."""
     monitor = await _owned_monitor(session, user, monitor_id)
+    # baseline = the newest snapshot right now, so the client can spot the new one.
+    baseline = await _latest_snapshot_id(session, monitor.id)
     # Cooldown: stop a user spamming immediate checks to flood the render pool.
     cooldown = settings.manual_check_cooldown_seconds
     if cooldown and monitor.last_checked_at is not None:
@@ -691,9 +701,32 @@ async def check_monitor_now(
             lc = lc.replace(tzinfo=timezone.utc)
         age = (utcnow() - lc).total_seconds()
         if 0 <= age < cooldown:
-            return RedirectResponse(f"/monitors/{monitor.id}?checked=cooldown", status_code=303)
+            return JSONResponse({"ok": False, "cooldown": int(cooldown - age) + 1})
     trigger_now(monitor.id)
-    return RedirectResponse(f"/monitors/{monitor.id}", status_code=303)
+    return JSONResponse({"ok": True, "queued": True, "baseline_id": baseline})
+
+
+@router.get("/monitors/{monitor_id}/check-status")
+async def check_status(
+    monitor_id: int,
+    since: int = 0,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Poll target for an in-progress check. `done` flips true once a snapshot
+    newer than `since` exists (covers both success and failure — both write a
+    snapshot). `checking` reflects the queued/running state for the spinner."""
+    monitor = await _owned_monitor(session, user, monitor_id)
+    latest = (await session.execute(
+        select(Snapshot).where(Snapshot.monitor_id == monitor.id)
+        .options(defer(Snapshot.rendered_text))
+        .order_by(Snapshot.id.desc()).limit(1))).scalar_one_or_none()
+    if latest is not None and latest.id > since:
+        return JSONResponse({
+            "done": True, "id": latest.id, "status": latest.status.value,
+            "error": latest.error, "checking": is_checking(monitor.id),
+        })
+    return JSONResponse({"done": False, "checking": is_checking(monitor.id)})
 
 
 @router.get("/monitors/{monitor_id}")
@@ -744,6 +777,7 @@ async def monitor_detail(
             "user": user, "monitor": monitor, "changes": changes,
             "snapshots": snapshots, "selected": selected, "diff": diff_payload,
             "latest": latest, "value_series": value_series, "value_current": value_current,
+            "checking": is_checking(monitor.id),
         },
     )
 

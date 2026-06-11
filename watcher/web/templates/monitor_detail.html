@@ -28,10 +28,15 @@
       {% if monitor.login_flow %}<span class="pill pill-amber">authenticated</span>{% endif %}
     </div>
   </div>
-  <div class="flex items-center gap-2">
-    <form method="post" action="/monitors/{{ monitor.id }}/check"><button class="btn btn-primary text-sm">
-      <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 12a9 9 0 1 1-3-6.7M21 3v6h-6"/></svg>Check now
-    </button></form>
+  <div class="flex items-start gap-2"
+       x-data="checkNow({{ monitor.id }}, {{ 'true' if checking else 'false' }}, {{ latest.id if latest else 0 }})" x-init="init()">
+    <div class="flex flex-col items-end gap-1">
+      <button @click="run()" :disabled="busy" :class="busy && 'cursor-wait opacity-90'" class="btn btn-primary text-sm">
+        <svg viewBox="0 0 24 24" class="h-4 w-4" :class="busy && 'animate-spin'" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M21 12a9 9 0 1 1-3-6.7M21 3v6h-6"/></svg>
+        <span x-text="busy ? 'Checking…' : 'Check now'"></span>
+      </button>
+      <span x-show="msg" x-cloak x-transition.opacity x-text="msg" :class="tone" class="text-xs whitespace-nowrap"></span>
+    </div>
     <div x-data="{open:false}" class="relative">
       <button @click="open=!open" class="btn btn-ghost text-sm">···</button>
       <div x-show="open" @click.outside="open=false" x-cloak x-transition
@@ -366,6 +371,41 @@ function beforeAfter(){return {
     const x = (e.clientX ?? 0) - r.left;
     this.pos = Math.max(0, Math.min(100, (x / r.width) * 100));
   },
+}}
+
+// "Check now": queue a check, show a live Checking… state, poll until the new
+// capture lands (or the check fails — both write a snapshot), then refresh so the
+// page shows the LATEST capture instead of the previous one.
+function checkNow(id, checking, latestId){return {
+  busy: !!checking, msg: checking ? 'Checking…' : '', tone: 'text-brand-300', latestId,
+  init(){ if (this.busy) this.poll(this.latestId, Date.now()); },
+  async run(){
+    if (this.busy) return;
+    this.busy = true; this.tone = 'text-brand-300'; this.msg = 'Queuing a fresh check…';
+    let data;
+    try {
+      const r = await fetch(`/monitors/${id}/check`, {method:'POST', headers:{'X-Requested-With':'fetch'}});
+      data = await r.json();
+    } catch(e){ return this.stop('text-red-300', 'Could not start the check.', 5000); }
+    if (data && data.cooldown){ return this.stop('text-amber-300', `Just checked — try again in ${data.cooldown}s.`, 4000); }
+    this.msg = 'Checking now — capturing the page…';
+    this.poll(data && data.baseline_id || this.latestId, Date.now());
+  },
+  async poll(baseline, start){
+    if (Date.now() - start > 90000)
+      return this.stop('text-amber-300', 'Still running — refresh in a moment.', 6000);
+    let s = null;
+    try { s = await (await fetch(`/monitors/${id}/check-status?since=${baseline}`)).json(); } catch(e){}
+    if (s && s.done){
+      const ok = s.status !== 'error';
+      this.tone = ok ? 'text-emerald-300' : 'text-red-300';
+      this.msg = ok ? 'Captured — updating…' : 'Check failed — updating…';
+      return void setTimeout(() => location.reload(), 450);
+    }
+    setTimeout(() => this.poll(baseline, start), 1300);
+  },
+  stop(tone, msg, clearMs){ this.busy = false; this.tone = tone; this.msg = msg;
+    if (clearMs) setTimeout(() => { this.msg = ''; }, clearMs); },
 }}
 
 // History scrubber: step through every captured render over time, in the

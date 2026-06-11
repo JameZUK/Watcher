@@ -1,4 +1,5 @@
 from .jobs import (
+    is_checking,
     reschedule_monitor,
     retune_interval,
     schedule_all,
@@ -18,4 +19,5 @@ __all__ = [
     "retune_interval",
     "unschedule_monitor",
     "trigger_now",
+    "is_checking",
 ]

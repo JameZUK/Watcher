@@ -517,3 +517,57 @@ def test_consent_clicks_and_block_annoyances_persist():
         return True
 
     assert _run(_t)
+
+
+# --- Check Now: async queue + status polling --------------------------------
+
+def test_check_now_returns_json_and_status_polls():
+    """POST /check queues a check and returns a baseline; /check-status flips to
+    done once a newer snapshot exists; cooldown is reported as JSON."""
+    async def _t():
+        from watcher.config import settings
+        from watcher.main import create_app
+        from watcher.models import User, Monitor, Snapshot, Engine, DetectionMode, SnapshotStatus, utcnow
+        import watcher.scheduler.jobs as J
+        settings.registration_open = True
+        app = create_app()
+        transport = httpx.ASGITransport(app=app)
+        email = _email()
+        async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                     headers={"Origin": "http://t"}, follow_redirects=False) as c:
+            await c.post("/register", data={"email": email, "password": "password123"})
+            await c.post("/login", data={"email": email, "password": "password123"})
+            async with SessionLocal() as s:
+                u = (await s.execute(select(User).where(User.email == email))).scalar_one()
+                m = Monitor(user_id=u.id, url="https://x.test", name="CN", engine=Engine.chromium,
+                            detection_mode=DetectionMode.text, interval_seconds=3600)
+                s.add(m); await s.flush()
+                s.add(Snapshot(monitor_id=m.id, status=SnapshotStatus.ok)); await s.flush()
+                mid = m.id
+                base = (await s.execute(select(Snapshot.id).where(Snapshot.monitor_id == mid)
+                        .order_by(Snapshot.id.desc()))).scalars().first()
+                await s.commit()
+
+            r = await c.post(f"/monitors/{mid}/check")
+            d = r.json()
+            assert d["ok"] and d["baseline_id"] == base
+            assert J.is_checking(mid)                       # queued => checking
+
+            r = await c.get(f"/monitors/{mid}/check-status?since={base}")
+            assert r.json() == {"done": False, "checking": True}
+
+            # a newer snapshot appears => done (covers success/failure alike)
+            async with SessionLocal() as s:
+                s.add(Snapshot(monitor_id=mid, status=SnapshotStatus.error, error="boom")); await s.commit()
+            J._inflight.discard(mid)
+            d = (await c.get(f"/monitors/{mid}/check-status?since={base}")).json()
+            assert d["done"] and d["id"] == base + 1 and d["status"] == "error" and d["checking"] is False
+
+            # cooldown is JSON, not a redirect
+            async with SessionLocal() as s:
+                mm = (await s.execute(select(Monitor).where(Monitor.id == mid))).scalar_one()
+                mm.last_checked_at = utcnow(); await s.commit()
+            assert (await c.post(f"/monitors/{mid}/check")).json()["cooldown"] > 0
+        return True
+
+    assert _run(_t)
