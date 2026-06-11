@@ -23,34 +23,39 @@ import watcher.engines._common as C
 
 # A deliberately broad range: GDPR/CCPA CMPs, static top bars, bottom bars,
 # in-iframe CMPs, and Cloudflare/anti-bot-protected stores & job sites.
+# A SECOND, deliberately different set: non-English EU sites (French/German/
+# Spanish/Italian — guaranteed GDPR banners with NON-English accept buttons),
+# heavy ad/CMP tabloids, EU retail, and more anti-bot targets. Wikipedia is a
+# clean control that must stay untouched.
 SITES = [
-    "https://www.bbc.co.uk/news",          # BBC styled-component banner
-    "https://www.theguardian.com/uk",      # Sourcepoint (cross-origin iframe)
-    "https://www.independent.co.uk",       # Sourcepoint iframe
-    "https://www.reuters.com",             # OneTrust / anti-bot
-    "https://www.amazon.co.uk",            # bespoke top sheet
-    "https://www.ebay.co.uk",              # bottom bar
-    "https://www.gov.uk",                  # STATIC top banner (no position:fixed)
-    "https://www.theverge.com",            # Concert/Vox CMP
-    "https://www.imdb.com",                # bottom consent bar
-    "https://stackoverflow.com",           # Cloudflare Turnstile
-    "https://www.glassdoor.co.uk",         # Cloudflare-protected
-    "https://www.glassdoor.com",           # Cloudflare-protected
-    "https://uk.jbl.com",                  # Cloudflare-protected store
-    "https://www.nytimes.com",             # Fides/own CMP
-    "https://www.cnet.com",                # OneTrust
-    "https://www.booking.com",             # bespoke
-    "https://www.expedia.co.uk",           # OneTrust
-    "https://www.target.com",              # anti-bot + consent
-    "https://www.aboutcookies.org",        # control: a cookie-themed article (must NOT be hidden as a banner)
+    "https://www.lemonde.fr",              # FR · Didomi ("Accepter")
+    "https://www.lefigaro.fr",             # FR · own CMP
+    "https://www.spiegel.de",              # DE · Sourcepoint ("Akzeptieren")
+    "https://www.zeit.de",                 # DE · own CMP
+    "https://www.bild.de",                 # DE · Sourcepoint
+    "https://elpais.com",                  # ES · Didomi ("Aceptar")
+    "https://www.repubblica.it",           # IT · ("Accetta")
+    "https://www.dailymail.co.uk",         # UK tabloid · heavy ads + CMP
+    "https://www.mirror.co.uk",            # UK · Reach/Sourcepoint
+    "https://www.argos.co.uk",             # UK retail · OneTrust
+    "https://www.currys.co.uk",            # UK retail
+    "https://www.ikea.com/gb/en/",         # OneTrust full-screen
+    "https://www.zalando.co.uk",           # EU fashion · Usercentrics
+    "https://www.etsy.com",                # own CMP
+    "https://www.nike.com",                # Akamai anti-bot
+    "https://www.indeed.com",              # Cloudflare anti-bot
+    "https://www.ticketmaster.co.uk",      # anti-bot + consent
+    "https://www.cloudflare.com",          # own cookie banner
+    "https://www.wikipedia.org",           # control: NO banner, must stay clean
 ]
 
 # Mirrors the heuristic's candidate detection (positioned OR edge-anchored bar
 # with an accept/dismiss button) so a STILL-visible consent bar is reported.
 DETECT_JS = r"""() => {
-  const consentRx = /(cookie|consent|gdpr|ccpa|we value your privacy|your privacy|tracking technolog|privacy|opt[- ]?out|data protection)/i;
-  const acceptRx  = /^(accept|agree|allow|got it|ok|okay|yes|i (accept|agree|understand)|understood|continue|enable all|allow all|accept all)\b/i;
-  const dismissRx = /^(hide( this)?( message| cookie message)?|close|dismiss|no thanks|continue to (the )?(site|website)|×|✕|✖)$/i;
+  const consentRx = /(cookie|consent|gdpr|ccpa|we value your privacy|your privacy|tracking technolog|privacy|opt[- ]?out|data protection|datenschutz|privatsph|zustimmung|confidentialit|t[ée]moins|donn[ée]es|privacidad|consentimiento|riservatezza|privacidade|we and our( up to)?( \d+)? partner|store and\/or access|legitimate interest|manage (your )?(choices|preferences|consent)|personal data)/i;
+  const acceptRx  = /(^(accept all|accept|agree|allow all|allow|got it|ok|okay|yes|continue|enable all)\b)|(\b(accepter|j'?accepte|tout accepter|akzeptieren|zustimmen|einverstanden|annehmen|aceptar|acepto|accetta|acconsento|aceitar|accepteren|akkoord|toestaan)\b)/i;
+  const rejectRx  = /(reject|decline|deny|do not|refuse|manage|customi[sz]|preferenc|settings|without accept|continue without|reject all|refuser|g[ée]rer|param[èe]tr|ablehnen|einstellung|verwalten|rechazar|configurar|rifiuta|gestisci|weigeren|instellingen)/i;
+  const dismissRx = /^(hide( this)?( message| cookie message)?|close|dismiss|no thanks|continue to (the )?(site|website)|fermer|schlie[sß]en|cerrar|chiudi|sluiten|×|✕|✖)$/i;
   const vis = (el) => { let cs; try{cs=getComputedStyle(el);}catch(e){return false;}
     if (cs.display==='none'||cs.visibility==='hidden'||parseFloat(cs.opacity||'1')===0) return false;
     const r = el.getBoundingClientRect();
@@ -65,12 +70,17 @@ DETECT_JS = r"""() => {
     let cs; try{cs=getComputedStyle(el);}catch(e){continue;}
     if(!vis(el))continue;
     const t=(el.innerText||''); if(t.length<8||t.length>2200)continue;
-    if(!consentRx.test(t))continue;
     const r=el.getBoundingClientRect();
     const positioned = cs.position==='fixed'||cs.position==='sticky'||(cs.position==='absolute'&&parseInt(cs.zIndex||'0',10)>=50);
     const wide = r.width>=innerWidth*0.55;
     const edged = (r.top<=12||r.bottom>=innerHeight-12)&&r.top<innerHeight&&wide&&r.height<=innerHeight*0.5;
-    if(!positioned && !(edged && (hasBtn(el,acceptRx)||hasBtn(el,dismissRx)))) continue;
+    const acc = hasBtn(el,acceptRx);
+    // worded like consent, OR the accept-all + manage/reject CMP signature
+    if(!(consentRx.test(t) || (acc && hasBtn(el,rejectRx)))) continue;
+    const fills = (r.width*r.height) >= innerWidth*innerHeight*0.5;
+    if(positioned) { /* ok */ }
+    else if((edged||fills) && (acc||hasBtn(el,dismissRx))) { /* ok */ }
+    else continue;
     found.push(t.replace(/\s+/g,' ').slice(0,60));
   }
   return [...new Set(found)].slice(0,4);
@@ -106,21 +116,31 @@ async def test_site(new_context, url, shot=None):
         await page.wait_for_timeout(4000)
         chars = await _content_chars(page)
         before = await _detect_all_frames(page)
+        # Mirror the real capture sequence: click → install auto-dismiss observer
+        # → sweep. Then give late-mounting CMPs (e.g. Le Figaro) time to appear so
+        # the observer + a final sweep can clear them, and re-check.
         await C.click_consent(page, m)
-        await C.hide_banners(page, m)
-        await page.wait_for_timeout(800)
+        await C.install_consent_autodismiss(page, m)
+        walls = await C.hide_banners(page, m)
+        await page.wait_for_timeout(4000)        # let late CMPs mount
+        walls = await C.hide_banners(page, m) or walls
+        await page.wait_for_timeout(600)
         after = await _detect_all_frames(page)
         if shot:
             try:
                 await page.screenshot(path=shot, full_page=False)
             except Exception:
                 pass
+        test_site.last_walls = walls
         if chars < 100:
             return "BLOCKED (no content)", before, after
+        if after:                                 # banner present at the end — incl. late ones
+            return "FAIL", before, after
         if not before:
             return "n/a (no banner)", before, after
-        return ("PASS" if not after else "FAIL"), before, after
+        return "PASS", before, after
     except Exception as e:
+        test_site.last_walls = None
         return f"ERROR {type(e).__name__}: {e}", [], []
     finally:
         try:
@@ -145,6 +165,9 @@ async def run_camoufox(sites):
                 print(f"    REMAINING: {after}")
             elif before:
                 print(f"    (dismissed: {before[0]})")
+            walls = getattr(test_site, "last_walls", None)
+            if walls:
+                print(f"    ⚠ WALL only HIDDEN (not accepted) — content may be gated: {walls[0][:70]}")
     return results
 
 
@@ -166,6 +189,9 @@ async def run_chromium(sites):
                 print(f"    REMAINING: {after}")
             elif before:
                 print(f"    (dismissed: {before[0]})")
+            walls = getattr(test_site, "last_walls", None)
+            if walls:
+                print(f"    ⚠ WALL only HIDDEN (not accepted) — content may be gated: {walls[0][:70]}")
         await browser.close()
     return results
 

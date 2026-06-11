@@ -58,12 +58,19 @@ _COOKIE_CSS = (
 # whatever remains. Restores the scroll-lock such banners impose. Returns counts.
 _BANNER_HEURISTIC_JS = r"""() => {
   const out = { clicked: 0, hidden: 0, walls: [] };
-  const consentRx = /(cookie|consent|gdpr|ccpa|we value your privacy|your privacy|tracking technolog|privacy|opt[- ]?out|data protection)/i;
-  const acceptRx  = /^(accept|agree|allow|got it|ok|okay|yes|i (accept|agree|understand)|understood|continue|enable all|allow all|accept all|i'?m ok|save.*accept|agree.*(close|continue))\b/i;
-  // Dismiss/close actions for non-blocking bars and post-accept confirmation
-  // toasts (e.g. GOV.UK's "Hide cookie message"). Only used inside a banner.
-  const dismissRx = /^(hide( this)?( message| cookie message)?|close|dismiss|no thanks|continue to (the )?(site|website)|×|✕|✖)$/i;
-  const rejectRx  = /(reject|decline|deny|do not|don'?t|manage|customi[sz]|more option|preferenc|settings|necessary only|essential only|learn more|why)/i;
+  // Consent wording (multilingual): EN + common FR/DE/ES/IT/PT/NL terms. Most
+  // non-English banners still contain the word "cookie(s)", but include native
+  // privacy words so language-only banners are still caught.
+  const consentRx = /(cookie|consent|gdpr|ccpa|we value your privacy|your privacy|tracking technolog|privacy|opt[- ]?out|data protection|datenschutz|privatsph|zustimmung|confidentialit|t[ée]moins|donn[ée]es|privacidad|consentimiento|riservatezza|privacidade|we and our( up to)?( \d+)? partner|store and\/or access|legitimate interest|manage (your )?(choices|preferences|consent)|personal data)/i;
+  // Accept: start-anchored English (safe short words) OR a word-boundary match of
+  // distinctive non-English accept verbs (FR/DE/ES/IT/PT/NL), which often put the
+  // verb LAST ("Tout accepter", "Alle akzeptieren") so a start anchor would miss.
+  const acceptRx  = /(^(accept all|accept|agree|allow all|allow|got it|ok|okay|yes|i (accept|agree|understand)|understood|continue|enable all|i'?m ok|save.*accept|agree.*(close|continue))\b)|(\b(accepter|j'?accepte|tout accepter|accepter et fermer|akzeptieren|zustimmen|einverstanden|annehmen|verstanden|alle erlauben|aceptar|acepto|de acuerdo|permitir todo|accetta|acconsento|ho capito|aceitar|concordo|accepteren|akkoord|alles accepteren|toestaan)\b)/i;
+  // Dismiss/close for non-blocking bars and post-accept toasts (e.g. GOV.UK's
+  // "Hide cookie message"), plus native close verbs. Only used inside a banner.
+  const dismissRx = /^(hide( this)?( message| cookie message)?|close|dismiss|no thanks|continue to (the )?(site|website)|fermer|schlie[sß]en|cerrar|chiudi|sluiten|×|✕|✖)$/i;
+  // Reject/"manage settings" — excluded from acceptable buttons (multilingual).
+  const rejectRx  = /(reject|decline|deny|do not|don'?t|refuse|manage|customi[sz]|more option|preferenc|settings|necessary only|essential only|learn more|why|without accept|continue without|reject all|refuser|g[ée]rer|param[èe]tr|personnaliser|ablehnen|einstellung|verwalten|nur (notwendige|essenzielle)|auswahl|konfigurier|mehr erfahren|rechazar|configurar|gestionar|ajustes|rifiuta|gestisci|impostazioni|personalizza|recusar|defini[çc][õo]es|weigeren|instellingen|beheren)/i;
   const vis = (el) => {
     const cs = getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity || '1') === 0) return false;
@@ -94,18 +101,31 @@ _BANNER_HEURISTIC_JS = r"""() => {
     if (!vis(el)) continue;
     const t = (el.innerText || '');
     if (t.length < 8 || t.length > 2200) continue;
-    if (!consentRx.test(t)) continue;
     const r = el.getBoundingClientRect();
     const positioned = cs.position === 'fixed' || cs.position === 'sticky'
                        || (cs.position === 'absolute' && (parseInt(cs.zIndex || '0', 10) >= 50));
-    const accept  = findBtn(el, acceptRx, rejectRx);
-    const dismiss = accept ? null : findBtn(el, dismissRx, null);
     const wide = r.width >= innerWidth * 0.55;
     // a real cookie *bar* hugs an edge, spans the width, and is short — not a
     // full-height content wrapper that merely contains the word "cookie".
     const edged = (r.top <= 12 || r.bottom >= innerHeight - 12)
                   && r.top < innerHeight && wide && r.height <= innerHeight * 0.5;
-    if (!positioned && !(edged && (accept || dismiss))) continue;
+    const accept  = findBtn(el, acceptRx, rejectRx);
+    const dismiss = accept ? null : findBtn(el, dismissRx, null);
+    // Qualify as a consent overlay if it's WORDED like one, OR it pairs an
+    // accept-all button with a reject/manage control — the universal, language-
+    // agnostic CMP signature (catches TCF dialogs like Le Figaro's English
+    // "Make a choice for your data… / Refuse all").
+    const hasManage = !!findBtn(el, rejectRx, null);
+    if (!(consentRx.test(t) || (accept && hasManage))) continue;
+    // Shapes: positioned overlay; OR a wide edge bar; OR a block that FILLS its
+    // viewport — the last covers a dialog that fills a dedicated CMP <iframe>
+    // (inside it the dialog is position:static, so the per-frame pass sees a
+    // large static block). Edge/fill shapes require an actionable button so we
+    // never touch ordinary content; positioned overlays may also be hidden.
+    const fills = (r.width * r.height) >= innerWidth * innerHeight * 0.5;
+    if (positioned) { /* ok */ }
+    else if ((edged || fills) && (accept || dismiss)) { /* ok */ }
+    else continue;
     el.__btn = accept || dismiss;
     cands.push(el);
   }
@@ -156,6 +176,42 @@ _BANNER_HEURISTIC_JS = r"""() => {
   }
   return out;
 }"""
+
+# Persistent auto-dismisser: installs a MutationObserver that re-runs the
+# heuristic whenever the DOM changes, for a short window — so CMP banners that
+# MOUNT LATE (seconds after load, e.g. Le Figaro) are still dismissed before the
+# screenshot, without adding fixed latency to every render. Idempotent per frame.
+_AUTODISMISS_JS = (
+    "(() => { if (window.__wConsentObs) return; window.__wConsentObs = 1;\n"
+    "  const sweep = " + _BANNER_HEURISTIC_JS + ";\n"
+    "  const run = () => { try { sweep(); } catch (e) {} };\n"
+    "  run();\n"
+    "  let t = null;\n"
+    "  const obs = new MutationObserver(() => { if (t) return; t = setTimeout(() => { t = null; run(); }, 250); });\n"
+    "  try { obs.observe(document.documentElement, { childList: true, subtree: true }); } catch (e) {}\n"
+    "  setTimeout(() => { try { obs.disconnect(); } catch (e) {} }, 8000);\n"
+    "})()"
+)
+
+
+async def install_consent_autodismiss(page, monitor: Monitor) -> None:
+    """Install a short-lived MutationObserver (main + same-origin child frames)
+    that keeps dismissing consent banners as they mount — catches late CMPs that
+    a single post-load sweep would miss."""
+    if not getattr(monitor, "block_annoyances", True):
+        return
+    try:
+        await page.evaluate(_AUTODISMISS_JS)
+    except Exception:
+        pass
+    for frame in page.frames:
+        if frame is page.main_frame:
+            continue
+        try:
+            await frame.evaluate(_AUTODISMISS_JS)
+        except Exception:
+            pass
+
 
 async def setup_blocking(context, monitor: Monitor) -> None:
     """Abort ad/tracker network requests for this render (set up on the context
@@ -362,12 +418,13 @@ async def capture(page, response, monitor: Monitor, mobile: bool = True) -> Rend
     # consent walls), then hide whatever banners remain — so they pollute neither
     # the captured text nor the screenshot / visual diff.
     await click_consent(page, monitor)
-    # hide_banners returns HTML of any blocking consent wall it could only hide
-    # (not accept) — fed to the runner's optional AI selector-learning fallback.
+    # Keep dismissing banners as they mount (catches late CMPs during the rest of
+    # capture), then do the first explicit sweep.
+    await install_consent_autodismiss(page, monitor)
     try:
-        result.unhandled_consent_html = await hide_banners(page, monitor)
+        await hide_banners(page, monitor)
     except Exception:
-        result.unhandled_consent_html = None
+        pass
 
     try:
         result.title = (await page.title() or "").strip() or None
@@ -401,6 +458,14 @@ async def capture(page, response, monitor: Monitor, mobile: bool = True) -> Rend
                     result.extracted_value = (await el.inner_text()).strip()
         except Exception:
             result.extracted_value = None
+
+    # Final sweep right before the screenshot so a banner that mounted during
+    # text extraction is gone from the image too. Its walls (any blocking banner
+    # we could only hide, not accept) feed the runner's optional AI fallback.
+    try:
+        result.unhandled_consent_html = await hide_banners(page, monitor)
+    except Exception:
+        result.unhandled_consent_html = None
 
     # Full-page screenshot at the desktop viewport (PNG).
     try:
