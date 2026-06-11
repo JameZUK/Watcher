@@ -6,6 +6,7 @@ from .triage import (
     configure_group,
     configure_monitor,
     extract_value,
+    solve_captcha_grid,
     suggest_consent_selectors,
     suggest_watch_items,
     summarize_history,
@@ -15,5 +16,5 @@ from .triage import (
 __all__ = [
     "Triage", "triage_change", "suggest_watch_items", "extract_value",
     "configure_monitor", "configure_group", "summarize_history",
-    "suggest_consent_selectors", "ai_login_action",
+    "suggest_consent_selectors", "ai_login_action", "solve_captcha_grid",
 ]

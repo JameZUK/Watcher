@@ -15,7 +15,7 @@ from watcher.ai import triage as T
 AI_FNS = [
     T.triage_change, T.suggest_watch_items, T.extract_value,
     T.configure_monitor, T.summarize_history, T.suggest_consent_selectors,
-    T.ai_login_action,
+    T.ai_login_action, T.solve_captcha_grid,
 ]
 
 
@@ -48,7 +48,8 @@ class _FakeClient:
         '"name":"N","detection_mode":"auto","selector":"","interval_minutes":30,'
         '"ai_watch_intent":"x","track_value":true,"value_threshold":0,'
         '"value_threshold_dir":"none","selectors":["#accept-all","#accept-all","button.agree","<bad>"],'
-        '"action":"type","index":0,"secret":"username","text":""}'
+        '"action":"type","index":0,"secret":"username","text":"",'
+        '"cells":[1,3,9,99]}'
     )
 
     def __init__(self, *a, **k):
@@ -134,6 +135,28 @@ def test_ai_login_action_parses(fake_http):
              available=["username", "password"], history=[]))
     assert r and r["action"] == "type" and r["index"] == 0 and r["secret"] == "username"
     assert fake_http.last["url"] == "http://x/v1"
+
+
+def _tiny_png() -> bytes:
+    import io as _io
+
+    from PIL import Image
+    buf = _io.BytesIO()
+    Image.new("RGB", (12, 12), (40, 40, 40)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_solve_captcha_grid_parses_and_bounds(fake_http):
+    r = _run(T.solve_captcha_grid(api_key="k", model="m", base_url="http://x/v1",
+             target="motorcycles", rows=3, cols=3, image_png=_tiny_png()))
+    # cell 99 is out of a 3x3 (9-cell) grid → dropped; valid cells kept
+    assert r == [1, 3, 9]
+    assert fake_http.last["url"] == "http://x/v1"
+
+
+def test_solve_captcha_grid_needs_image(fake_http):
+    assert _run(T.solve_captcha_grid(api_key="k", model="m", target="x",
+                                     rows=3, cols=3, image_png=b"")) is None
 
 
 def test_default_endpoint_is_openrouter(fake_http):

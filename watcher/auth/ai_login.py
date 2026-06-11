@@ -149,12 +149,17 @@ async def run_agent(
     engine: str = "chromium",
     proxy: str | None = None,
     wait_until: str = "domcontentloaded",
+    solve_captcha_fn: Callable[..., Awaitable[list[int] | None]] | None = None,
 ) -> None:
     """The agent loop: observe → decide (action_fn) → act, pausing for a code.
-    persist_fn(state) stores the captured session on success."""
+    persist_fn(state) stores the captured session on success.
+
+    solve_captcha_fn(target, rows, cols, png) -> cells lets the agent attempt a
+    reCAPTCHA image challenge before treating it as a dead end."""
     available = [k for k, v in session.secrets.items() if v]
     history: list[str] = []
     code_pending = False
+    captcha_tries = 0
     close = None
     try:
         close, ctx = await _new_context(engine, proxy)
@@ -172,6 +177,19 @@ async def run_agent(
             # kept observing the opener it would look frozen forever.
             page = _active_page(ctx, page)
             await _settle(page)
+
+            # A reCAPTCHA image challenge can't be driven via the element list —
+            # solve it (best effort) with the vision model before observing.
+            if solve_captcha_fn and captcha_tries < 4 and await _has_recaptcha_challenge(page):
+                captcha_tries += 1
+                session.log.append("Solving image captcha…")
+                solved = await solve_recaptcha(page, solve_captcha_fn,
+                                               log_cb=session.log.append)
+                session.log.append("Captcha passed — continuing." if solved
+                                   else "Couldn't pass the captcha this time.")
+                await _settle(page)
+                continue
+
             try:
                 elements = await page.evaluate(_OBSERVE_JS)
             except Exception:
@@ -362,6 +380,113 @@ async def _is_bot_wall(page) -> bool:
             "iframe[title*=\"captcha\" i],#px-captcha,[id*=\"px-captcha\"]')"))
     except Exception:
         return False
+
+
+async def _recaptcha_token(page) -> str:
+    try:
+        return await page.evaluate(
+            "() => { const t = document.querySelector('textarea[name=\"g-recaptcha-response\"],"
+            "#g-recaptcha-response'); return (t && t.value) || ''; }")
+    except Exception:
+        return ""
+
+
+def _recaptcha_challenge_frame(page):
+    """The reCAPTCHA image-challenge iframe, if one is currently showing."""
+    for fr in page.frames:
+        if "/recaptcha/" in (fr.url or "") and "bframe" in (fr.url or ""):
+            return fr
+    return None
+
+
+async def _has_recaptcha_challenge(page) -> bool:
+    """True only when an image challenge is actually visible (not an idle/invisible
+    reCAPTCHA whose bframe merely exists in the DOM)."""
+    fr = _recaptcha_challenge_frame(page)
+    if fr is None:
+        return False
+    try:
+        d = fr.locator(".rc-imageselect-desc-no-canonical, .rc-imageselect-desc")
+        return bool(await d.count()) and await d.first.is_visible()
+    except Exception:
+        return False
+
+
+async def _open_recaptcha_if_needed(page) -> None:
+    """If only the 'I'm not a robot' checkbox is showing, tick it to trigger the
+    challenge (some forms gate the challenge behind the anchor)."""
+    for fr in page.frames:
+        if "/recaptcha/" in (fr.url or "") and "anchor" in (fr.url or ""):
+            try:
+                box = fr.locator("#recaptcha-anchor")
+                if await box.count() and (await box.get_attribute("aria-checked")) == "false":
+                    await box.click(timeout=4000)
+                    await page.wait_for_timeout(2000)
+            except Exception:
+                pass
+            return
+
+
+async def solve_recaptcha(page, solve_fn, log_cb=None, *, max_rounds: int = 6) -> bool:
+    """Best-effort: drive a reCAPTCHA image challenge with a vision model.
+
+    `solve_fn(target, rows, cols, png) -> list[int]` returns the 1-based cells to
+    click. Returns True if a response token gets minted (the challenge passed).
+    reCAPTCHA Enterprise also behaviour-scores the browser, so even correct picks
+    can be rejected and re-challenged — we cap the attempts and report honestly.
+    """
+    def _log(m):
+        if log_cb:
+            log_cb(m)
+
+    await _open_recaptcha_if_needed(page)
+    for _ in range(max_rounds):
+        if await _recaptcha_token(page):
+            return True
+        fr = _recaptcha_challenge_frame(page)
+        if fr is None:
+            return bool(await _recaptcha_token(page))
+        try:
+            desc = fr.locator(".rc-imageselect-desc-no-canonical, .rc-imageselect-desc")
+            if not await desc.count():
+                await page.wait_for_timeout(1500)
+                if await _recaptcha_token(page):
+                    return True
+                continue
+            prompt = (await desc.first.inner_text(timeout=4000)).replace("\n", " ").strip()
+            # "Select all squares with motorcycles" -> "motorcycles"
+            target = prompt.split(" with ", 1)[-1].strip() or prompt
+            tiles = fr.locator(".rc-imageselect-tile")
+            n = await tiles.count()
+            if n == 0:
+                await page.wait_for_timeout(1500)
+                continue
+            side = 4 if n > 9 else 3
+            rows = cols = side
+            grid = fr.locator(".rc-imageselect-table-44, .rc-imageselect-table-33, "
+                              ".rc-imageselect-table-42, table").first
+            png = await grid.screenshot(timeout=6000)
+        except Exception as exc:
+            _log(f"captcha read error: {type(exc).__name__}")
+            return False
+
+        cells = await solve_fn(target, rows, cols, png)
+        _log(f"Captcha “{target}”: picking {len(cells or [])} of {n} squares")
+        if not cells:
+            return False
+        for c in cells:
+            if 1 <= c <= n:
+                try:
+                    await tiles.nth(c - 1).click(timeout=4000)
+                    await page.wait_for_timeout(250)
+                except Exception:
+                    pass
+        try:
+            await fr.locator("#recaptcha-verify-button").click(timeout=4000)
+        except Exception:
+            pass
+        await page.wait_for_timeout(2800)
+    return bool(await _recaptcha_token(page))
 
 
 def _active_page(ctx, current):

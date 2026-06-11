@@ -713,3 +713,73 @@ async def ai_login_action(
     if d.get("action") not in ("type", "type_text", "click", "await_code", "done", "fail"):
         return None
     return d
+
+
+_CAPTCHA_SCHEMA = {
+    "name": "captcha_grid",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "cells": {"type": "array", "items": {"type": "integer"},
+                      "description": "1-based cell numbers (left→right, top→bottom) to click."},
+        },
+        "required": ["cells"],
+    },
+}
+
+
+async def solve_captcha_grid(
+    *, api_key: str, model: str, base_url: str | None = None,
+    target: str, rows: int, cols: int, image_png: bytes, timeout: float = 40.0,
+) -> list[int] | None:
+    """Look at a reCAPTCHA image grid and return which cells contain `target`.
+
+    Best-effort: the model reads the grid (numbered left→right, top→bottom) and
+    returns the matching cell numbers. reCAPTCHA also scores browser behaviour, so
+    a correct answer is necessary but not always sufficient.
+    """
+    if not api_key or not image_png:
+        return None
+    data_url = _compact_image(image_png, max_side=768, quality=88)
+    if not data_url:
+        return None
+    n = rows * cols
+    system = (
+        "You solve image-grid captchas. You are given an image that is a single "
+        f"{rows}x{cols} grid (so {n} equal cells), numbered 1..{n} left-to-right "
+        "then top-to-bottom (cell 1 is top-left). Return EVERY cell that contains "
+        f"any visible part of: {target}. Even a small sliver counts. If unsure about "
+        "a cell, include it. Respond ONLY with the JSON {\"cells\":[...]}.")
+    body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": [
+                {"type": "text", "text": f"Which cells contain {target}? Grid is {rows}x{cols}."},
+                {"type": "image_url", "image_url": {"url": data_url}}]},
+        ],
+        "temperature": 0.0,
+        "max_tokens": 120,
+        "response_format": {"type": "json_schema", "json_schema": _CAPTCHA_SCHEMA},
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(base_url or OPENROUTER_URL, json=body, headers=headers)
+        if resp.status_code != 200:
+            logger.warning("OpenRouter captcha solve failed: HTTP %s %s", resp.status_code, resp.text[:200])
+            return None
+        raw = resp.json()["choices"][0]["message"]["content"]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("OpenRouter captcha solve error: %s", exc)
+        return None
+    s, e = (raw or "").find("{"), (raw or "").rfind("}")
+    if s == -1 or e == -1:
+        return None
+    try:
+        cells = json.loads(raw[s:e + 1]).get("cells") or []
+    except json.JSONDecodeError:
+        return None
+    return [c for c in cells if isinstance(c, int) and 1 <= c <= n]

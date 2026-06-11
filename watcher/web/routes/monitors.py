@@ -13,7 +13,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import defer, selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...ai import ai_login_action, configure_monitor, suggest_watch_items, summarize_history
+from ...ai import (ai_login_action, configure_monitor, solve_captcha_grid,
+                   suggest_watch_items, summarize_history)
 from ...app_settings import get_app_settings, get_openrouter_key
 from ...auth import ai_login
 from ...auth.login_flows import (
@@ -787,6 +788,10 @@ async def ai_login_start(
     async def action_fn(**kw):
         return await ai_login_action(api_key=key, model=model, base_url=base, **kw)
 
+    async def solve_captcha_fn(target, rows, cols, png):
+        return await solve_captcha_grid(api_key=key, model=model, base_url=base,
+                                        target=target, rows=rows, cols=cols, image_png=png)
+
     async def persist_fn(state):
         async with SessionLocal() as s2:
             m2 = (await s2.execute(
@@ -807,7 +812,7 @@ async def ai_login_start(
     import asyncio
     sess._task = asyncio.create_task(ai_login.run_agent(
         sess, action_fn, persist_fn, engine=engine, proxy=proxy,
-        wait_until=monitor.wait_until))
+        wait_until=monitor.wait_until, solve_captcha_fn=solve_captcha_fn))
     return JSONResponse({"ok": True, "sid": sess.id})
 
 
