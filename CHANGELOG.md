@@ -65,6 +65,15 @@ All of it is generic and site-agnostic — no per-site rules.
   returns JSON (baseline id, or a cooldown countdown); the scheduler tracks
   in-flight checks (`is_checking`) so a reload mid-check resumes the live state;
   a 90s timeout guards against a hung render.
+- **Session cookies — multi-domain, multi-block, merge & manage.** The cookie
+  box now accepts **several JSON exports pasted together** (one per domain) and,
+  via a new *"Keep cookies for all domains"* toggle, keeps cookies from **every**
+  domain in the paste — needed for federated/SSO logins (e.g. Glassdoor signs in
+  through `indeed.com`, so its auth cookies live on a different domain and were
+  previously rejected). A paste now **merges into** the stored set by default
+  (de-duped by name+domain+path, newest wins) so you can add/update without
+  re-pasting everything; *"Replace stored cookies"* and *"Clear all stored
+  cookies"* override that. A per-domain summary shows what's currently stored.
 
 ### Fixed
 - **Full-page screenshots no longer come out tall but mostly blank** on sites
