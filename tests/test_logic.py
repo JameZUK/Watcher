@@ -527,3 +527,14 @@ def test_credential_for_field_guard():
     assert _credential_for_field({"type": "text", "name": "search"}, secrets) is None
     # secret missing → don't claim the field
     assert _credential_for_field({"type": "password"}, {"username": "u"}) is None
+
+
+def test_engine_error_message():
+    from watcher.auth.ai_login import engine_error_message
+    wall = ("BrowserType.launch: Host system is missing dependencies to run browsers.\n"
+            "Missing libraries:\n  libwoff2dec.so.1.0.2\n  libgtk-4.so.1")
+    msg = engine_error_message(wall)
+    assert msg and "isn't available" in msg and "Docker" in msg
+    assert "libwoff2dec" not in msg            # the raw wall is gone
+    assert engine_error_message("Executable doesn't exist at /path") is not None
+    assert engine_error_message("TimeoutError: nope") is None

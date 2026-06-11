@@ -106,6 +106,21 @@ class LoginSession:
         return code
 
 
+def engine_error_message(exc: object) -> str | None:
+    """Turn a raw browser-launch failure (e.g. Playwright's 36-line 'missing
+    libraries' wall for WebKit on a host without its system deps) into one clear
+    line. Returns None if the error isn't a recognised launch problem."""
+    s = str(exc).lower()
+    if any(m in s for m in ("missing dependencies", "host system is missing",
+                            "missing libraries", "executable doesn't exist",
+                            "playwright install")):
+        return ("This rendering engine isn't available in the current environment "
+                "(its system libraries aren't installed). Use Chromium, Firefox or "
+                "Camoufox here — or run Watcher in its Docker image, which bundles "
+                "every browser. (WebKit needs deps that this host is missing.)")
+    return None
+
+
 _SESSIONS: dict[str, LoginSession] = {}
 
 
@@ -493,7 +508,8 @@ async def run_agent(
         if session.status != "done" and code_entered and ctx is not None and _popup_closed(ctx):
             salvaged = await _salvage_session(session, ctx, persist_fn)
         if not salvaged and session.status not in ("done",):
-            session.status, session.error = "error", f"{type(exc).__name__}: {exc}"
+            session.status = "error"
+            session.error = engine_error_message(exc) or f"{type(exc).__name__}: {exc}"
     finally:
         if close:
             await close()

@@ -190,11 +190,20 @@ async def _render(monitor) -> RenderResult:
 
     Cancellation propagates into the engine's `async with`, tearing the browser
     down on timeout."""
+    from .auth.ai_login import engine_error_message
     try:
-        return await asyncio.wait_for(render_monitor(monitor),
-                                      timeout=settings.render_timeout_seconds + 30)
+        result = await asyncio.wait_for(render_monitor(monitor),
+                                        timeout=settings.render_timeout_seconds + 30)
     except asyncio.TimeoutError:
         return RenderResult(ok=False, error="Render timed out", http_status=None)
+    except Exception as exc:  # noqa: BLE001
+        return RenderResult(ok=False, http_status=None,
+                            error=engine_error_message(exc) or f"Render failed: {type(exc).__name__}: {exc}")
+    # Collapse a raw 'missing libraries' wall (e.g. WebKit without its deps) into
+    # one clear line.
+    if not result.ok and result.error and (friendly := engine_error_message(result.error)):
+        result.error = friendly
+    return result
 
 
 def _is_transient(result) -> bool:
