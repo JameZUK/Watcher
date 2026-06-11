@@ -52,8 +52,14 @@ so scheduled checks ride it.
   that was already gone and give up with "No input fields … to enter the code").
 - **Post-code handling is robust:** a brief "verifying…" / transitional frame no
   longer aborts the login; landing back at the social-login wall is detected as a
-  rejection (clear message) instead of re-clicking it; and success is only
-  declared once the login popup has actually closed.
+  rejection (clear message) instead of re-clicking it.
+- **Login success is judged by the popup closing**, not by what the opener shows.
+  For federated logins, the credential popup closing IS the success — so a
+  successful login is now captured even when the original page doesn't refresh to
+  a signed-in state (it used to look like a failure to the agent). A staying-open
+  popup back at the wall is still treated as a rejection. As a safety net, if the
+  flow errors out after the code with the popup already closed, the session is
+  salvaged rather than discarded.
 - **Always uses the email login, never Google/Apple SSO.** A weak model would
   sometimes click "Continue with Google" and wander into Google's sign-in; the
   agent now refuses third-party SSO buttons and steers back to the email field /

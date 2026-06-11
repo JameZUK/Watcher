@@ -19,7 +19,10 @@ OPENER = """<!doctype html><html><body>
 </div>
 <div id="in" style="display:none">Signed in. Welcome.</div>
 <script>
-setInterval(() => {
+const S = "%(s)s";
+// 'noreload' simulates an opener that does NOT refresh to a signed-in state
+// after the popup closes — success must be inferred from the popup closing.
+if (S !== 'noreload') setInterval(() => {
   if (document.cookie.includes('sess=ok')) {
     document.getElementById('wall').style.display='none';
     document.getElementById('in').style.display='block';
@@ -62,7 +65,7 @@ document.getElementById('email_continue').addEventListener('click', e => {
   } else {
     const f=document.createElement('input'); f.id='code'; f.autocomplete='one-time-code';
     f.placeholder='Enter code'; holder.appendChild(f); f.focus();
-    if (S === 'enter' || S === 'verify') {
+    if (S === 'enter' || S === 'verify' || S === 'noreload') {
       f.addEventListener('keydown', ev => { if(ev.key==='Enter' && f.value.length>=6){
         if (S==='verify'){ document.getElementById('code_step').style.display='none';
           document.getElementById('verifying').style.display='block'; setTimeout(done, 2600); }
@@ -202,6 +205,7 @@ async def main():
     results.append(await run_scenario("E code rejected -> bounce to wall", "reject", "none", "error"))
     results.append(await run_scenario("F weak model keeps clicking Google/Apple", "enter", "none",
                                       "done", model_fn=model_dumb))
+    results.append(await run_scenario("G popup closes but opener doesn't reload", "noreload", "none", "done"))
     print(f"\n{sum(results)}/{len(results)} scenarios passed")
 
 asyncio.run(main())

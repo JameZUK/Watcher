@@ -163,6 +163,7 @@ async def run_agent(
     code_entered = False
     post_code_grace = 0
     wall_after_code = 0
+    popup_seen = False
     close = None
     ctx = None
     try:
@@ -215,18 +216,23 @@ async def run_agent(
                                      or e.get("name") or f"element {e.get('idx')}") for e in elements}
             elem_by_idx = {e.get("idx"): e for e in elements}
 
-            # Post-code state handling. Once the code is in, three things can
-            # happen: we end up signed in (success), we bounce back to the
-            # social-login wall (rejected), or we're mid-transition (wait).
+            # Track whether a federated-login popup ever opened — its CLOSING is
+            # the clearest signal that login completed (a rejection keeps the popup
+            # open showing an error/the wall).
+            try:
+                _n_open = len([p for p in ctx.pages if not p.is_closed()])
+            except Exception:
+                _n_open = 1
+            if _n_open > 1:
+                popup_seen = True
+
+            # Post-code state handling: signed in (success), bounced back to the
+            # social-login wall (rejected), or mid-transition (wait it out).
             try:
                 _u = (page.url or "").lower()
             except Exception:
                 _u = ""
             if code_entered and elements:
-                try:
-                    _n_open = len([p for p in ctx.pages if not p.is_closed()])
-                except Exception:
-                    _n_open = 1
                 _on_auth = any(m in _u for m in ("/auth", "login", "signin", "sign-in"))
                 _has_cred = any(e.get("type") in ("password", "email") for e in elements)
                 _has_code = any(_is_code_field(e) for e in elements)
@@ -235,19 +241,25 @@ async def run_agent(
                     or ("continue with google" in (e.get("label") or "").lower())
                     or ("apple or email" in (e.get("label") or "").lower())
                     for e in elements)
-                # Signed in: the login popup has closed (back to a single page) and
-                # nothing login-ish remains. n_open<=1 stops us calling a still-open
-                # code/intermediate popup a success.
-                if (_n_open <= 1 and not _has_cred and not _has_code
-                        and not _on_auth and not _social_wall):
-                    break  # signed in — capture the session
-                if _social_wall:
-                    # Require persistence so a single transient frame while the
-                    # opener reloads to its signed-in state isn't a false alarm.
-                    wall_after_code += 1
-                    if wall_after_code >= 2:
-                        session.status, session.error = "error", _CODE_FAIL_MSG
-                        return
+                if popup_seen:
+                    # Popup-based federated login: the popup closing IS the success.
+                    if _n_open <= 1:
+                        break  # signed in — capture the session
+                    if _social_wall:   # popup still open, back at the wall → rejected
+                        wall_after_code += 1
+                        if wall_after_code >= 2:
+                            session.status, session.error = "error", _CODE_FAIL_MSG
+                            return
+                else:
+                    # Direct (same-page) login: judge by the UI — nothing login-ish
+                    # left means we're in.
+                    if not _has_cred and not _has_code and not _on_auth and not _social_wall:
+                        break
+                    if _social_wall:
+                        wall_after_code += 1
+                        if wall_after_code >= 2:
+                            session.status, session.error = "error", _CODE_FAIL_MSG
+                            return
 
             # Stuck detection: if the interactive elements (incl. their filled-ness)
             # don't change across steps, our actions aren't doing anything — almost
@@ -264,6 +276,9 @@ async def run_agent(
                 session.status, session.error = "error", _WALL_MSG
                 return
             if stuck >= 3:  # input no longer changes the page — captcha / dead end
+                if code_entered and popup_seen and _popup_closed(ctx) and await _salvage_session(
+                        session, ctx, persist_fn):
+                    return
                 session.status, session.error = "error", _STUCK_MSG
                 return
 
@@ -279,6 +294,9 @@ async def run_agent(
                     post_code_grace += 1
                     await _safe_sleep(page, 2500)
                     continue
+                if code_entered and popup_seen and _popup_closed(ctx) and await _salvage_session(
+                        session, ctx, persist_fn):
+                    return
                 session.status = "error"
                 session.error = (_WALL_MSG if await _is_bot_wall(page)
                                  else "The assistant couldn't work out the next step on this page.")
@@ -306,6 +324,9 @@ async def run_agent(
                     post_code_grace += 1
                     await _safe_sleep(page, 2500)
                     continue
+                if code_entered and popup_seen and _popup_closed(ctx) and await _salvage_session(
+                        session, ctx, persist_fn):
+                    return
                 session.status = "error"
                 session.error = (action.get("reason") or "Login could not proceed.")
                 if await _is_bot_wall(page):
@@ -391,7 +412,9 @@ async def run_agent(
             # and navigate before the next loop, so we follow it (not the opener).
             await _await_popup(ctx, _pages_before, page)
         else:
-            session.status, session.error = "error", "Gave up after too many steps."
+            if not (code_entered and popup_seen and _popup_closed(ctx) and await _salvage_session(
+                    session, ctx, persist_fn)):
+                session.status, session.error = "error", "Gave up after too many steps."
             return
 
         # Success — capture + persist the session cookies.
@@ -402,21 +425,12 @@ async def run_agent(
         session.log.append("Logged in — session saved.")
     except Exception as exc:  # noqa: BLE001
         log.warning("ai-login agent error: %s", exc)
+        # Once the code is in and the login popup has closed, the login has
+        # completed — any error here is teardown noise (a page closing under us,
+        # etc.), not a real failure. Capture the session rather than reporting it.
         salvaged = False
-        # If the one-time code was already accepted, a page/popup closing under us
-        # is the success itself (OAuth popups close when login completes) — capture
-        # the session from the context rather than reporting the teardown error.
-        if (session.status != "done" and code_entered and ctx is not None
-                and "closed" in str(exc).lower()):
-            try:
-                state = await ctx.storage_state()
-                session.result_state = state
-                await persist_fn(state)
-                session.status = "done"
-                session.log.append("Logged in — session saved.")
-                salvaged = True
-            except Exception:
-                salvaged = False
+        if session.status != "done" and code_entered and ctx is not None and _popup_closed(ctx):
+            salvaged = await _salvage_session(session, ctx, persist_fn)
         if not salvaged and session.status not in ("done",):
             session.status, session.error = "error", f"{type(exc).__name__}: {exc}"
     finally:
@@ -747,6 +761,36 @@ async def _enter_code(page, sel: str, code: str) -> None:
         await page.keyboard.press("Enter")
     except Exception:
         pass
+
+
+def _popup_closed(ctx) -> bool:
+    """True when the login flow is back to a single page — the federated-login
+    popup has closed, which (after a code) means login completed."""
+    try:
+        return len([p for p in ctx.pages if not p.is_closed()]) <= 1
+    except Exception:
+        return False
+
+
+async def _salvage_session(session, ctx, persist_fn) -> bool:
+    """Capture + persist the session cookies. Used when login looks complete but
+    the flow ended on an error (popup closed under us, model gave up post-code).
+    Returns True only if there was a session to save."""
+    try:
+        state = await ctx.storage_state()
+    except Exception:
+        return False
+    if not state.get("cookies"):
+        return False
+    session.result_state = state
+    try:
+        await persist_fn(state)
+    except Exception:
+        return False
+    session.status = "done"
+    session.error = None
+    session.log.append("Logged in — session saved.")
+    return True
 
 
 async def _safe_sleep(page, ms: int) -> None:
