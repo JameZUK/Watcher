@@ -649,7 +649,11 @@ function aiLogin(mid){return {
     if (!end) return;
     const start = s || end;
     const moved = Math.hypot(end.fx-start.fx, end.fy-start.fy);
-    if (moved > 0.02) this._input({type:'drag', fx:start.fx, fy:start.fy, fx2:end.fx, fy2:end.fy});
+    // Only a deliberate drag counts. The old 0.02 (~25px) threshold turned any
+    // slightly-imprecise click — common on a small target like a reCAPTCHA
+    // checkbox — into a drag, which never clicks the target. 0.05 (~64px) keeps
+    // real clicks as clicks while still allowing intentional drags (sliders).
+    if (moved > 0.05) this._input({type:'drag', fx:start.fx, fy:start.fy, fx2:end.fx, fy2:end.fy});
     else this._input({type:'click', fx:start.fx, fy:start.fy});
   },
   relayHover(ev){   // throttled hover so the page sees natural cursor motion

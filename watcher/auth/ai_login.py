@@ -23,9 +23,17 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Awaitable, Callable
 
+from ..config import settings
 from .login_flows import merge_storage_state
 
 log = logging.getLogger("watcher.ailogin")
+
+
+def _dlog(msg: str, *args) -> None:
+    """Verbose per-event login tracing (clicks, navigations, replaced sessions).
+    Silent unless WATCHER_AI_LOGIN_DEBUG=true — it's one line per click."""
+    if settings.ai_login_debug:
+        log.info(msg, *args)
 
 MAX_STEPS = 14
 CODE_WAIT_SECONDS = 300
@@ -1027,8 +1035,8 @@ async def _apply_event(page, ev: dict, session) -> None:
 
     if t in ("click", "dblclick"):
         x, y = px(ev.get("fx", 0), ev.get("fy", 0))
-        log.info("ai-login[%s] %s @ (%.0f,%.0f) on %s", session.id[:8], t, x, y,
-                 (getattr(page, "url", "") or "")[:70])
+        _dlog("ai-login[%s] %s @ (%.0f,%.0f) on %s", session.id[:8], t, x, y,
+              (getattr(page, "url", "") or "")[:70])
         await _human_move(page, session, x, y)
         await _human_press(page, x, y)
         if t == "dblclick":
@@ -1098,8 +1106,8 @@ async def _shot(session, page) -> None:
     except Exception:
         cur = ""
     if cur != session._shot_url:          # new page → re-probe the fast path
-        log.info("ai-login[%s] page → %s (pages=%d)", session.id[:8], cur[:90],
-                 _page_count(page))
+        _dlog("ai-login[%s] page → %s (pages=%d)", session.id[:8], cur[:90],
+              _page_count(page))
         session._shot_url = cur
         session._shot_url_since = now
         session._shot_needs_stop = False
@@ -1143,13 +1151,21 @@ async def _manual_step(session, page) -> None:
             compact[-1] = ev
         else:
             compact.append(ev)
+    acted = False
     for ev in compact:
         try:
             await _apply_event(page, ev, session)
         except Exception:
             pass
-        if ev.get("type") != "move":   # refresh after meaningful actions
-            await _shot(session, page)
+        if ev.get("type") != "move":
+            acted = True
+    # One refresh AFTER the whole batch — not after every click. Re-shooting a
+    # still-loading page (e.g. a reCAPTCHA wall) costs ~1.5s each, so per-event
+    # shots let a burst of clicks back the queue up to many seconds of lag, which
+    # makes the view feel dead and provokes more clicking. The 500ms poll keeps
+    # the view live between ticks regardless.
+    if acted:
+        await _shot(session, page)
     await _safe_sleep(page, 120)
 
 
@@ -1228,7 +1244,7 @@ def create_session(monitor_id: int, user_id: int, url: str, secrets: dict) -> Lo
     # stealth browsers hitting the same site at once from one IP trips bot-detection
     # and stalls the OAuth handoff — exactly the "stuck" symptom.
     for old in [v for v in _SESSIONS.values() if v.monitor_id == monitor_id]:
-        log.info("ai-login: replacing prior session %s for monitor %s", old.id[:8], monitor_id)
+        _dlog("ai-login: replacing prior session %s for monitor %s", old.id[:8], monitor_id)
         if old._task is not None:
             try:
                 old._task.cancel()

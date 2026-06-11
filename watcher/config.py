@@ -77,6 +77,12 @@ class Settings(BaseSettings):
     login_max_attempts: int = Field(default=10)          # per IP per window
     login_window_seconds: int = Field(default=300)
 
+    # Verbose per-event tracing of the AI / manual login agent (every click,
+    # page navigation, and relayed input event). Off by default — it's noisy
+    # (one line per click) and only useful when diagnosing a stuck login.
+    # Enable with WATCHER_AI_LOGIN_DEBUG=true.
+    ai_login_debug: bool = Field(default=False)
+
     # --- Detection sensitivity ---
     # Minimum fraction of pixels (0..1) that must differ before a *visual* change
     # counts — a noise floor that absorbs anti-aliasing, lazy-loaded images,
