@@ -45,6 +45,17 @@ so scheduled checks ride it.
 - The agent recognises a genuine anti-bot wall / captcha it can't pass and stops
   with a clear, actionable message (use Session cookies) rather than a vague
   "couldn't work out the next step".
+- **One-time codes now actually register.** The code is typed with real
+  keystrokes (so multi-box, auto-advancing OTP inputs fill correctly — page.fill
+  silently broke them) and submitted with Enter. We no longer flag a code as
+  "pending" to the model after entering it (that made it hunt for a code field
+  that was already gone and give up with "No input fields … to enter the code").
+- **Post-code handling is robust:** a brief "verifying…" / transitional frame no
+  longer aborts the login; landing back at the social-login wall is detected as a
+  rejection (clear message) instead of re-clicking it; and success is only
+  declared once the login popup has actually closed. Covered by a five-scenario
+  browser harness (`scripts/test_ai_login.py`): Enter-submit, explicit-Continue,
+  multi-box, transitional-then-success, and rejected-bounce.
 
 ### Notes / limitations
 - Captcha solving is **best effort and stochastic.** reCAPTCHA Enterprise also

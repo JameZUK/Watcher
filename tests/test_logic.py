@@ -422,6 +422,18 @@ def test_login_session_code_event():
     asyncio.run(_t())
 
 
+def test_is_code_field():
+    """One-time-code fields are recognised (so a filled code page is never
+    mistaken for the signed-in page, and credentials aren't typed into them)."""
+    from watcher.auth.ai_login import _is_code_field
+    assert _is_code_field({"tag": "input", "autocomplete": "one-time-code"})
+    assert _is_code_field({"tag": "input", "placeholder": "Enter the code"})
+    assert _is_code_field({"tag": "input", "name": "otp"})
+    assert _is_code_field({"tag": "input", "aria": "Verification code"})
+    assert not _is_code_field({"tag": "input", "type": "email", "name": "__email"})
+    assert not _is_code_field({"tag": "button", "label": "Continue"})
+
+
 def test_credential_for_field_guard():
     """A credential field is always filled from the stored secret, never free-typed
     — so the model can't invent (or leak) an email/password into the page."""

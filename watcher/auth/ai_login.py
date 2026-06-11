@@ -161,6 +161,8 @@ async def run_agent(
     code_pending = False
     captcha_tries = 0
     code_entered = False
+    post_code_grace = 0
+    wall_after_code = 0
     close = None
     ctx = None
     try:
@@ -213,29 +215,39 @@ async def run_agent(
                                      or e.get("name") or f"element {e.get('idx')}") for e in elements}
             elem_by_idx = {e.get("idx"): e for e in elements}
 
-            # Success after the one-time code: the OAuth popup closes and we land
-            # back on the signed-in site with no credential fields left — capture
-            # the session rather than waiting for the model to notice.
+            # Post-code state handling. Once the code is in, three things can
+            # happen: we end up signed in (success), we bounce back to the
+            # social-login wall (rejected), or we're mid-transition (wait).
             try:
                 _u = (page.url or "").lower()
             except Exception:
                 _u = ""
-            if (code_entered and elements
-                    and not any((e.get("type") in ("password", "email")) for e in elements)
-                    and not any(m in _u for m in ("/auth", "login", "signin", "sign-in"))):
-                break
-
-            # Regression after the code: if we're back at the social-login wall
-            # ("Continue with Google/Apple/email"), the code was rejected or the
-            # automated login was blocked — stop with a useful message instead of
-            # re-clicking the wall until the step budget runs out.
-            if code_entered and any(
+            if code_entered and elements:
+                try:
+                    _n_open = len([p for p in ctx.pages if not p.is_closed()])
+                except Exception:
+                    _n_open = 1
+                _on_auth = any(m in _u for m in ("/auth", "login", "signin", "sign-in"))
+                _has_cred = any(e.get("type") in ("password", "email") for e in elements)
+                _has_code = any(_is_code_field(e) for e in elements)
+                _social_wall = any(
                     ("continue with apple" in (e.get("label") or "").lower())
                     or ("continue with google" in (e.get("label") or "").lower())
                     or ("apple or email" in (e.get("label") or "").lower())
-                    for e in elements):
-                session.status, session.error = "error", _CODE_FAIL_MSG
-                return
+                    for e in elements)
+                # Signed in: the login popup has closed (back to a single page) and
+                # nothing login-ish remains. n_open<=1 stops us calling a still-open
+                # code/intermediate popup a success.
+                if (_n_open <= 1 and not _has_cred and not _has_code
+                        and not _on_auth and not _social_wall):
+                    break  # signed in — capture the session
+                if _social_wall:
+                    # Require persistence so a single transient frame while the
+                    # opener reloads to its signed-in state isn't a false alarm.
+                    wall_after_code += 1
+                    if wall_after_code >= 2:
+                        session.status, session.error = "error", _CODE_FAIL_MSG
+                        return
 
             # Stuck detection: if the interactive elements (incl. their filled-ness)
             # don't change across steps, our actions aren't doing anything — almost
@@ -263,6 +275,10 @@ async def run_agent(
                     none_retry += 1
                     await _safe_sleep(page, 800)
                     continue
+                if code_entered and post_code_grace < 2:   # login may still be settling
+                    post_code_grace += 1
+                    await _safe_sleep(page, 2500)
+                    continue
                 session.status = "error"
                 session.error = (_WALL_MSG if await _is_bot_wall(page)
                                  else "The assistant couldn't work out the next step on this page.")
@@ -279,6 +295,13 @@ async def run_agent(
             if a == "done":
                 break
             if a == "fail":
+                # Right after the code the page is often mid-transition (a brief
+                # "verifying…" / blank state) — don't accept the model's give-up
+                # until we've let the login settle and re-checked for success.
+                if code_entered and post_code_grace < 2:
+                    post_code_grace += 1
+                    await _safe_sleep(page, 2500)
+                    continue
                 session.status = "error"
                 session.error = (action.get("reason") or "Login could not proceed.")
                 if await _is_bot_wall(page):
@@ -331,9 +354,14 @@ async def run_agent(
                 if idx >= 0:
                     await _enter_code(page, sel, code)
                 session.log.append(f"Code entered ({n_inputs} field(s) on the page).")
-                code_pending = True
+                # NB: we entered AND submitted the code ourselves, so we must NOT set
+                # code_pending — that tells the model "a code is waiting, go fill the
+                # code field", and on the now-moved-on page it finds none and fails
+                # with "No input fields or buttons visible to enter the code".
                 code_entered = True
-            await _safe_sleep(page, 900)
+                await _safe_sleep(page, 1500)  # let the code submission take effect
+            else:
+                await _safe_sleep(page, 900)
         else:
             session.status, session.error = "error", "Gave up after too many steps."
             return
@@ -386,6 +414,18 @@ _STUCK_MSG = (
     "'press & hold' anti-bot check, which can't be automated. Log in manually in "
     "your own browser and paste a session cookie instead (Session cookies, below)."
 )
+
+
+def _is_code_field(el: dict) -> bool:
+    """Does this input look like a one-time-code / OTP field?"""
+    if el.get("tag") != "input":
+        return False
+    if "one-time-code" in (el.get("autocomplete") or "").lower():
+        return True
+    blob = " ".join(str(el.get(k, "")) for k in
+                    ("name", "id", "placeholder", "aria", "label")).lower()
+    return any(w in blob for w in ("one-time", "otp", "passcode", "verification code",
+                                   "security code", "enter code", "enter the code"))
 
 
 def _credential_for_field(el: dict, secrets: dict) -> str | None:
@@ -566,13 +606,14 @@ def _active_page(ctx, current):
 
 
 async def _enter_code(page, sel: str, code: str) -> None:
-    """Type a one-time code with real keystrokes.
+    """Type a one-time code with real keystrokes, then submit with Enter.
 
     page.fill() sets .value directly and skips the keypress events that OTP
     widgets rely on — especially multi-box inputs that auto-advance per digit —
     so the code silently doesn't register. Focus + keyboard.type fixes both the
-    single-field and split-box cases; then submit with Enter, and click a
-    Continue/Verify button as a fallback for forms that need an explicit submit.
+    single-field and split-box cases. We submit with Enter only and leave any
+    explicit Continue/Verify click to the model on the next step — a blind button
+    click here risks hitting a social-login button ("Continue with Google").
     """
     try:
         await page.focus(sel)
@@ -584,15 +625,6 @@ async def _enter_code(page, sel: str, code: str) -> None:
             pass
     try:
         await page.keyboard.press("Enter")
-    except Exception:
-        pass
-    # Fallback explicit submit for forms that don't act on Enter.
-    try:
-        btn = page.locator(
-            "button:has-text('Verify'), button:has-text('Continue'), "
-            "button:has-text('Submit'), button[type=submit]").first
-        if await btn.count() and await btn.is_visible():
-            await btn.click(timeout=3000)
     except Exception:
         pass
 
