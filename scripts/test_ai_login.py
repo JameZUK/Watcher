@@ -14,6 +14,7 @@ import watcher.auth.ai_login as A
 # signed-in state once the session cookie appears (as the real opener does). ----
 OPENER = """<!doctype html><html><body>
 <div id="wall">
+  <button type="submit">Continue with Google</button>
   <button id="go" onclick="window.open('/popup?s=%(s)s','_blank','width=500,height=700')">Continue with Apple or email</button>
 </div>
 <div id="in" style="display:none">Signed in. Welcome.</div>
@@ -144,13 +145,23 @@ def model(elements, code_pending):
             "reason": "no path: " + ",".join(lbl(e) or e['type'] for e in elements)}
 
 
-async def run_scenario(name, scenario, code_btn, expect):
+def model_dumb(elements, code_pending):
+    """A weak model (like gemini-flash-lite) that grabs an SSO button whenever one
+    is present — exactly the misbehaviour that sent a real run down the Google
+    path. The agent's social-login guard must steer it back to email regardless."""
+    social = next((e for e in elements if A._is_social_login(e)), None)
+    if social and not code_pending:
+        return {"action": "click", "index": social['idx'], "secret": "", "text": "", "reason": "sso"}
+    return model(elements, code_pending)
+
+
+async def run_scenario(name, scenario, code_btn, expect, model_fn=model):
     srv = make_server(scenario, code_btn)
     url = f"http://127.0.0.1:{srv.server_address[1]}/"
     captured = {}
 
     async def stub(*, elements, screenshot_png, available, history, code_pending):
-        return model(elements, code_pending)
+        return model_fn(elements, code_pending)
 
     async def persist(state):
         captured['cookies'] = [c['name'] for c in (state.get('cookies') or [])]
@@ -189,6 +200,8 @@ async def main():
     results.append(await run_scenario("C multi-box auto-advance", "multibox", "none", "done"))
     results.append(await run_scenario("D transitional 'verifying' then success", "verify", "none", "done"))
     results.append(await run_scenario("E code rejected -> bounce to wall", "reject", "none", "error"))
+    results.append(await run_scenario("F weak model keeps clicking Google/Apple", "enter", "none",
+                                      "done", model_fn=model_dumb))
     print(f"\n{sum(results)}/{len(results)} scenarios passed")
 
 asyncio.run(main())

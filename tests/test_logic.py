@@ -434,6 +434,19 @@ def test_is_code_field():
     assert not _is_code_field({"tag": "button", "label": "Continue"})
 
 
+def test_is_social_login():
+    """SSO buttons are recognised so the agent never goes down a Google/Apple
+    path — but Glassdoor's email gateway ('Continue with Apple or email') is not
+    treated as social."""
+    from watcher.auth.ai_login import _is_social_login
+    assert _is_social_login({"label": "Continue with Google"})
+    assert _is_social_login({"label": "Continue with Apple"})
+    assert _is_social_login({"aria": "Sign in with Facebook"})
+    assert not _is_social_login({"label": "Continue with Apple or email"})
+    assert not _is_social_login({"label": "Continue"})
+    assert not _is_social_login({"label": "Email address"})
+
+
 def test_credential_for_field_guard():
     """A credential field is always filled from the stored secret, never free-typed
     — so the model can't invent (or leak) an email/password into the page."""

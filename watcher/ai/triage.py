@@ -648,9 +648,12 @@ _LOGIN_SYSTEM = (
     "shown, or there is no way forward). Put the reason in `reason`.\n"
     "Typical order: fill the email/username, click Continue/Next if present, fill "
     "the password, submit, handle a code if asked. Pick the email/username field "
-    "before the password. Do NOT click 'create account', 'forgot password', social "
-    "providers (Google/Apple) unless that's the only path. Exactly ONE action. "
-    "Set unused fields to -1 / empty string. Respond ONLY with the JSON."
+    "before the password. The user logs in with EMAIL + PASSWORD: NEVER click "
+    "'Continue with Google', 'Continue with Apple', 'Continue with Facebook' or any "
+    "other third-party / SSO sign-in button — always use the email field (or an "
+    "'…or email' option) instead. Also avoid 'create account' and 'forgot "
+    "password'. Exactly ONE action. Set unused fields to -1 / empty string. "
+    "Respond ONLY with the JSON."
 )
 
 

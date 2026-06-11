@@ -291,6 +291,10 @@ async def run_agent(
             sel = f'[data-ai-idx="{idx}"]'
             history.append(f"{a}{('#' + str(idx)) if idx >= 0 else ''}"
                            f"{(' ' + action['secret']) if action.get('secret') else ''}")
+            try:
+                _pages_before = len([p for p in ctx.pages if not p.is_closed()])
+            except Exception:
+                _pages_before = 1
 
             if a == "done":
                 break
@@ -308,13 +312,20 @@ async def run_agent(
                     session.error = _WALL_MSG
                 return
             if a == "type":
-                val = session.secrets.get(action.get("secret") or "", "")
-                session.log.append(f"Enter {action.get('secret') or 'value'} into “{label[:40]}”")
-                if val and idx >= 0:
-                    try:
-                        await page.fill(sel, val)
-                    except Exception:
-                        pass
+                if idx < 0:
+                    # No field to type into yet (e.g. the social-chooser wall) —
+                    # advance the email login instead of wasting the step.
+                    did = await _advance_email_login(page, elements, session.secrets)
+                    session.log.append(f"Open the email login ({did})." if did
+                                       else "No field to type into yet.")
+                else:
+                    val = session.secrets.get(action.get("secret") or "", "")
+                    session.log.append(f"Enter {action.get('secret') or 'value'} into “{label[:40]}”")
+                    if val:
+                        try:
+                            await page.fill(sel, val)
+                        except Exception:
+                            pass
             elif a == "type_text":
                 # Guard rail: the model sometimes free-types (and even invents) an
                 # email into a credential field. If the target clearly is one, fill
@@ -335,11 +346,25 @@ async def run_agent(
                     except Exception:
                         pass
             elif a == "click":
-                session.log.append(f"Click “{label[:50]}”")
-                try:
-                    await page.click(sel, timeout=8000)
-                except Exception:
-                    pass
+                if _is_social_login(elem_by_idx.get(idx, {})):
+                    # Never go down a Google/Apple SSO path — the user gave email +
+                    # password. Steer to the email login; only allow the SSO click
+                    # if there's genuinely no email alternative on the page.
+                    did = await _advance_email_login(page, elements, session.secrets)
+                    if did:
+                        session.log.append(f"Using the email login instead of “{label[:30]}” ({did}).")
+                    else:
+                        session.log.append(f"Click “{label[:50]}”")
+                        try:
+                            await page.click(sel, timeout=8000)
+                        except Exception:
+                            pass
+                else:
+                    session.log.append(f"Click “{label[:50]}”")
+                    try:
+                        await page.click(sel, timeout=8000)
+                    except Exception:
+                        pass
             elif a == "await_code":
                 session.prompt = ("Enter the one-time code the site just sent you "
                                   "(email / SMS / authenticator).")
@@ -362,6 +387,9 @@ async def run_agent(
                 await _safe_sleep(page, 1500)  # let the code submission take effect
             else:
                 await _safe_sleep(page, 900)
+            # If this step opened a federated-login popup, wait for it to register
+            # and navigate before the next loop, so we follow it (not the opener).
+            await _await_popup(ctx, _pages_before, page)
         else:
             session.status, session.error = "error", "Gave up after too many steps."
             return
@@ -426,6 +454,71 @@ def _is_code_field(el: dict) -> bool:
                     ("name", "id", "placeholder", "aria", "label")).lower()
     return any(w in blob for w in ("one-time", "otp", "passcode", "verification code",
                                    "security code", "enter code", "enter the code"))
+
+
+def _is_social_login(el: dict) -> bool:
+    """A third-party SSO button (Continue with Google/Apple/Facebook/…).
+
+    NB: Glassdoor's email path is confusingly labelled "Continue with Apple or
+    email" — that opens the email form, so anything mentioning "email" is NOT
+    treated as social.
+    """
+    t = (el.get("label") or el.get("aria") or "").lower()
+    if "email" in t:
+        return False
+    return any(p in t for p in (
+        "continue with google", "continue with apple", "continue with facebook",
+        "continue with microsoft", "sign in with google", "sign in with apple",
+        "sign in with facebook", "sign in with microsoft"))
+
+
+async def _advance_email_login(page, elements: list[dict], secrets: dict) -> str | None:
+    """Push the email/password login forward WITHOUT using an SSO provider — used
+    to override the model when it wrongly reaches for "Continue with Google/Apple".
+    Returns a short description of what it did, or None if there was no email path.
+    """
+    def sel(e):
+        return f'[data-ai-idx="{e.get("idx")}"]'
+
+    # 1) fill an empty email/username field
+    for e in elements:
+        if (e.get("tag") == "input" and not e.get("filled")
+                and _credential_for_field(e, secrets) == "username"):
+            try:
+                await page.fill(sel(e), secrets.get("username", ""))
+                return "email"
+            except Exception:
+                pass
+    # 2) fill an empty password field
+    for e in elements:
+        if (e.get("tag") == "input" and not e.get("filled")
+                and _credential_for_field(e, secrets) == "password"):
+            try:
+                await page.fill(sel(e), secrets.get("password", ""))
+                return "password"
+            except Exception:
+                pass
+    # 3) click a non-social submit/continue button to advance
+    for e in elements:
+        t = (e.get("label") or "").lower().strip()
+        if e.get("type") in ("submit", "button") and t in (
+                "continue", "next", "sign in", "log in", "verify", "submit"):
+            try:
+                await page.click(sel(e), timeout=6000)
+                return "continue"
+            except Exception:
+                pass
+    # 4) click an explicit "…email" gateway button (e.g. "Continue with Apple or email")
+    for e in elements:
+        t = (e.get("label") or "").lower()
+        if "email" in t and "google" not in t and any(
+                w in t for w in ("continue", "sign in", "log in", "use", "with")):
+            try:
+                await page.click(sel(e), timeout=6000)
+                return "email option"
+            except Exception:
+                pass
+    return None
 
 
 def _credential_for_field(el: dict, secrets: dict) -> str | None:
@@ -593,7 +686,10 @@ def _active_page(ctx, current):
     """The freshest real (non-blank) open page — where the login flow moved to.
 
     Federated logins open the credential form in a popup; once it completes and
-    closes, the freshest remaining page is the (now logged-in) opener.
+    closes, the freshest remaining page is the (now logged-in) opener. We ignore
+    'about:blank' so a just-opened popup mid-navigation doesn't read as empty —
+    _await_popup() makes sure a real popup has registered + navigated before we
+    get here, so we never fall back to the opener and re-open a second popup.
     """
     try:
         open_pages = [p for p in ctx.pages if not p.is_closed()]
@@ -603,6 +699,30 @@ def _active_page(ctx, current):
         return current
     real = [p for p in open_pages if (p.url and not p.url.startswith("about:"))]
     return (real or open_pages)[-1]
+
+
+async def _await_popup(ctx, n_before: int, page) -> None:
+    """If the action just taken spawned a popup, wait for it to register and
+    navigate to a real URL — so the next _active_page() follows it instead of
+    briefly falling back to the opener and triggering a duplicate popup."""
+    for _ in range(4):  # ~0.6s: did a popup open at all?
+        try:
+            n = len([p for p in ctx.pages if not p.is_closed()])
+        except Exception:
+            return
+        if n > n_before:
+            break
+        await _safe_sleep(page, 150)
+    else:
+        return  # nothing opened
+    for _ in range(14):  # ~2.1s: let it leave about:blank
+        try:
+            pages = [p for p in ctx.pages if not p.is_closed()]
+        except Exception:
+            return
+        if any(p.url and not p.url.startswith("about:") for p in pages[n_before:]):
+            return
+        await _safe_sleep(page, 150)
 
 
 async def _enter_code(page, sel: str, code: str) -> None:

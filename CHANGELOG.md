@@ -53,9 +53,17 @@ so scheduled checks ride it.
 - **Post-code handling is robust:** a brief "verifying…" / transitional frame no
   longer aborts the login; landing back at the social-login wall is detected as a
   rejection (clear message) instead of re-clicking it; and success is only
-  declared once the login popup has actually closed. Covered by a five-scenario
-  browser harness (`scripts/test_ai_login.py`): Enter-submit, explicit-Continue,
-  multi-box, transitional-then-success, and rejected-bounce.
+  declared once the login popup has actually closed.
+- **Always uses the email login, never Google/Apple SSO.** A weak model would
+  sometimes click "Continue with Google" and wander into Google's sign-in; the
+  agent now refuses third-party SSO buttons and steers back to the email field /
+  '…or email' option (the credentials are email+password). The prompt says so too.
+- **No duplicate popups.** After an action opens a federated-login popup we wait
+  for it to register and navigate before the next step, so we follow it instead
+  of briefly falling back to the opener and spawning a second window.
+- Covered by a six-scenario browser harness (`scripts/test_ai_login.py`):
+  Enter-submit, explicit-Continue, multi-box OTP, transitional-then-success,
+  rejected-bounce, and a weak model that keeps grabbing SSO buttons.
 
 ### Notes / limitations
 - Captcha solving is **best effort and stochastic.** reCAPTCHA Enterprise also
