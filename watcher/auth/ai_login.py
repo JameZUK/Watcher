@@ -153,7 +153,9 @@ async def _new_context(engine: str, proxy: str | None):
         from camoufox.async_api import AsyncCamoufox
         # window=() pins Camoufox's window so innerWidth matches the screenshot
         # (it otherwise picks a random, wider fingerprint size → cropped view).
-        cm = AsyncCamoufox(humanize=True,
+        # humanize=<float> caps cursor-move duration: the default (~1.9s/move) made
+        # manual clicks lag and the queue back up; 0.4 keeps motion human but snappy.
+        cm = AsyncCamoufox(humanize=0.4,
                            window=(_LOGIN_VIEWPORT["width"], _LOGIN_VIEWPORT["height"]),
                            **kwargs)
         browser = await cm.__aenter__()
@@ -1025,6 +1027,8 @@ async def _apply_event(page, ev: dict, session) -> None:
 
     if t in ("click", "dblclick"):
         x, y = px(ev.get("fx", 0), ev.get("fy", 0))
+        log.info("ai-login[%s] %s @ (%.0f,%.0f) on %s", session.id[:8], t, x, y,
+                 (getattr(page, "url", "") or "")[:70])
         await _human_move(page, session, x, y)
         await _human_press(page, x, y)
         if t == "dblclick":
@@ -1054,6 +1058,13 @@ async def _apply_event(page, ev: dict, session) -> None:
             await page.mouse.wheel(0, float(ev.get("dy", 0)))
         except Exception:
             pass
+
+
+def _page_count(page) -> int:
+    try:
+        return len([p for p in page.context.pages if not p.is_closed()])
+    except Exception:
+        return -1
 
 
 async def _shot_clip(page):
@@ -1087,6 +1098,8 @@ async def _shot(session, page) -> None:
     except Exception:
         cur = ""
     if cur != session._shot_url:          # new page → re-probe the fast path
+        log.info("ai-login[%s] page → %s (pages=%d)", session.id[:8], cur[:90],
+                 _page_count(page))
         session._shot_url = cur
         session._shot_url_since = now
         session._shot_needs_stop = False
@@ -1211,6 +1224,17 @@ async def _settle(page) -> None:
 
 def create_session(monitor_id: int, user_id: int, url: str, secrets: dict) -> LoginSession:
     _gc()
+    # One login browser per monitor: tear down any prior session for it. Two
+    # stealth browsers hitting the same site at once from one IP trips bot-detection
+    # and stalls the OAuth handoff — exactly the "stuck" symptom.
+    for old in [v for v in _SESSIONS.values() if v.monitor_id == monitor_id]:
+        log.info("ai-login: replacing prior session %s for monitor %s", old.id[:8], monitor_id)
+        if old._task is not None:
+            try:
+                old._task.cancel()
+            except Exception:
+                pass
+        _SESSIONS.pop(old.id, None)
     s = LoginSession(id=uuid.uuid4().hex, monitor_id=monitor_id, user_id=user_id,
                      url=url, secrets=secrets)
     s._code_event = asyncio.Event()

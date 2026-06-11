@@ -917,9 +917,18 @@ async def ai_login_input(
         ev = await request.json()
     except Exception:
         ev = {}
-    if isinstance(ev, dict) and ev.get("type") in (
-            "click", "dblclick", "move", "drag", "type", "key", "scroll"):
-        if len(s._events) < 400:           # bound the queue
+    et = ev.get("type") if isinstance(ev, dict) else None
+    if et in ("click", "dblclick", "move", "drag", "type", "key", "scroll"):
+        if et != "move":
+            import logging
+            logging.getLogger("watcher.ailogin").info(
+                "input[%s] %s %s qlen=%d", sid[:8], et,
+                {k: ev.get(k) for k in ("fx", "fy", "fx2", "fy2", "text", "key")
+                 if ev.get(k) is not None}, len(s._events))
+        # collapse consecutive hover moves so they can never flood out real input
+        if et == "move" and s._events and s._events[-1].get("type") == "move":
+            s._events[-1] = ev
+        elif len(s._events) < 400:
             s._events.append(ev)
     return JSONResponse({"ok": True})
 

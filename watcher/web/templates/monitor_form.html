@@ -259,8 +259,7 @@
                    x-show="hasShot" x-cloak>
                 <img :src="shotUrl" alt="login page" class="block w-full select-none"
                      @mousedown.prevent="manual && relayDown($event)"
-                     @mouseup.prevent="manual && relayUp($event)"
-                     @mousemove="manual && relayHover($event)" draggable="false">
+                     @mouseup.prevent="manual && relayUp($event)" draggable="false">
               </div>
               <p class="text-sm font-medium" :class="errored ? 'text-red-300' : (done ? 'text-emerald-300' : (manual ? 'text-amber-200' : 'text-brand-200'))" x-text="statusLine"></p>
 
