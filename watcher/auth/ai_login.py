@@ -165,12 +165,24 @@ async def run_agent(
         last_sig = None
         stuck = 0
         none_retry = 0
+        empty_retry = 0
         for _ in range(MAX_STEPS):
+            # Follow popups: federated logins (Glassdoor → Indeed, "Continue with
+            # Google/Apple") open the real credential form in a NEW window. If we
+            # kept observing the opener it would look frozen forever.
+            page = _active_page(ctx, page)
             await _settle(page)
             try:
                 elements = await page.evaluate(_OBSERVE_JS)
             except Exception:
                 elements = []
+            # A page mid-render shows nothing yet — give it a couple more beats
+            # before asking the model to decide (or wrongly declaring a dead end).
+            if not elements and empty_retry < 3:
+                empty_retry += 1
+                await page.wait_for_timeout(1200)
+                continue
+            empty_retry = 0
             try:
                 session.screenshot = await page.screenshot(full_page=False, type="png")
             except Exception:
@@ -181,7 +193,12 @@ async def run_agent(
             # Stuck detection: if the interactive elements (incl. their filled-ness)
             # don't change across steps, our actions aren't doing anything — almost
             # always an anti-bot / bot-detection wall on the login page.
-            sig = tuple((e.get("tag"), e.get("type"), e.get("label"), e.get("filled")) for e in elements)
+            try:
+                _cur_url = page.url or ""
+            except Exception:
+                _cur_url = ""
+            sig = (_cur_url, tuple((e.get("tag"), e.get("type"), e.get("label"), e.get("filled"))
+                                   for e in elements))
             stuck = stuck + 1 if (sig == last_sig and history) else 0
             last_sig = sig
             if stuck >= 2 and await _is_bot_wall(page):
@@ -281,31 +298,54 @@ _WALL_MSG = (
 
 
 async def _is_bot_wall(page) -> bool:
-    """Heuristic: are we stuck on an anti-bot / bot-detection / challenge page?"""
-    try:
-        url = (page.url or "").lower()
-    except Exception:
-        url = ""
-    if any(m in url for m in ("bot-detection", "/cdn-cgi/", "challenge", "captcha")):
-        return True
+    """Heuristic: are we on a hard anti-bot interstitial (a Cloudflare/PerimeterX
+    challenge), as opposed to a normal login form?
+
+    Deliberately body-text based: Glassdoor's *working* login wall has a
+    ``reason=bot-detection`` URL param yet is perfectly clickable, so URL matching
+    gives false positives. A genuine challenge page shouts it in the body text.
+    """
     try:
         txt = (await page.evaluate(
             "() => ((document.body && document.body.innerText) || '').slice(0,3000)")).lower()
     except Exception:
         txt = ""
     return any(m in txt for m in (
-        "just a moment", "verify you are human", "unusual activity", "are you a robot",
-        "checking your browser", "access denied", "bot detection", "px-captcha"))
+        "just a moment", "verify you are human", "checking your browser",
+        "are you a robot", "unusual traffic", "px-captcha", "cf-challenge",
+        "enable javascript and cookies to continue"))
+
+
+def _active_page(ctx, current):
+    """The freshest real (non-blank) open page — where the login flow moved to.
+
+    Federated logins open the credential form in a popup; once it completes and
+    closes, the freshest remaining page is the (now logged-in) opener.
+    """
+    try:
+        open_pages = [p for p in ctx.pages if not p.is_closed()]
+    except Exception:
+        return current
+    if not open_pages:
+        return current
+    real = [p for p in open_pages if (p.url and not p.url.startswith("about:"))]
+    return (real or open_pages)[-1]
 
 
 async def _settle(page) -> None:
-    """Let the page settle a moment before observing it."""
+    """Let the page settle before observing it. Heavy login walls (and the
+    popups they spawn) can take a couple of seconds to render their controls,
+    so wait for the network to go quiet before falling back to a fixed pause."""
     try:
         await page.wait_for_load_state("domcontentloaded")
     except Exception:
         pass
     try:
-        await page.wait_for_timeout(700)
+        await page.wait_for_load_state("networkidle", timeout=4000)
+    except Exception:
+        pass
+    try:
+        await page.wait_for_timeout(900)
     except Exception:
         pass
 
