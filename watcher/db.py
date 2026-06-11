@@ -19,10 +19,17 @@ SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSe
 
 
 @event.listens_for(engine.sync_engine, "connect")
-def _enable_sqlite_fk(dbapi_conn, _record):
-    """Enforce foreign keys on EVERY pooled connection (PRAGMA is per-connection)."""
+def _sqlite_pragmas(dbapi_conn, _record):
+    """Per-connection PRAGMAs (they don't persist across connections like WAL does).
+
+    busy_timeout is the important one: without it a writer that meets SQLite's
+    single-writer lock fails *immediately* with "database is locked" — so a form
+    save colliding with a background check 500s. With it, the writer waits.
+    """
     cur = dbapi_conn.cursor()
     cur.execute("PRAGMA foreign_keys=ON")
+    cur.execute("PRAGMA busy_timeout=15000")   # wait up to 15s for the write lock
+    cur.execute("PRAGMA synchronous=NORMAL")   # safe + faster under WAL
     cur.close()
 
 
