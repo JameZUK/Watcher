@@ -218,13 +218,60 @@
         {% set lf = m.login_flow if m else None %}
         <div class="grid sm:grid-cols-2 gap-4">
           <div class="sm:col-span-2"><label class="block text-sm font-medium text-slate-300 mb-1.5">Login page URL</label>{{ field('login_url', (lf.steps[0].url if lf and lf.steps else ''), type='url', placeholder='https://site/login') }}</div>
-          <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Username field selector</label>{{ field('login_user_selector', '', placeholder='#email') }}</div>
-          <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Username</label>{{ field('login_username', '', placeholder='you@example.com') }}</div>
-          <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Password field selector</label>{{ field('login_pass_selector', '', placeholder='#password') }}</div>
+          <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Username / email</label>{{ field('login_username', '', placeholder='you@example.com') }}</div>
           <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Password</label>{{ field('login_password', '', type='password', placeholder='blank = keep current') }}</div>
-          <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Submit selector</label>{{ field('login_submit_selector', '', placeholder='button[type=submit]') }}</div>
-          <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Success selector <span class="text-slate-500 font-normal">· optional</span></label>{{ field('login_success_selector', '', placeholder='.dashboard') }}</div>
         </div>
+
+        {% if m %}
+        <!-- AI-assisted login -->
+        <div class="rounded-xl border border-brand-500/30 bg-brand-500/[.07] p-3.5" x-data="aiLogin({{ m.id }})">
+          <div class="flex items-start justify-between gap-3">
+            <div class="min-w-0">
+              <p class="text-sm font-medium text-white">Log in automatically with AI</p>
+              <p class="text-xs text-slate-400 mt-0.5">Fill the login URL, username and password above, then let the assistant drive the login in a real browser — it pauses for a one-time code if the site sends one, and saves the session. {% if lf and lf.session_state %}<span class="text-emerald-300">A session is currently saved.</span>{% endif %}</p>
+            </div>
+            <button type="button" @click="start()" :disabled="running" :class="running && 'opacity-70 cursor-wait'" class="btn btn-primary text-sm shrink-0">
+              <svg viewBox="0 0 24 24" class="h-4 w-4" :class="running && 'animate-spin'" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4m0 12v4M4.9 4.9l2.8 2.8m8.6 8.6 2.8 2.8M2 12h4m12 0h4"/></svg>
+              <span x-text="running ? 'Logging in…' : 'Log in with AI'"></span>
+            </button>
+          </div>
+
+          <!-- Live login modal -->
+          <div x-show="open" x-cloak @keydown.escape.window="close()"
+               class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/75">
+            <div class="glass rounded-2xl w-full max-w-lg p-5 space-y-3">
+              <div class="flex items-center justify-between">
+                <h3 class="font-semibold text-white">AI login</h3>
+                <button type="button" @click="close()" class="btn btn-ghost !px-2.5 !py-1">✕</button>
+              </div>
+              <div class="rounded-lg overflow-hidden border border-white/10 bg-black/40 max-h-[42vh] overflow-y-auto" x-show="hasShot" x-cloak>
+                <img :src="shotUrl" alt="login page" class="block w-full">
+              </div>
+              <p class="text-sm font-medium" :class="errored ? 'text-red-300' : (done ? 'text-emerald-300' : 'text-brand-200')" x-text="statusLine"></p>
+              <ul class="text-xs text-slate-500 space-y-0.5 max-h-24 overflow-y-auto">
+                <template x-for="(l, i) in log" :key="i"><li x-text="l"></li></template>
+              </ul>
+              <div x-show="needCode" x-cloak class="space-y-2 rounded-lg bg-amber-500/10 border border-amber-500/30 p-3">
+                <p class="text-sm text-amber-200" x-text="prompt"></p>
+                <div class="flex gap-2">
+                  <input x-model="code" inputmode="numeric" autocomplete="one-time-code" placeholder="Enter code" class="field !py-2 flex-1" @keydown.enter.prevent="sendCode()">
+                  <button type="button" @click="sendCode()" class="btn btn-primary text-sm shrink-0">Submit</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+        <details class="group">
+          <summary class="text-xs text-slate-500 cursor-pointer hover:text-slate-300 select-none">Advanced · manual login steps (CSS selectors)</summary>
+          <div class="grid sm:grid-cols-2 gap-4 mt-3">
+            <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Username field selector</label>{{ field('login_user_selector', '', placeholder='#email') }}</div>
+            <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Password field selector</label>{{ field('login_pass_selector', '', placeholder='#password') }}</div>
+            <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Submit selector</label>{{ field('login_submit_selector', '', placeholder='button[type=submit]') }}</div>
+            <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Success selector <span class="text-slate-500 font-normal">· optional</span></label>{{ field('login_success_selector', '', placeholder='.dashboard') }}</div>
+          </div>
+        </details>
       </div>
     </section>
 
@@ -445,6 +492,63 @@ function aiSection(opts){return {
     } catch (e) { this.error = 'Request failed.'; }
     this.loading = false;
   },
+}}
+
+// Interactive AI login: kick off the agent, poll its status, show the live page,
+// prompt for a one-time code, and reload once the session is saved.
+function aiLogin(mid){return {
+  mid, open:false, running:false, done:false, errored:false, needCode:false,
+  sid:null, status:'', prompt:'', log:[], code:'', hasShot:false, shotUrl:'', _poll:null,
+  _field(n){ const el = document.querySelector(`[name="${n}"]`); return el ? el.value : ''; },
+  get statusLine(){
+    if (this.errored) return this.status || 'Login failed.';
+    if (this.done)    return 'Logged in — session saved. Reloading…';
+    if (this.needCode) return 'Waiting for your one-time code…';
+    if (this.status === 'running') return 'Working through the login…';
+    return this.status || 'Starting…';
+  },
+  async start(){
+    if (this.running) return;
+    const username = this._field('login_username').trim();
+    const password = this._field('login_password');
+    if (!username || !password){ alert('Enter the login URL, username and password above first.'); return; }
+    this._reset(); this.open = true; this.running = true;
+    const fd = new FormData();
+    fd.append('login_url', this._field('login_url'));
+    fd.append('login_username', username);
+    fd.append('login_password', password);
+    let d;
+    try {
+      const r = await fetch(`/monitors/${this.mid}/ai-login/start`, {method:'POST', headers:{'X-Requested-With':'fetch'}, body:fd});
+      d = await r.json();
+    } catch(e){ return this._fail('Could not start the login.'); }
+    if (!d || !d.ok) return this._fail((d && d.error) || 'Could not start the login.');
+    this.sid = d.sid;
+    this._poll = setInterval(() => this._tick(), 1500);
+  },
+  async _tick(){
+    let s;
+    try { s = await (await fetch(`/monitors/${this.mid}/ai-login/status?sid=${this.sid}`)).json(); }
+    catch(e){ return; }
+    if (!s.ok) return this._fail(s.error || 'This login session expired.');
+    this.status = s.status; this.prompt = s.prompt; this.log = s.log || [];
+    this.needCode = s.status === 'need_code';
+    if (s.has_shot){ this.hasShot = true; this.shotUrl = `/monitors/${this.mid}/ai-login/shot?sid=${this.sid}&t=${Date.now()}`; }
+    if (s.status === 'done'){ this.done = true; this.running = false; clearInterval(this._poll);
+      setTimeout(() => location.reload(), 1500); }
+    else if (s.status === 'error'){ this._fail(s.error || 'Login failed.'); }
+  },
+  async sendCode(){
+    if (!this.code.trim()) return;
+    const fd = new FormData(); fd.append('code', this.code.trim());
+    try { await fetch(`/monitors/${this.mid}/ai-login/code?sid=${this.sid}`, {method:'POST', headers:{'X-Requested-With':'fetch'}, body:fd}); } catch(e){}
+    this.needCode = false; this.status = 'running'; this.code = '';
+  },
+  _fail(m){ this.errored = true; this.running = false; this.needCode = false; this.status = m;
+    if (this._poll) clearInterval(this._poll); },
+  _reset(){ this.done = this.errored = this.needCode = false; this.log = []; this.hasShot = false;
+    this.status = ''; this.prompt = ''; this.code = ''; },
+  close(){ if (this._poll) clearInterval(this._poll); this.open = false; this.running = false; },
 }}
 </script>
 {% endblock %}

@@ -15,6 +15,7 @@ from watcher.ai import triage as T
 AI_FNS = [
     T.triage_change, T.suggest_watch_items, T.extract_value,
     T.configure_monitor, T.summarize_history, T.suggest_consent_selectors,
+    T.ai_login_action,
 ]
 
 
@@ -46,7 +47,8 @@ class _FakeClient:
         '"found":true,"value":1.5,"label":"£1.50","suggestions":["a","b"],'
         '"name":"N","detection_mode":"auto","selector":"","interval_minutes":30,'
         '"ai_watch_intent":"x","track_value":true,"value_threshold":0,'
-        '"value_threshold_dir":"none","selectors":["#accept-all","#accept-all","button.agree","<bad>"]}'
+        '"value_threshold_dir":"none","selectors":["#accept-all","#accept-all","button.agree","<bad>"],'
+        '"action":"type","index":0,"secret":"username","text":""}'
     )
 
     def __init__(self, *a, **k):
@@ -124,6 +126,14 @@ def test_suggest_consent_selectors_no_html_returns_none(fake_http):
         api_key="k", model="m", url="u", html_snippets=[])) is None
     assert _run(T.suggest_consent_selectors(
         api_key="k", model="m", url="u", html_snippets=["   "])) is None
+
+
+def test_ai_login_action_parses(fake_http):
+    r = _run(T.ai_login_action(api_key="k", model="m", base_url="http://x/v1",
+             elements=[{"idx": 0, "tag": "input", "type": "email"}], screenshot_png=None,
+             available=["username", "password"], history=[]))
+    assert r and r["action"] == "type" and r["index"] == 0 and r["secret"] == "username"
+    assert fake_http.last["url"] == "http://x/v1"
 
 
 def test_default_endpoint_is_openrouter(fake_http):

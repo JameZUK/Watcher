@@ -13,12 +13,19 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import defer, selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...ai import configure_monitor, suggest_watch_items, summarize_history
+from ...ai import ai_login_action, configure_monitor, suggest_watch_items, summarize_history
 from ...app_settings import get_app_settings, get_openrouter_key
-from ...auth.login_flows import build_secret_map, cookie_editor_to_storage_state, merge_storage_state
+from ...auth import ai_login
+from ...auth.login_flows import (
+    build_secret_map,
+    cookie_editor_to_storage_state,
+    mark_session,
+    merge_storage_state,
+    resolve_secrets,
+)
 from ...auth.users import get_current_user
 from ...config import settings
-from ...db import get_session
+from ...db import SessionLocal, get_session
 from ...models import (
     Change,
     DetectionMode,
@@ -738,6 +745,112 @@ async def check_status(
             "error": latest.error, "checking": is_checking(monitor.id),
         })
     return JSONResponse({"done": False, "checking": is_checking(monitor.id)})
+
+
+# --- AI-assisted login: an interactive agent drives a real browser to log in,
+# pausing for a one-time code, and saves the resulting session on the monitor ---
+
+@router.post("/monitors/{monitor_id}/ai-login/start")
+async def ai_login_start(
+    monitor_id: int,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    monitor = await _owned_monitor(session, user, monitor_id)
+    app = await get_app_settings(session)
+    key = get_openrouter_key(app)
+    if not (app.ai_enabled and key):
+        return JSONResponse({"ok": False, "error": "AI isn’t configured — an admin must set an OpenRouter key in Settings."}, status_code=400)
+
+    form = await request.form()
+    login_url = (form.get("login_url") or "").strip() or monitor.url
+    if url_err := validate_monitor_url(login_url):
+        return JSONResponse({"ok": False, "error": url_err}, status_code=400)
+    username = (form.get("login_username") or "").strip()
+    password = form.get("login_password") or ""
+    # Fall back to stored credentials if the form leaves them blank.
+    if monitor.login_flow and (not username or not password):
+        stored = resolve_secrets(monitor.login_flow)
+        username = username or stored.get("username", "")
+        password = password or stored.get("password", "")
+    if not username or not password:
+        return JSONResponse({"ok": False, "error": "Enter the login URL, username and password."}, status_code=400)
+
+    sess = ai_login.create_session(monitor.id, user.id, login_url,
+                                   {"username": username, "password": password})
+    model, base = app.ai_model, app.ai_base_url
+    engine = monitor.engine.value
+    proxy = monitor.proxy
+    creds = {"username": username, "password": password}
+
+    async def action_fn(**kw):
+        return await ai_login_action(api_key=key, model=model, base_url=base, **kw)
+
+    async def persist_fn(state):
+        async with SessionLocal() as s2:
+            m2 = (await s2.execute(
+                select(Monitor).where(Monitor.id == monitor_id)
+                .options(selectinload(Monitor.login_flow)))).scalar_one_or_none()
+            if m2 is None:
+                return
+            flow = m2.login_flow or LoginFlow(monitor_id=m2.id)
+            flow.session_state = state
+            mark_session(flow, state)
+            # Remember the credentials (encrypted) so a future re-login is one click.
+            flow.encrypted_secrets = {**(flow.encrypted_secrets or {}),
+                                      **build_secret_map({k: v for k, v in creds.items() if v})}
+            if m2.login_flow is None:
+                s2.add(flow)
+            await s2.commit()
+
+    import asyncio
+    sess._task = asyncio.create_task(ai_login.run_agent(
+        sess, action_fn, persist_fn, engine=engine, proxy=proxy,
+        wait_until=monitor.wait_until))
+    return JSONResponse({"ok": True, "sid": sess.id})
+
+
+@router.get("/monitors/{monitor_id}/ai-login/status")
+async def ai_login_status(
+    monitor_id: int, sid: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    s = ai_login.get_session(sid, user.id)
+    if not s or s.monitor_id != monitor_id:
+        return JSONResponse({"ok": False, "error": "This login session has expired — start again."}, status_code=404)
+    return JSONResponse({"ok": True, "status": s.status, "prompt": s.prompt,
+                         "log": s.log[-14:], "has_shot": s.screenshot is not None,
+                         "error": s.error})
+
+
+@router.get("/monitors/{monitor_id}/ai-login/shot")
+async def ai_login_shot(
+    monitor_id: int, sid: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    s = ai_login.get_session(sid, user.id)
+    if not s or s.monitor_id != monitor_id or not s.screenshot:
+        raise HTTPException(status_code=404)
+    return Response(content=s.screenshot, media_type="image/png",
+                   headers={"Cache-Control": "no-store"})
+
+
+@router.post("/monitors/{monitor_id}/ai-login/code")
+async def ai_login_code(
+    monitor_id: int, sid: str,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    s = ai_login.get_session(sid, user.id)
+    if not s or s.monitor_id != monitor_id:
+        return JSONResponse({"ok": False, "error": "expired"}, status_code=404)
+    form = await request.form()
+    s.submit_code((form.get("code") or "").strip())
+    return JSONResponse({"ok": True})
 
 
 @router.get("/monitors/{monitor_id}")

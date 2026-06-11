@@ -393,3 +393,30 @@ def test_help_hint_silent_on_ordinary_errors():
     assert _help_hint("Timeout 30000ms exceeded") == ""
     assert _help_hint("net::ERR_NAME_NOT_RESOLVED") == ""
     assert _help_hint(None) == ""
+
+
+# --- AI login: code-event race + session ------------------------------------
+
+def test_login_session_code_event():
+    """The code event handles both orders: submit-then-wait (the status/submit
+    race) and wait-then-submit, and isolates each code."""
+    import asyncio
+    from watcher.auth.ai_login import create_session
+
+    async def _t():
+        s = create_session(7, 3, "https://x.test/login", {"username": "u", "password": "p"})
+        # submitted before the agent starts waiting → returned immediately
+        s.submit_code(" 111 ")
+        assert await s._wait_for_code() == "111"
+        # normal order: agent waits, user submits shortly after
+        async def later():
+            await asyncio.sleep(0.05)
+            s.submit_code("222")
+        t = asyncio.create_task(later())
+        assert await s._wait_for_code() == "222"
+        await t
+        # ownership check
+        from watcher.auth import ai_login
+        assert ai_login.get_session(s.id, 3) is s
+        assert ai_login.get_session(s.id, 999) is None
+    asyncio.run(_t())

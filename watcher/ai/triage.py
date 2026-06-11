@@ -604,3 +604,109 @@ async def summarize_history(
     except Exception as exc:  # noqa: BLE001
         logger.warning("OpenRouter summarize error: %s", exc)
         return None
+
+
+_LOGIN_ACTION_SCHEMA = {
+    "name": "login_action",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "action": {"type": "string",
+                       "enum": ["type", "type_text", "click", "await_code", "done", "fail"]},
+            "index": {"type": "integer", "description": "Target element index, or -1 if N/A."},
+            "secret": {"type": "string", "enum": ["username", "password", ""],
+                       "description": "Which stored credential to type (for 'type')."},
+            "text": {"type": "string", "description": "Literal text to type (for 'type_text'); else empty."},
+            "reason": {"type": "string", "description": "One short line on why."},
+        },
+        "required": ["action", "index", "secret", "text", "reason"],
+    },
+}
+
+_LOGIN_SYSTEM = (
+    "You are logging into a website on the user's behalf, one step at a time. You "
+    "are given a screenshot and a numbered list of the page's interactive elements "
+    "(inputs/buttons/links). Decide the SINGLE next action to advance the login.\n"
+    "Actions:\n"
+    "- type: put a stored credential into element `index` — set `secret` to "
+    "'username' or 'password'. You never see the value; it's filled for you.\n"
+    "- type_text: type a literal `text` into element `index` (only for non-secret "
+    "values you can see/derive; never for passwords).\n"
+    "- click: click element `index` (a Continue/Next/Sign in/Log in button, or the "
+    "'continue with email' option on social-login screens).\n"
+    "- await_code: element `index` is a one-time passcode / OTP / 2FA / verification "
+    "code field that needs a code only the user has (e.g. emailed/SMS code). Use "
+    "this instead of guessing — the user will be asked for it.\n"
+    "- done: login has clearly succeeded (the login form is gone / a signed-in page "
+    "shows).\n"
+    "- fail: cannot proceed (a captcha/anti-bot challenge blocks it, an error is "
+    "shown, or there is no way forward). Put the reason in `reason`.\n"
+    "Typical order: fill the email/username, click Continue/Next if present, fill "
+    "the password, submit, handle a code if asked. Pick the email/username field "
+    "before the password. Do NOT click 'create account', 'forgot password', social "
+    "providers (Google/Apple) unless that's the only path. Exactly ONE action. "
+    "Set unused fields to -1 / empty string. Respond ONLY with the JSON."
+)
+
+
+async def ai_login_action(
+    *, api_key: str, model: str, base_url: str | None = None,
+    elements: list[dict], screenshot_png: bytes | None,
+    available: list[str], history: list[str], code_pending: bool = False,
+    timeout: float = 40.0,
+) -> dict | None:
+    """Decide the next login step. Returns the action dict, or None on failure."""
+    if not api_key:
+        return None
+    lines = [
+        "Goal: log into this page.",
+        f"Stored credentials available to type: {', '.join(available) or 'none'}.",
+        ("A one-time code has just been supplied — fill it into the code field now."
+         if code_pending else ""),
+        "Recent actions: " + (" → ".join(history[-6:]) or "(none yet)"),
+        "Interactive elements (index: tag/type | name/id | placeholder/aria/label):",
+    ]
+    for e in elements[:60]:
+        desc = (f"{e.get('idx')}: {e.get('tag')}/{e.get('type','')} | "
+                f"{e.get('name','') or e.get('id','')} | "
+                f"{e.get('placeholder','') or e.get('aria','') or e.get('label','')}"
+                f"{' [autocomplete:'+e['autocomplete']+']' if e.get('autocomplete') else ''}")
+        lines.append(desc[:160])
+    text = "\n".join(l for l in lines if l)
+
+    content: list | str = text
+    data_url = _compact_image(screenshot_png) if screenshot_png else None
+    if data_url:
+        content = [{"type": "text", "text": text},
+                   {"type": "image_url", "image_url": {"url": data_url}}]
+    body = {
+        "model": model,
+        "messages": [{"role": "system", "content": _LOGIN_SYSTEM},
+                     {"role": "user", "content": content}],
+        "temperature": 0.0,
+        "max_tokens": 200,
+        "response_format": {"type": "json_schema", "json_schema": _LOGIN_ACTION_SCHEMA},
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(base_url or OPENROUTER_URL, json=body, headers=headers)
+        if resp.status_code != 200:
+            logger.warning("OpenRouter login action failed: HTTP %s %s", resp.status_code, resp.text[:200])
+            return None
+        raw = resp.json()["choices"][0]["message"]["content"]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("OpenRouter login action error: %s", exc)
+        return None
+    s, e = (raw or "").find("{"), (raw or "").rfind("}")
+    if s == -1 or e == -1:
+        return None
+    try:
+        d = json.loads(raw[s:e + 1])
+    except json.JSONDecodeError:
+        return None
+    if d.get("action") not in ("type", "type_text", "click", "await_code", "done", "fail"):
+        return None
+    return d
