@@ -450,6 +450,74 @@ def test_digest_marks_inbox_only_consumed():
 
 # --- reliability: auto-pause after N failures ------------------------------
 
+def test_delete_history_before_prunes_older():
+    """The 'delete older history' button removes every snapshot + change strictly
+    older than the in-view (pivot) snapshot, keeps the pivot and newer, and detaches
+    (not deletes) a surviving change that referenced a pruned baseline snapshot."""
+    async def _t():
+        from datetime import datetime, timedelta, timezone
+        from watcher.config import settings
+        from watcher.main import create_app
+        from watcher.models import Change, DetectionMode, Monitor, Snapshot, User
+
+        from watcher.auth.security import hash_password
+        settings.registration_open = True
+        transport = httpx.ASGITransport(app=create_app())
+        email = _email()
+        async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                     headers={"Origin": "http://t"}, follow_redirects=True) as c:
+            await c.post("/register", data={"email": email, "password": "password123"})  # auto-logs in
+
+            base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            async with SessionLocal() as s:
+                u = (await s.execute(select(User).where(User.email == email))).scalar_one()
+                m = Monitor(user_id=u.id, url="https://x.test", name="H", notify_channels=["inbox"])
+                s.add(m); await s.flush()
+                snaps = []
+                for k in range(5):  # hours 0..4
+                    sn = Snapshot(monitor_id=m.id, taken_at=base + timedelta(hours=k),
+                                  screenshot_blob="b" * 64)
+                    s.add(sn); snaps.append(sn)
+                await s.flush()
+                # old change (gets pruned) + a surviving change whose baseline is pruned
+                s.add(Change(monitor_id=m.id, from_snapshot_id=snaps[0].id, to_snapshot_id=snaps[1].id,
+                             change_type=DetectionMode.auto, detected_at=base + timedelta(hours=1)))
+                keep = Change(monitor_id=m.id, from_snapshot_id=snaps[2].id, to_snapshot_id=snaps[3].id,
+                              change_type=DetectionMode.auto, detected_at=base + timedelta(hours=3))
+                s.add(keep); await s.commit()
+                mid, pivot_id = m.id, snaps[3].id
+                keep_id, keep_pivot, keep_newer = keep.id, snaps[3].id, snaps[4].id
+
+                # a second user's monitor — used for the ownership check below
+                u2 = User(email=_email(), password_hash=hash_password("x"))
+                s.add(u2); await s.flush()
+                m2 = Monitor(user_id=u2.id, url="https://y.test", name="O", notify_channels=["inbox"])
+                s.add(m2); await s.commit()
+                other_mid = m2.id
+
+            # follow_redirects swallows the 303 → assert the redirect landed on the monitor
+            r = await c.post(f"/monitors/{mid}/history/delete-before",
+                             data={"before_snapshot_id": pivot_id})
+            assert r.status_code == 200 and str(mid) in str(r.url), r.url
+
+            async with SessionLocal() as s:
+                ids = set((await s.execute(
+                    select(Snapshot.id).where(Snapshot.monitor_id == mid))).scalars().all())
+                assert ids == {keep_pivot, keep_newer}, ids       # 0,1,2 pruned; 3,4 kept
+                changes = (await s.execute(
+                    select(Change).where(Change.monitor_id == mid))).scalars().all()
+                assert len(changes) == 1 and changes[0].id == keep_id   # old change gone
+                assert changes[0].from_snapshot_id is None              # baseline detached, not orphaned
+
+            # ownership: the logged-in user can't prune a monitor they don't own
+            r2 = await c.post(f"/monitors/{other_mid}/history/delete-before",
+                              data={"before_snapshot_id": pivot_id})
+            assert r2.status_code == 404, r2.status_code
+        return True
+
+    assert _run(_t)
+
+
 def test_auto_pause_after_failures():
     async def _t():
         from watcher.auth.security import hash_password

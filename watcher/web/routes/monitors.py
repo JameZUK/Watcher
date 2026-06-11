@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from datetime import timedelta
 from urllib.parse import urljoin, urlparse
@@ -9,7 +10,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import defer, selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -680,6 +681,50 @@ async def delete_monitor(
     return RedirectResponse("/", status_code=303)
 
 
+@router.post("/monitors/{monitor_id}/history/delete-before")
+async def delete_history_before(
+    monitor_id: int,
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Delete all history (snapshots + changes) OLDER than a pivot snapshot —
+    the render the user is viewing in the history scrubber. The pivot itself and
+    everything newer is kept, so the viewed render becomes the new oldest entry.
+    Orphaned screenshot/HTML blobs are reclaimed by the scheduled retention GC.
+    """
+    monitor = await _owned_monitor(session, user, monitor_id)
+    form = await request.form()
+    try:
+        pivot_id = int(form.get("before_snapshot_id") or 0)
+    except (TypeError, ValueError):
+        pivot_id = 0
+    pivot = await session.get(Snapshot, pivot_id)
+    if pivot is None or pivot.monitor_id != monitor.id:
+        raise HTTPException(status_code=404, detail="Snapshot not found")
+    cutoff = pivot.taken_at
+
+    # Detach any surviving change (>= cutoff) from a pre-cutoff baseline snapshot
+    # we're about to remove, so the delete can't trip an FK constraint regardless
+    # of the connection's foreign_keys pragma. The change keeps its own diff blobs.
+    old_ids = select(Snapshot.id).where(
+        Snapshot.monitor_id == monitor.id, Snapshot.taken_at < cutoff)
+    await session.execute(
+        update(Change)
+        .where(Change.monitor_id == monitor.id, Change.from_snapshot_id.in_(old_ids))
+        .values(from_snapshot_id=None))
+    # Remove old changes, then old snapshots.
+    await session.execute(
+        delete(Change).where(Change.monitor_id == monitor.id, Change.detected_at < cutoff))
+    result = await session.execute(
+        delete(Snapshot).where(Snapshot.monitor_id == monitor.id, Snapshot.taken_at < cutoff))
+    await session.commit()
+    logging.getLogger("watcher").info(
+        "deleted %s snapshot(s) before %s for monitor %s",
+        result.rowcount, cutoff, monitor.id)
+    return RedirectResponse(f"/monitors/{monitor.id}", status_code=303)
+
+
 @router.post("/monitors/{monitor_id}/toggle")
 async def toggle_monitor(
     monitor_id: int,
@@ -920,16 +965,26 @@ async def ai_login_input(
     et = ev.get("type") if isinstance(ev, dict) else None
     if et in ("click", "dblclick", "move", "drag", "type", "key", "scroll"):
         if et != "move":
-            import logging
-            logging.getLogger("watcher.ailogin").info(
+            ai_login._dlog(
                 "input[%s] %s %s qlen=%d", sid[:8], et,
                 {k: ev.get(k) for k in ("fx", "fy", "fx2", "fy2", "text", "key")
                  if ev.get(k) is not None}, len(s._events))
         # collapse consecutive hover moves so they can never flood out real input
         if et == "move" and s._events and s._events[-1].get("type") == "move":
             s._events[-1] = ev
-        elif len(s._events) < 400:
-            s._events.append(ev)
+        elif et == "move":
+            if len(s._events) < 400:
+                s._events.append(ev)
+        else:
+            # Cap the actionable (non-move) backlog hard. The loop drains ~12 per
+            # tick; if the user clicks faster than it can apply them (a slow page),
+            # an unbounded queue means every click lands many seconds late — so
+            # drop new clicks once a short backlog has built rather than pile on.
+            pending = sum(1 for e in s._events if e.get("type") != "move")
+            if pending < 10:
+                s._events.append(ev)
+            else:
+                return JSONResponse({"ok": True, "dropped": True})
     return JSONResponse({"ok": True})
 
 

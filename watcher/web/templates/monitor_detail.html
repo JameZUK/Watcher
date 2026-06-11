@@ -155,6 +155,34 @@
               <span x-text="'Render ' + (i+1) + ' of ' + frames.length"></span>
               <button type="button" @click="i = Math.min(frames.length-1, i+1)" class="btn btn-ghost !px-2.5 !py-1">Newer ›</button>
             </div>
+            <!-- Prune older history: deletes every render before the one in view -->
+            <div class="mt-2" x-show="i > 0" x-cloak>
+              <template x-if="!confirmPurge">
+                <div class="flex justify-end">
+                  <button type="button" @click="confirmPurge = true"
+                          class="inline-flex items-center gap-1 text-[11px] text-slate-500 hover:text-rose-300 transition"
+                          :title="'Delete the ' + i + ' render' + (i===1?'':'s') + ' older than this one'">
+                    <svg viewBox="0 0 24 24" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/></svg>
+                    <span x-text="'Delete ' + i + ' older'"></span>
+                  </button>
+                </div>
+              </template>
+              <template x-if="confirmPurge">
+                <div class="rounded-lg bg-rose-500/10 border border-rose-400/30 p-3 text-xs">
+                  <p class="text-rose-100">
+                    Permanently delete <strong x-text="i"></strong> render<span x-show="i!==1">s</span>
+                    older than <strong x-text="label"></strong>? This also removes any change records
+                    from that period and <strong>cannot be undone.</strong>
+                  </p>
+                  <div class="flex items-center gap-2 mt-3 justify-end">
+                    <button type="button" @click="confirmPurge = false" class="btn btn-ghost !py-1 text-xs">Cancel</button>
+                    <button type="button" @click="purgeOlder()" class="btn !py-1 text-xs bg-rose-500/80 hover:bg-rose-500 text-white border-transparent">
+                      Delete <span x-text="i"></span> older
+                    </button>
+                  </div>
+                </div>
+              </template>
+            </div>
           </div>
         </div>
       </template>
@@ -422,11 +450,22 @@ function timeMachine(frames, mid){return {
   frames: frames || [], mid,
   i: (frames && frames.length) ? frames.length - 1 : 0,
   scrollable: false,   // true when the current capture overflows the stage
+  confirmPurge: false, // delete-older confirmation panel open?
   imgUrl(){
     if (!this.frames.length) return '';
     return `/monitors/${this.mid}/snapshots/${this.frames[this.i].id}/image${this.$store.device.q()}`;
   },
   get label(){ return this.frames.length ? this.frames[this.i].ago : '—'; },
+  // POST the in-view snapshot id; the server deletes everything older than it.
+  purgeOlder(){
+    if (this.i < 1) return;
+    const f = document.createElement('form');
+    f.method = 'post';
+    f.action = `/monitors/${this.mid}/history/delete-before`;
+    const inp = document.createElement('input');
+    inp.type = 'hidden'; inp.name = 'before_snapshot_id'; inp.value = this.frames[this.i].id;
+    f.appendChild(inp); document.body.appendChild(f); f.submit();
+  },
 }}
 </script>
 {% endblock %}
