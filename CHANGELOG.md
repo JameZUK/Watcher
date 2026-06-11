@@ -48,6 +48,13 @@ All of it is generic and site-agnostic — no per-site rules.
   the History scrubber includes block pages tagged *"blocked / challenge page"* —
   so you can actually see what a site (e.g. DataDome on JBL) served, and improve
   the handling from real evidence.
+- **Groups can hide their pages from the dashboard.** A per-group *"Hide these
+  pages from the dashboard"* toggle collapses the group's member monitors off
+  the main grid (the group card stays, as a folder); the pages are then viewable
+  inside the group as full dashboard-style cards (live preview, status, "new"
+  badges). The monitor card grid is now a shared partial used by both the
+  dashboard and the group page so they render identically; the inbox total still
+  counts hidden monitors' changes. New `Group.hide_members` column.
 
 ### Changed
 - New `Monitor` columns `block_annoyances` (default on), `consent_clicks`, and
