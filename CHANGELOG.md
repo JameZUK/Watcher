@@ -1,0 +1,58 @@
+# Changelog
+
+All notable changes to Watcher are documented here. Dates are ISO-8601.
+
+## 2026-06-11 — Automatic cookie / consent / ad & overlay handling
+
+Render pages the way a person sees them after dismissing the noise, so
+screenshots and visual diffs aren't polluted by banners, ads, and pop-ups.
+All of it is generic and site-agnostic — no per-site rules.
+
+### Added
+- **Ad & tracker blocking** during render — network-level abort of ~45
+  ad/analytics/tracker domains (uBlock-style; works headless on both engines).
+- **Generic cookie/consent banner handling** — detects consent overlays by
+  wording *and* by the universal "accept-all + manage/reject" button signature,
+  then accepts (or dismisses/hides). Covers positioned overlays, static
+  edge-anchored bars (e.g. GOV.UK), dialogs that fill a dedicated CMP
+  `<iframe srcdoc>` (e.g. Le Figaro), and cross-origin iframe CMPs (Sourcepoint).
+- **Late-mounting CMP handling** — a short-lived MutationObserver keeps
+  dismissing banners as they appear, so CMPs that load seconds after the page
+  are still cleared before the screenshot.
+- **Multilingual** accept/reject/dismiss/consent terms (EN + FR/DE/ES/IT/PT/NL),
+  so non-English banners are accepted, not merely hidden.
+- **Promo / interstitial dismissal** — closes sign-in / newsletter / app-install
+  nags and toasts via their explicit close control (e.g. BBC's "Close sign in
+  banner"); close-matching is restricted to UI phrasing so it can never click a
+  destructive button like "Close account".
+- **Per-monitor manual override** — a "Consent / dismiss clicks" field: CSS
+  selectors clicked in order after load, for stubborn cookie walls, modals, or a
+  captcha checkbox the auto-handler misses.
+- **AI self-healing fallback** — when the heuristic can only hide a blocking
+  consent wall, or a large positioned overlay/paywall survives every pass, its
+  HTML is sent to the model to learn a dismiss selector, cached per-monitor.
+  Bounded to a single AI call per monitor (`consent_ai_tried`) so a persistent
+  unsolvable overlay can't re-spend tokens every render.
+- **Actionable "needs your help" alert** — when a render is blocked by a
+  captcha / anti-bot wall or login gate (DataDome, Cloudflare, …), the failure
+  notification now tells the user to add this monitor's Session cookies instead
+  of surfacing a dead-end error.
+- **`scripts/test_consent.py`** — a recursive multi-site validation harness
+  (renders through Camoufox so Cloudflare-protected sites actually load; reports
+  surviving banners, "walls", and late-appearing banners).
+
+### Changed
+- New `Monitor` columns `block_annoyances` (default on), `consent_clicks`, and
+  `consent_ai_tried`, added via idempotent startup migrations.
+- The capture pipeline now runs `click_consent` → auto-dismiss observer →
+  `hide_banners` (twice) → a final pre-screenshot sweep, on the main frame and
+  every child frame.
+
+### Notes / limitations
+- An LLM **cannot** solve real image/slider captchas (reCAPTCHA grids, hCaptcha,
+  DataDome sliders). Those escalate to the "needs your help" alert; the reliable
+  fix is session-cookie injection or a residential proxy. Engine choice
+  (Firefox vs Camoufox) does not affect IP-reputation-based DataDome blocking.
+- The app runs as a long-lived uvicorn without `--reload`; code changes require
+  a restart to take effect, and existing snapshots keep their previous
+  screenshots — only checks after a restart render clean.
