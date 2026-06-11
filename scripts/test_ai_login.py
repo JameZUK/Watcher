@@ -20,14 +20,16 @@ OPENER = """<!doctype html><html><body>
 <div id="in" style="display:none">Signed in. Welcome.</div>
 <script>
 const S = "%(s)s";
-// 'noreload' simulates an opener that does NOT refresh to a signed-in state
-// after the popup closes — success must be inferred from the popup closing.
-if (S !== 'noreload') setInterval(() => {
-  if (document.cookie.includes('sess=ok')) {
+function reflect(){
+  if (document.cookie.includes('sess=ok')) {  // a valid session => signed in
     document.getElementById('wall').style.display='none';
     document.getElementById('in').style.display='block';
   }
-}, 300);
+}
+reflect();  // on (re)load: a valid session shows signed-in — this is what verify checks
+// 'noreload' simulates an opener that does NOT live-refresh while the popup is
+// open — so the agent must infer success from the popup closing, not the opener.
+if (S !== 'noreload') setInterval(reflect, 300);
 </script></body></html>"""
 
 # ---- popup: Indeed-like state machine. Email step (with social buttons), then
@@ -81,6 +83,11 @@ document.getElementById('email_continue').addEventListener('click', e => {
         document.getElementById('code_step').style.display='none';
         document.getElementById('email_step').style.display='block';
         document.getElementById('__email').value=''; } });
+    }
+    if (S === 'rejectclose') {
+      // The popup closes (looks like success) but NO valid session is set — a
+      // silently-rejected login. The verify-on-reload step must catch this.
+      f.addEventListener('keydown', ev => { if(ev.key==='Enter'){ window.close(); } });
     }
   }
 });
@@ -206,6 +213,7 @@ async def main():
     results.append(await run_scenario("F weak model keeps clicking Google/Apple", "enter", "none",
                                       "done", model_fn=model_dumb))
     results.append(await run_scenario("G popup closes but opener doesn't reload", "noreload", "none", "done"))
+    results.append(await run_scenario("H popup closes but session invalid (rejected)", "rejectclose", "none", "error"))
     print(f"\n{sum(results)}/{len(results)} scenarios passed")
 
 asyncio.run(main())

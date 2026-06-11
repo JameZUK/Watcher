@@ -56,10 +56,14 @@ so scheduled checks ride it.
 - **Login success is judged by the popup closing**, not by what the opener shows.
   For federated logins, the credential popup closing IS the success — so a
   successful login is now captured even when the original page doesn't refresh to
-  a signed-in state (it used to look like a failure to the agent). A staying-open
-  popup back at the wall is still treated as a rejection. As a safety net, if the
-  flow errors out after the code with the popup already closed, the session is
-  salvaged rather than discarded.
+  a signed-in state. A staying-open popup back at the wall is still a rejection.
+- **The saved session is now verified before success is claimed.** After the flow
+  finishes, the page is reloaded with the captured session and checked that it no
+  longer shows a sign-in page. This catches a login the site *silently rejected*
+  (anti-bot scoring): previously the popup would close, we'd report "logged in",
+  and the very next render still showed the login page. Now that case reports an
+  honest "the session was rejected — paste a cookie instead" instead of a false
+  success, and a rejected session is never saved.
 - **Always uses the email login, never Google/Apple SSO.** A weak model would
   sometimes click "Continue with Google" and wander into Google's sign-in; the
   agent now refuses third-party SSO buttons and steers back to the email field /

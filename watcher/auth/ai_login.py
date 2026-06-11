@@ -417,12 +417,20 @@ async def run_agent(
                 session.status, session.error = "error", "Gave up after too many steps."
             return
 
-        # Success — capture + persist the session cookies.
+        # The flow finished — but "finished" isn't "logged in". Verify the captured
+        # session actually grants access (reload and check it no longer shows a
+        # sign-in page) before claiming success, so a login the site silently
+        # rejected (anti-bot) isn't reported as a win.
+        session.log.append("Checking the saved session works…")
+        works = await _verify_session(ctx, session.url)
         state = await ctx.storage_state()
-        session.result_state = state
-        await persist_fn(state)
-        session.status = "done"
-        session.log.append("Logged in — session saved.")
+        if works:
+            session.result_state = state
+            await persist_fn(state)
+            session.status = "done"
+            session.log.append("Logged in — session saved.")
+        else:
+            session.status, session.error = "error", _SESSION_REJECTED_MSG
     except Exception as exc:  # noqa: BLE001
         log.warning("ai-login agent error: %s", exc)
         # Once the code is in and the login popup has closed, the login has
@@ -449,6 +457,13 @@ _CODE_FAIL_MSG = (
     "rejected or the automated login was blocked (anti-bot scoring). Try again, or "
     "log in manually in your own browser and paste a session cookie instead "
     "(Session cookies, below)."
+)
+
+_SESSION_REJECTED_MSG = (
+    "The login finished, but reusing the saved session still lands on a sign-in "
+    "page — the site rejected the automated login (anti-bot scoring) or needs more "
+    "than cookies. Log in manually in your own browser and paste a session cookie "
+    "instead (Session cookies, below)."
 )
 
 _STUCK_MSG = (
@@ -772,10 +787,40 @@ def _popup_closed(ctx) -> bool:
         return False
 
 
+async def _verify_session(ctx, url: str) -> bool:
+    """Reload the target with the captured session and check it no longer demands a
+    login. Catches a login the site silently rejected (anti-bot): the popup closes
+    but reusing the session still lands on a sign-in page. On any error verifying,
+    returns True (don't fail a real success on a fluke)."""
+    p = None
+    els = None
+    try:
+        p = await ctx.new_page()
+        await p.goto(url, wait_until="domcontentloaded", timeout=30000)
+        await _settle(p)
+        els = await p.evaluate(_OBSERVE_JS)
+    except Exception:
+        els = None
+    if p is not None:
+        try:
+            await p.close()
+        except Exception:
+            pass
+    if els is None:
+        return True
+    # strong logged-out signals: a password field or the social-login wall
+    return not (any(e.get("type") == "password" for e in els) or any(
+        any(s in (e.get("label") or "").lower()
+            for s in ("continue with google", "continue with apple", "apple or email"))
+        for e in els))
+
+
 async def _salvage_session(session, ctx, persist_fn) -> bool:
-    """Capture + persist the session cookies. Used when login looks complete but
-    the flow ended on an error (popup closed under us, model gave up post-code).
-    Returns True only if there was a session to save."""
+    """Capture + persist the session when login looks complete but the flow ended
+    on an error. Verifies the session actually works first; returns True only if
+    it does (and there were cookies to save)."""
+    if not await _verify_session(ctx, session.url):
+        return False
     try:
         state = await ctx.storage_state()
     except Exception:
