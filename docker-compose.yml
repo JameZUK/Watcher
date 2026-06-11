@@ -7,27 +7,25 @@ services:
       # Traefik) in front for public exposure. Use "8000:8000" only on a
       # trusted network.
       - "127.0.0.1:8000:8000"
+    # Secrets (WATCHER_SECRET_KEY, WATCHER_ENCRYPTION_KEY, …) are read from .env
+    # by Compose on the HOST — so the same keys carry over and stored encrypted
+    # credentials stay decryptable. .env's WATCHER_DATA_DIR is a host path; the
+    # override below points the app at the mounted /data instead.
+    #
+    # First-time setup: create .env with at least
+    #   WATCHER_SECRET_KEY=...   (python -c "import secrets;print(secrets.token_urlsafe(48))")
+    #   WATCHER_ENCRYPTION_KEY=. (python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())")
+    env_file:
+      - .env
     environment:
-      # REQUIRED: the app refuses to start with the default/placeholder key.
-      # Generate: `python -c "import secrets; print(secrets.token_urlsafe(48))"`
-      WATCHER_SECRET_KEY: "change-me-to-a-long-random-string"
-      # Recommended in prod (separate from SECRET_KEY):
-      # `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
-      # WATCHER_ENCRYPTION_KEY: ""
-      # Set true behind HTTPS so the session cookie gets Secure + HSTS is sent.
-      WATCHER_SECURE_COOKIES: "false"
-      # Public hostname(s) for the CSRF/Origin check when behind a proxy.
-      # WATCHER_TRUSTED_HOSTS: "watcher.example.com"
-      # Optional: enable Web Push (generate with `vapid --gen`)
-      # WATCHER_VAPID_PUBLIC_KEY: ""
-      # WATCHER_VAPID_PRIVATE_KEY: ""
-      # WATCHER_VAPID_SUBJECT: "mailto:you@example.com"
       WATCHER_DATA_DIR: "/data"
+      # Set true once this is fronted with HTTPS (Secure cookie + HSTS).
+      WATCHER_SECURE_COOKIES: "false"
     volumes:
-      - watcher-data:/data
+      # Live database + screenshot blobs, bind-mounted so existing monitors,
+      # sessions and history carry over. The image runs as uid 1001 (pwuser), so
+      # make the dir writable for it once:  chmod -R a+rwX data
+      - ./data:/data
     restart: unless-stopped
     # Chromium needs a larger shared memory segment for stability.
     shm_size: "1gb"
-
-volumes:
-  watcher-data:
