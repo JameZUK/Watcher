@@ -183,7 +183,9 @@ function dashView(){return {
     const c = document.documentElement.classList;
     c.remove('view-small', 'view-list');
     if (v !== 'large') c.add('view-' + v);
-    try { v === 'large' ? localStorage.removeItem('dashview') : localStorage.setItem('dashview', v); } catch (e) {}
+    // Store the choice explicitly (incl. 'large') so it's respected everywhere
+    // and overrides the small-screen compact default.
+    try { localStorage.setItem('dashview', v); } catch (e) {}
   },
 }}
 </script>

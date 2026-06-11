@@ -21,9 +21,11 @@
                  matchMedia('(prefers-reduced-motion: reduce)').matches);
         }
         if (lite) document.documentElement.classList.add('perf-lite');
-        // Dashboard density preference (large thumbnails by default).
+        // Dashboard density: respect an explicit choice; otherwise default to the
+        // compact view on small screens (more fits the limited space), large else.
         var dv = localStorage.getItem('dashview');
         if (dv === 'small' || dv === 'list') document.documentElement.classList.add('view-' + dv);
+        else if (!dv && window.innerWidth < 640) document.documentElement.classList.add('view-small');
       } catch (e) {}
     })();
   </script>
