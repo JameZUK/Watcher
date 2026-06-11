@@ -47,6 +47,16 @@ All of it is generic and site-agnostic — no per-site rules.
 - The capture pipeline now runs `click_consent` → auto-dismiss observer →
   `hide_banners` (twice) → a final pre-screenshot sweep, on the main frame and
   every child frame.
+- **"Check now" is now an async, progress-aware flow.** It used to fire a
+  background job and immediately redirect, so the page reloaded showing the
+  *previous* capture with no sign anything was happening. Now the button shows a
+  spinner + "Checking…" with a status line, polls the new
+  `GET /monitors/{id}/check-status` until a snapshot newer than the baseline
+  lands (covering success *and* failure), and only then reloads — so you always
+  see the latest render, never the stale one. `POST /monitors/{id}/check`
+  returns JSON (baseline id, or a cooldown countdown); the scheduler tracks
+  in-flight checks (`is_checking`) so a reload mid-check resumes the live state;
+  a 90s timeout guards against a hung render.
 
 ### Fixed
 - **Full-page screenshots no longer come out tall but mostly blank** on sites
