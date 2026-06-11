@@ -628,3 +628,50 @@ def test_blocked_render_persists_block_page():
         return True
 
     assert _run(_t)
+
+
+# --- group: hide members from the dashboard, view inside the group -----------
+
+def test_group_hide_members_from_dashboard():
+    async def _t():
+        from watcher.config import settings
+        from watcher.main import create_app
+        from watcher.models import User, Monitor, Group, Engine, DetectionMode
+        settings.registration_open = True
+        app = create_app()
+        transport = httpx.ASGITransport(app=app)
+        email = _email()
+        async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                     headers={"Origin": "http://t"}, follow_redirects=True) as c:
+            await c.post("/register", data={"email": email, "password": "password123"})
+            await c.post("/login", data={"email": email, "password": "password123"})
+            async with SessionLocal() as s:
+                u = (await s.execute(select(User).where(User.email == email))).scalar_one()
+                g = Group(user_id=u.id, name="Hidden grp", kind="change", hide_members=True)
+                s.add(g); await s.flush()
+                mk = dict(user_id=u.id, engine=Engine.chromium, detection_mode=DetectionMode.text,
+                          interval_seconds=3600)
+                hidden = Monitor(url="https://hidden.test", name="HiddenMon", group_id=g.id, **mk)
+                shown = Monitor(url="https://shown.test", name="ShownMon", **mk)
+                s.add_all([hidden, shown]); await s.flush()
+                hid, sid, gid = hidden.id, shown.id, g.id
+                await s.commit()
+
+            # dashboard: hidden member's card is gone; standalone + group card remain
+            r = await c.get("/")
+            assert r.status_code == 200
+            assert f'href="/monitors/{sid}"' in r.text          # standalone still shown
+            assert f'href="/monitors/{hid}"' not in r.text       # hidden-group member collapsed
+            assert f'/groups/{gid}"' in r.text                   # the group itself still on dashboard
+
+            # inside the group: the member renders as a dashboard-style card
+            r = await c.get(f"/groups/{gid}")
+            assert r.status_code == 200 and f'href="/monitors/{hid}"' in r.text
+
+            # untick hide → member returns to the dashboard
+            await c.post(f"/groups/{gid}", data={"name": "Hidden grp", "kind": "change"})
+            r = await c.get("/")
+            assert f'href="/monitors/{hid}"' in r.text
+        return True
+
+    assert _run(_t)

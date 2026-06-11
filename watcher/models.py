@@ -191,6 +191,9 @@ class Group(Base):
     target_value: Mapped[float | None] = mapped_column(Float, default=None)
     target_dir: Mapped[str | None] = mapped_column(String(8), default=None)  # below|above
     alert_active: Mapped[bool] = mapped_column(Boolean, default=False)       # dedup: armed/fired
+    # Collapse the group's member monitors off the main dashboard; they're still
+    # viewable inside the group (dashboard-style cards).
+    hide_members: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     user: Mapped["User"] = relationship()

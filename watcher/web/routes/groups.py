@@ -255,10 +255,17 @@ async def group_detail(
         .order_by(Monitor.name)
     )).scalars().all()
 
+    # Dashboard-style card metadata for the members, so they can be viewed inside
+    # the group exactly like the main dashboard.
+    from .dashboard import card_data
+    members = sorted(group.monitors, key=lambda m: (m.name or m.url or "").lower())
+    thumbs, blocked, unacked = await card_data(session, members)
+
     return templates.TemplateResponse(
         request, "group_detail.html",
         {"user": user, "group": group, "is_price": is_price, "rows": rows, "chart": chart,
-         "best": best, "best_id": best_id, "others": others, "feed": feed},
+         "best": best, "best_id": best_id, "others": others, "feed": feed,
+         "monitors": members, "thumbs": thumbs, "blocked": blocked, "unacked": unacked},
     )
 
 
@@ -301,6 +308,7 @@ async def update_group(
         group.name = name
     group.kind = _kind(form)
     group.watch_intent = _intent(form)
+    group.hide_members = (form.get("hide_members") or "").lower() in ("1", "true", "on", "yes")
     tv, td = _clean_target(form)
     if group.kind != "price":
         tv, td = None, None

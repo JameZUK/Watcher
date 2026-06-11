@@ -30,6 +30,17 @@
   <p class="text-sm text-slate-400 mb-5"><span class="text-slate-500">Watching for:</span> {{ group.watch_intent }}</p>
   {% else %}<div class="mb-5"></div>{% endif %}
 
+  <!-- Pages (dashboard-style cards) -->
+  {% if monitors %}
+  <section class="mb-6">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="font-semibold text-white">Pages</h2>
+      {% if group.hide_members %}<span class="pill text-xs">hidden from dashboard</span>{% endif %}
+    </div>
+    {% include "_monitor_grid.html" %}
+  </section>
+  {% endif %}
+
   <!-- Members -->
   <section class="glass rounded-2xl overflow-hidden mb-5">
     <table class="w-full text-sm">
@@ -166,6 +177,12 @@
         <textarea name="watch_intent" rows="2" placeholder="e.g. comes back in stock · a new model is announced · the headline changes" class="field">{{ group.watch_intent or '' }}</textarea>
         <p class="text-xs text-slate-500 mt-1.5">Combined with each page's own intent (never replaces it) when the AI rates a change's importance.</p>
       </div>
+      <label class="flex items-start gap-2.5 text-sm text-slate-300 pt-1">
+        <input type="checkbox" name="hide_members" {{ 'checked' if group.hide_members else '' }} class="mt-0.5 rounded bg-white/10 border-white/20 text-brand-500">
+        <span>Hide these pages from the dashboard
+          <span class="block text-xs text-slate-500">The group's pages are collapsed off the main dashboard and viewed here instead. The group card itself still appears on the dashboard.</span>
+        </span>
+      </label>
       <button class="btn btn-primary text-sm">Save group</button>
     </form>
     <form method="post" action="/groups/{{ group.id }}/delete" class="mt-4 pt-4 border-t border-white/5"

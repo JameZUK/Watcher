@@ -62,6 +62,7 @@ _ADDED_COLUMNS = {
     },
     "groups": {
         "watch_intent": "TEXT", "kind": "VARCHAR(16) DEFAULT 'price'",
+        "hide_members": "BOOLEAN DEFAULT 0",
     },
     "app_settings": {
         "registration_open": "BOOLEAN DEFAULT 0", "force_otp": "BOOLEAN DEFAULT 0",

@@ -160,51 +160,7 @@
   <a href="/monitors/new" class="btn btn-primary">Create a monitor</a>
 </div>
 {% else %}
-<div class="mon-grid">
-  {% for m in monitors %}
-  {% set name = m.name or m.url %}
-  <a href="/monitors/{{ m.id }}" class="mon-card group glass glass-hover rounded-2xl overflow-hidden flex flex-col select-none">
-    <!-- Rendered preview -->
-    <div class="mon-preview relative aspect-[16/10] bg-black/40 overflow-hidden">
-      {% if thumbs.get(m.id) %}
-        <picture>
-          <source media="(max-width: 640px)" srcset="/monitors/{{ m.id }}/snapshots/{{ thumbs[m.id] }}/image?v=mobile">
-          <img src="/monitors/{{ m.id }}/snapshots/{{ thumbs[m.id] }}/image" alt=""
-               class="absolute inset-0 h-full w-full object-cover object-top opacity-80 group-hover:opacity-100 transition duration-500 group-hover:scale-[1.03]">
-        </picture>
-        <div class="absolute inset-0 bg-gradient-to-t from-[#06070f] via-transparent to-transparent"></div>
-      {% else %}
-        <div class="absolute inset-0 flex items-center justify-center text-slate-600">
-          <svg viewBox="0 0 24 24" class="h-9 w-9 animate-pulse" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/></svg>
-        </div>
-      {% endif %}
-      {% if unacked.get(m.id) %}
-      <span class="absolute top-3 right-3 pill pill-amber font-semibold backdrop-blur">{{ unacked[m.id] }} new</span>
-      {% endif %}
-      <span class="absolute top-3 left-3 pill backdrop-blur">{{ mode_label.get(m.detection_mode.value, m.detection_mode.value) }}</span>
-      {% if m.id in blocked %}
-      <span class="absolute bottom-3 left-3 pill backdrop-blur" style="background:rgba(239,68,68,.18);border-color:rgba(239,68,68,.35);color:#fca5a5;">⚠ last check failed</span>
-      {% endif %}
-    </div>
-    <!-- Meta -->
-    <div class="mon-meta p-4 flex flex-col gap-3 flex-1">
-      <div class="flex items-start gap-2">
-        <span class="dot {{ 'dot-err' if m.id in blocked else ('dot-live' if m.enabled else 'dot-paused') }} mt-1.5 shrink-0"></span>
-        <div class="min-w-0">
-          <h3 class="font-semibold text-white truncate group-hover:text-brand-400 transition">{{ name }}</h3>
-          <p class="text-xs truncate" title="{{ m.url }}"><span class="text-slate-400">{{ m.url|url_host }}</span><span class="text-slate-600">{{ m.url|url_path_short(28) }}</span></p>
-        </div>
-      </div>
-      <div class="mon-foot mt-auto flex items-center justify-between text-xs text-slate-500">
-        <span>every {{ m.interval_seconds|interval }} · {{ m.engine.value }}</span>
-        <span class="{{ 'text-amber-400' if m.last_change_at else '' }}">
-          {% if m.last_change_at %}changed {{ m.last_change_at|timeago }}{% else %}checked {{ m.last_checked_at|timeago }}{% endif %}
-        </span>
-      </div>
-    </div>
-  </a>
-  {% endfor %}
-</div>
+{% include "_monitor_grid.html" %}
 {% endif %}
 {% endblock %}
 {% block scripts %}
