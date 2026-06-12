@@ -10,6 +10,11 @@ from ..db import get_session
 from ..models import User
 from .security import hash_password, verify_password
 
+# Precomputed Argon2 hash, verified against on unknown/inactive logins so the
+# response time matches a real password check — otherwise the short-circuit would
+# leak which emails exist via timing (login user-enumeration).
+_DUMMY_HASH = hash_password("constant-time-placeholder")
+
 
 async def user_count(session: AsyncSession) -> int:
     return (await session.execute(select(func.count(User.id)))).scalar_one()
@@ -48,8 +53,13 @@ async def create_user(session: AsyncSession, email: str, password: str) -> User:
 
 async def authenticate(session: AsyncSession, email: str, password: str) -> User | None:
     user = await get_by_email(session, email)
-    if user and user.is_active and verify_password(password, user.password_hash):
-        return user
+    if user and user.is_active:
+        if verify_password(password, user.password_hash):
+            return user
+        return None
+    # Unknown or inactive account: still run one hash verification so the timing is
+    # indistinguishable from a wrong-password-for-a-real-user response.
+    verify_password(password, _DUMMY_HASH)
     return None
 
 

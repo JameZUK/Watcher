@@ -40,6 +40,15 @@ def _host_only(value: str) -> str:
         return ""
 
 
+def _port_of(value: str) -> int | None:
+    """The explicit port in a URL / ``//host:port`` form, or None when implicit."""
+    from urllib.parse import urlsplit
+    try:
+        return urlsplit(value).port
+    except ValueError:
+        return None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings.ensure_dirs()
@@ -100,9 +109,20 @@ def create_app() -> FastAPI:
         if request.method in ("POST", "PUT", "PATCH", "DELETE") and not request.url.path.startswith("/api/"):
             src = request.headers.get("origin") or request.headers.get("referer")
             src_host = _host_only(src) if src else ""
+            host_hdr = "//" + request.headers.get("host", "")
             # Host header hostname (bracket/port-safe) + operator-configured hosts.
-            allowed = {_host_only("//" + request.headers.get("host", ""))} | settings.trusted_host_set
-            if not src_host or src_host not in allowed:
+            allowed = {_host_only(host_hdr)} | settings.trusted_host_set
+            ok = bool(src_host) and src_host in allowed
+            # A different port on the same host is a different origin (e.g. another
+            # app on localhost:9000 forging requests). When the Host we received
+            # carries an explicit port and the request's Origin does too, require a
+            # match. Proxied deployments forward a port-less Host, so this is a no-op
+            # there (and operator-trusted hosts aren't port-restricted).
+            if ok and src_host == _host_only(host_hdr):
+                sp, hp = _port_of(src), _port_of(host_hdr)
+                if sp is not None and hp is not None and sp != hp:
+                    ok = False
+            if not ok:
                 return JSONResponse({"detail": "Cross-origin request blocked."}, status_code=403)
         return await call_next(request)
 

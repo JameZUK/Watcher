@@ -18,6 +18,11 @@ async def send(app, to_addr: str, *, subject: str, body: str) -> bool:
     from ..app_settings import get_smtp_password
     pw = get_smtp_password(app)
 
+    # Flatten any CR/LF in the subject: a model/page-influenced headline with a
+    # newline would otherwise make EmailMessage raise (header-injection guard) and
+    # the whole notification silently fail. (The body is safe — it's the payload.)
+    subject = " ".join(str(subject).splitlines()).strip() or "Watcher notification"
+
     msg = EmailMessage()
     msg["From"], msg["To"], msg["Subject"] = app.smtp_from, to_addr, subject
     msg.set_content(body)

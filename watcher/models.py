@@ -54,13 +54,24 @@ class EncryptedJSON(TypeDecorator):
         if value is None or not isinstance(value, str):
             return value
         import json as _json
+        import logging
 
         from .config import settings
-        text = value
         try:
             text = settings.fernet().decrypt(value.encode("ascii")).decode("utf-8")
         except Exception:
-            pass  # legacy plaintext JSON — will be re-encrypted on next write
+            # Not decryptable. Either legacy plaintext JSON written before encryption
+            # (re-encrypted on next write), or a real Fernet token the current key
+            # can't open — a changed/rotated SECRET_KEY/ENCRYPTION_KEY or corruption.
+            # Don't silently drop the latter: a cookie-injection-only session has no
+            # re-login path, so log loudly instead of returning None with no signal.
+            if value.startswith("gAAAAA"):  # Fernet token signature
+                logging.getLogger("watcher").warning(
+                    "Could not decrypt a stored login session (session_state) — the "
+                    "encryption key has changed or the data is corrupt; this login "
+                    "must be re-saved before it can be used again.")
+                return None
+            text = value  # legacy plaintext JSON
         try:
             return _json.loads(text)
         except Exception:

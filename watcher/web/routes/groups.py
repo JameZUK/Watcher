@@ -67,14 +67,61 @@ async def _owned_group(session: AsyncSession, user: User, group_id: int) -> Grou
     return g
 
 
-async def _latest_value(session: AsyncSession, monitor_id: int):
-    """(numeric_value, value_label, taken_at) of the newest valued OK snapshot, or None."""
-    return (await session.execute(
-        select(Snapshot.numeric_value, Snapshot.value_label, Snapshot.taken_at)
-        .where(Snapshot.monitor_id == monitor_id, Snapshot.numeric_value.is_not(None),
-               Snapshot.status == SnapshotStatus.ok)
-        .order_by(Snapshot.taken_at.desc()).limit(1)
-    )).first()
+async def _latest_values(session: AsyncSession, monitor_ids: list[int]) -> dict:
+    """{monitor_id: (numeric_value, value_label, taken_at)} for the newest valued OK
+    snapshot of each monitor — one windowed query instead of one per member (was an
+    N+1 on the dashboard + group pages)."""
+    if not monitor_ids:
+        return {}
+    rn = func.row_number().over(
+        partition_by=Snapshot.monitor_id,
+        order_by=Snapshot.taken_at.desc()).label("rn")
+    sub = (select(Snapshot.monitor_id, Snapshot.numeric_value, Snapshot.value_label,
+                  Snapshot.taken_at, rn)
+           .where(Snapshot.monitor_id.in_(monitor_ids),
+                  Snapshot.numeric_value.is_not(None),
+                  Snapshot.status == SnapshotStatus.ok)).subquery()
+    rows = (await session.execute(
+        select(sub.c.monitor_id, sub.c.numeric_value, sub.c.value_label, sub.c.taken_at)
+        .where(sub.c.rn == 1))).all()
+    return {r[0]: (r[1], r[2], r[3]) for r in rows}
+
+
+async def _latest_changes(session: AsyncSession, monitor_ids: list[int]) -> dict:
+    """{monitor_id: latest Change} in one windowed query instead of one per member."""
+    if not monitor_ids:
+        return {}
+    rn = func.row_number().over(
+        partition_by=Change.monitor_id,
+        order_by=Change.detected_at.desc()).label("rn")
+    sub = select(Change.id, rn).where(Change.monitor_id.in_(monitor_ids)).subquery()
+    ids = (await session.execute(select(sub.c.id).where(sub.c.rn == 1))).scalars().all()
+    if not ids:
+        return {}
+    changes = (await session.execute(select(Change).where(Change.id.in_(ids)))).scalars().all()
+    return {c.monitor_id: c for c in changes}
+
+
+async def _value_series(session: AsyncSession, monitor_ids: list[int], limit: int = 60) -> dict:
+    """{monitor_id: [(epoch, value), …]} (ascending, ≤limit points) in one query."""
+    if not monitor_ids:
+        return {}
+    rn = func.row_number().over(
+        partition_by=Snapshot.monitor_id,
+        order_by=Snapshot.taken_at.desc()).label("rn")
+    sub = (select(Snapshot.monitor_id, Snapshot.numeric_value, Snapshot.taken_at, rn)
+           .where(Snapshot.monitor_id.in_(monitor_ids),
+                  Snapshot.numeric_value.is_not(None),
+                  Snapshot.status == SnapshotStatus.ok)).subquery()
+    rows = (await session.execute(
+        select(sub.c.monitor_id, sub.c.numeric_value, sub.c.taken_at)
+        .where(sub.c.rn <= limit)
+        .order_by(sub.c.monitor_id, sub.c.taken_at))).all()
+    out: dict = {}
+    for mid, val, at in rows:
+        if at is not None:
+            out.setdefault(mid, []).append((at.timestamp(), val))
+    return out
 
 
 async def list_groups(session: AsyncSession, user: User) -> list[dict]:
@@ -83,23 +130,33 @@ async def list_groups(session: AsyncSession, user: User) -> list[dict]:
         select(Group).where(Group.user_id == user.id)
         .options(selectinload(Group.monitors)).order_by(Group.name)
     )).scalars().all()
+    # Batch the per-member lookups across ALL groups into two queries instead of
+    # one-per-member (was an N+1 that ran on every dashboard load).
+    price_ids = [m.id for g in groups if g.kind == "price" for m in g.monitors]
+    other_ids = [m.id for g in groups if g.kind != "price" for m in g.monitors]
+    values = await _latest_values(session, price_ids)
+    unacked: dict = {}
+    if other_ids:
+        counts = (await session.execute(
+            select(Change.monitor_id, func.count())
+            .where(Change.monitor_id.in_(other_ids), Change.acknowledged.is_(False))
+            .group_by(Change.monitor_id))).all()
+        unacked = {mid: n for mid, n in counts}
+
     out = []
     for g in groups:
         best, recent = None, 0
         if g.kind == "price":
-            vals = []
-            for m in g.monitors:
-                lv = await _latest_value(session, m.id)
-                if lv and lv[0] is not None:
-                    vals.append((lv[0], lv[1]))
+            vals = [(values[m.id][0], values[m.id][1]) for m in g.monitors
+                    if m.id in values and values[m.id][0] is not None]
             if vals:
-                best = (min(vals) if g.target_dir != "above" else max(vals))
+                # Compare on the numeric value only — never the whole tuple, or a
+                # price tie where one member's label is None hits `None < str` and
+                # TypeErrors the whole dashboard render.
+                best = (min(vals, key=lambda t: t[0]) if g.target_dir != "above"
+                        else max(vals, key=lambda t: t[0]))
         else:
-            mids = [m.id for m in g.monitors]
-            if mids:
-                recent = (await session.execute(
-                    select(func.count()).select_from(Change)
-                    .where(Change.monitor_id.in_(mids), Change.acknowledged.is_(False)))).scalar_one()
+            recent = sum(unacked.get(m.id, 0) for m in g.monitors)
         out.append({"group": g, "count": len(g.monitors),
                     "best_value": best[0] if best else None,
                     "best_label": best[1] if best else None,
@@ -214,27 +271,23 @@ async def group_detail(
     group = await _owned_group(session, user, group_id)
     is_price = group.kind == "price"
 
+    # Batch all per-member lookups (values, latest change, price series) into a
+    # few windowed queries instead of ~3 queries per member.
+    member_ids = [m.id for m in group.monitors]
+    values = await _latest_values(session, member_ids) if is_price else {}
+    changes = await _latest_changes(session, member_ids)
+    series = await _value_series(session, member_ids) if is_price else {}
+
     rows, raw = [], []
     for m in group.monitors:
-        lv = await _latest_value(session, m.id) if is_price else None
-        lc = (await session.execute(
-            select(Change).where(Change.monitor_id == m.id)
-            .order_by(Change.detected_at.desc()).limit(1))).scalar_one_or_none()
+        lv = values.get(m.id) if is_price else None
         rows.append({"monitor": m,
                      "value": lv[0] if lv else None,
                      "label": (lv[1] if lv else None) or (f"{lv[0]:g}" if lv and lv[0] is not None else None),
                      "at": lv[2] if lv else None,
-                     "change": lc})
-        if is_price:
-            pts = (await session.execute(
-                select(Snapshot.numeric_value, Snapshot.taken_at)
-                .where(Snapshot.monitor_id == m.id, Snapshot.numeric_value.is_not(None),
-                       Snapshot.status == SnapshotStatus.ok)
-                .order_by(Snapshot.taken_at.desc()).limit(60)
-            )).all()
-            series_pts = [(p[1].timestamp(), p[0]) for p in reversed(pts) if p[1] is not None]
-            if series_pts:
-                raw.append((m.name or m.url, series_pts))
+                     "change": changes.get(m.id)})
+        if is_price and series.get(m.id):
+            raw.append((m.name or m.url, series[m.id]))
 
     chart = _build_chart(raw) if is_price else []
     vals = [r["value"] for r in rows if r["value"] is not None]

@@ -172,6 +172,78 @@ def test_group_membership_and_page():
     assert _run(_t)
 
 
+def test_list_groups_batched_values_and_counts():
+    """list_groups (dashboard) computes the cheapest member price and the unacked
+    count per group in batched queries — verify the results are still correct."""
+    async def _t():
+        from watcher.auth.security import hash_password
+        from watcher.models import (Change, DetectionMode, Group, Monitor, Snapshot,
+                                     SnapshotStatus, User)
+        from watcher.web.routes.groups import list_groups
+        async with SessionLocal() as s:
+            u = User(email=_email(), password_hash=hash_password("x")); s.add(u); await s.flush()
+            # price group: cheapest of two members (and an older, dearer snapshot ignored)
+            pg = Group(user_id=u.id, name="Price", kind="price", target_dir="below")
+            s.add(pg); await s.flush()
+            a = Monitor(user_id=u.id, url="https://a.test", name="A", group_id=pg.id, track_value=True)
+            b = Monitor(user_id=u.id, url="https://b.test", name="B", group_id=pg.id, track_value=True)
+            s.add_all([a, b]); await s.flush()
+            s.add_all([
+                Snapshot(monitor_id=a.id, status=SnapshotStatus.ok, numeric_value=999.0),  # older
+                Snapshot(monitor_id=a.id, status=SnapshotStatus.ok, numeric_value=320.0, value_label="£320"),
+                Snapshot(monitor_id=b.id, status=SnapshotStatus.ok, numeric_value=280.0, value_label="£280"),
+            ])
+            # stock group: two unacked changes across members
+            sg = Group(user_id=u.id, name="Stock", kind="stock")
+            s.add(sg); await s.flush()
+            c = Monitor(user_id=u.id, url="https://c.test", name="C", group_id=sg.id)
+            s.add(c); await s.flush()
+            snap = Snapshot(monitor_id=c.id, status=SnapshotStatus.ok); s.add(snap); await s.flush()
+            s.add_all([
+                Change(monitor_id=c.id, to_snapshot_id=snap.id, change_type=DetectionMode.auto, acknowledged=False),
+                Change(monitor_id=c.id, to_snapshot_id=snap.id, change_type=DetectionMode.auto, acknowledged=False),
+                Change(monitor_id=c.id, to_snapshot_id=snap.id, change_type=DetectionMode.auto, acknowledged=True),
+            ])
+            await s.commit()
+
+            rows = await list_groups(s, u)
+            by_name = {r["group"].name: r for r in rows}
+            assert by_name["Price"]["best_value"] == 280.0          # cheapest, newest only
+            assert by_name["Price"]["best_label"] == "£280"
+            assert by_name["Price"]["count"] == 2
+            assert by_name["Stock"]["recent"] == 2                  # unacked only
+        return True
+
+    assert _run(_t)
+
+
+def test_list_groups_price_tie_with_null_label_does_not_crash():
+    """Two price-group members with an identical value where one has no label must
+    not TypeError on the dashboard (compare on value, never the (value, label) tuple)."""
+    async def _t():
+        from watcher.auth.security import hash_password
+        from watcher.models import Group, Monitor, Snapshot, SnapshotStatus, User
+        from watcher.web.routes.groups import list_groups
+        async with SessionLocal() as s:
+            u = User(email=_email(), password_hash=hash_password("x")); s.add(u); await s.flush()
+            g = Group(user_id=u.id, name="Tie", kind="price", target_dir="below")
+            s.add(g); await s.flush()
+            a = Monitor(user_id=u.id, url="https://a.test", name="A", group_id=g.id, track_value=True)
+            b = Monitor(user_id=u.id, url="https://b.test", name="B", group_id=g.id, track_value=True)
+            s.add_all([a, b]); await s.flush()
+            # identical value, one with a NULL label → tuple comparison would hit None < str
+            s.add_all([
+                Snapshot(monitor_id=a.id, status=SnapshotStatus.ok, numeric_value=300.0, value_label=None),
+                Snapshot(monitor_id=b.id, status=SnapshotStatus.ok, numeric_value=300.0, value_label="£300"),
+            ])
+            await s.commit()
+            rows = await list_groups(s, u)              # must not raise
+            assert rows[0]["best_value"] == 300.0
+        return True
+
+    assert _run(_t)
+
+
 def test_group_price_alert_fires_once():
     async def _t():
         from watcher.auth.security import hash_password
@@ -379,6 +451,13 @@ def test_csrf_origin_guard():
             # Referer is rejected (a browser always sends one cross-origin)
             r = await c.post("/changes/ack-all")
             assert r.status_code == 403
+        # port hardening: when the Host carries an explicit port, a same-host but
+        # DIFFERENT-port Origin (e.g. another app on localhost:9000) is blocked
+        async with httpx.AsyncClient(transport=transport, base_url="http://t:8000") as cp:
+            r = await cp.post("/changes/ack-all", headers={"Origin": "http://t:9000"})
+            assert r.status_code == 403            # wrong port → blocked
+            r = await cp.post("/changes/ack-all", headers={"Origin": "http://t:8000"})
+            assert r.status_code != 403            # matching port → allowed
         return True
 
     assert _run(_t)

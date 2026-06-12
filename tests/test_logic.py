@@ -246,6 +246,9 @@ def test_encrypted_json_roundtrip_and_legacy_fallback():
     assert t.process_result_value(enc, None) == val              # decrypts back
     # legacy plaintext JSON (written before encryption) still loads
     assert t.process_result_value(_json.dumps(val), None) == val
+    # a Fernet-looking token the current key can't decrypt → None (and logs), rather
+    # than being misread as plaintext (the data is unrecoverable, signal it)
+    assert t.process_result_value("gAAAAA-not-a-real-token", None) is None
     # None passes through untouched
     assert t.process_bind_param(None, None) is None
     assert t.process_result_value(None, None) is None
