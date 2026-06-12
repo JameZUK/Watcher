@@ -22,6 +22,7 @@ from ._common import (
     click_consent,
     do_wait,
     hide_banners,
+    full_page_png,
     install_consent_autodismiss,
     navigate,
     replay_login,
@@ -159,7 +160,7 @@ class CamoufoxRenderer:
                 chars = 0
             png = None
             if chars >= 100:
-                png = await page.screenshot(full_page=True, type="png")
+                png = await full_page_png(page)
 
             try:
                 await context.close()

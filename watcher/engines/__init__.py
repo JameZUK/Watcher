@@ -16,7 +16,8 @@ def get_renderer(engine: Engine) -> Renderer:
     return PlaywrightRenderer(browser=engine.value)
 
 
-async def render_monitor(monitor: Monitor) -> RenderResult:
-    """Render a monitor with its configured engine."""
-    renderer = get_renderer(monitor.engine)
+async def render_monitor(monitor: Monitor, engine: Engine | None = None) -> RenderResult:
+    """Render a monitor with its configured engine, or an explicit override
+    (used to retry a bot-walled render on stealth Camoufox)."""
+    renderer = get_renderer(engine or monitor.engine)
     return await renderer.render(monitor)

@@ -727,6 +727,44 @@ def test_auto_relogin_recovery_flow():
     assert _run(_t)
 
 
+def test_check_monitor_escalates_to_camoufox_on_block():
+    """A non-stealth render blocked by anti-bot retries on Camoufox; if that clears
+    the wall, the monitor is switched to Camoufox and the good render is used."""
+    async def _t():
+        import watcher.runner as R
+        from watcher.auth.security import hash_password
+        from watcher.engines import RenderResult
+        from watcher.models import Engine, Monitor, Snapshot, SnapshotStatus, User
+        async with SessionLocal() as s:
+            u = User(email=_email(), password_hash=hash_password("x")); s.add(u); await s.flush()
+            m = Monitor(user_id=u.id, url="https://cf.test", name="CF", engine=Engine.chromium,
+                        enabled=True, notify_channels=["inbox"])
+            s.add(m); await s.commit(); mid = m.id
+
+        orig = R._render
+
+        async def render(_m, engine=None):
+            if engine == Engine.camoufox:      # stealth clears the wall
+                return RenderResult(ok=True, http_status=200,
+                                    rendered_text="real content here", html="<p>hi</p>")
+            return RenderResult(ok=False, http_status=403,
+                                error="403 Cloudflare anti-bot protection")
+        R._render = render; R._escalate_cooldown.clear()
+        try:
+            await R.check_monitor(mid)
+        finally:
+            R._render = orig
+        async with SessionLocal() as s:
+            m = (await s.execute(select(Monitor).where(Monitor.id == mid))).scalar_one()
+            snap = (await s.execute(select(Snapshot).where(Snapshot.monitor_id == mid)
+                    .order_by(Snapshot.id.desc()))).scalars().first()
+        assert m.engine == Engine.camoufox                 # switched permanently
+        assert snap.status == SnapshotStatus.ok            # used the Camoufox render
+        return True
+
+    assert _run(_t)
+
+
 def test_check_monitor_triggers_relogin_on_failed_expired_session():
     """End-to-end hook: a failed render + expired session on an opted-in monitor
     fires the recovery (no failure counted, soft snapshot, re-check on success)."""
@@ -758,7 +796,7 @@ def test_check_monitor_triggers_relogin_on_failed_expired_session():
         orig_render, orig_run, orig_trig = R._render, ai_login.run_agent, scheduler.trigger_now
         triggered: list = []
 
-        async def fail_render(_m):
+        async def fail_render(_m, engine=None):
             return RenderResult(ok=False, error="login wall", http_status=403)
 
         async def ok_agent(sess, action_fn, persist_fn, **kw):

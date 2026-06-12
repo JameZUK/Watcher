@@ -300,6 +300,28 @@ def test_auto_relogin_eligibility():
     R._relogin_cooldown.clear()
 
 
+def test_full_page_png_caps_tall_pages():
+    """A page taller than the cap is clipped to the cap height; a short page is
+    captured full_page (so the worst-case megapixel count stays bounded)."""
+    import asyncio
+    from watcher.config import settings
+    from watcher.engines._common import full_page_png
+    cap = settings.max_screenshot_height_px
+    calls = []
+
+    class Page:
+        def __init__(self, h): self.h = h
+        async def evaluate(self, js):
+            return self.h if "scrollHeight" in js else 1280
+        async def screenshot(self, **kw):
+            calls.append(kw); return b"png"
+
+    asyncio.run(full_page_png(Page(cap + 50000)))          # very tall → clipped
+    assert calls[-1].get("clip", {}).get("height") == cap and "full_page" not in calls[-1]
+    asyncio.run(full_page_png(Page(500)))                  # short → full page
+    assert calls[-1].get("full_page") is True
+
+
 def test_navigate_falls_back_when_wait_never_settles():
     """A strict wait (networkidle) that never settles must not fail the check —
     navigate() retries with domcontentloaded and returns the page that loaded."""

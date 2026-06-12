@@ -24,7 +24,7 @@ from .detection import detect
 from .detection.value import parse_number
 from .engines import RenderResult, render_monitor
 from .models import (
-    Change, DetectionMode, Group, LoginFlow, Monitor, Snapshot, SnapshotStatus, utcnow,
+    Change, DetectionMode, Engine, Group, LoginFlow, Monitor, Snapshot, SnapshotStatus, utcnow,
 )
 from .notify import dispatch, notify_monitor_alert
 from .storage import blobs
@@ -41,6 +41,10 @@ _LOW_VALUE = {"low", "noise"}
 _relogin_inflight: set[int] = set()
 _relogin_cooldown: dict[int, float] = {}
 _relogin_tasks: set = set()   # strong refs so recovery tasks aren't GC'd mid-run
+
+# After a stealth (Camoufox) escalation that ALSO got blocked, skip re-escalating
+# this monitor for a while so a hard-walled site doesn't double-render every check.
+_escalate_cooldown: dict[int, float] = {}
 
 
 def _relogin_blocked_reason(monitor, flow, app) -> str | None:
@@ -303,14 +307,15 @@ def _adapt_interval(monitor, changed: bool) -> None:
             logging.getLogger("watcher").warning("adaptive retune failed for monitor %s", monitor.id)
 
 
-async def _render(monitor) -> RenderResult:
+async def _render(monitor, engine=None) -> RenderResult:
     """Render with a hard ceiling so a hung browser can't pin a concurrency slot.
+    `engine` overrides the monitor's configured engine (for stealth escalation).
 
     Cancellation propagates into the engine's `async with`, tearing the browser
     down on timeout."""
     from .auth.ai_login import engine_error_message
     try:
-        result = await asyncio.wait_for(render_monitor(monitor),
+        result = await asyncio.wait_for(render_monitor(monitor, engine=engine),
                                         timeout=settings.render_timeout_seconds + 30)
     except asyncio.TimeoutError:
         return RenderResult(ok=False, error="Render timed out", http_status=None)
@@ -532,6 +537,23 @@ async def check_monitor(monitor_id: int) -> None:
                 attempt += 1
                 await asyncio.sleep(settings.retry_backoff_seconds * attempt)
                 result = await _render(monitor)
+
+            # Auto-escalate to stealth: if a non-Camoufox engine got bot-walled,
+            # retry once on Camoufox. If that clears the wall, switch the monitor to
+            # Camoufox permanently (so future checks skip the double render) and note
+            # it. A failed escalation sets a short cooldown to avoid double-rendering
+            # every blocked check when stealth doesn't help either.
+            if (_blocked_reason(result) and monitor.engine != Engine.camoufox
+                    and time.monotonic() >= _escalate_cooldown.get(monitor.id, 0.0)):
+                alt = await _render(monitor, engine=Engine.camoufox)
+                if alt.ok and not _blocked_reason(alt):
+                    log.info("monitor %s: %s on %s — cleared on Camoufox; switching engine",
+                             monitor.id, monitor.engine.value, monitor.engine.value)
+                    result = alt
+                    monitor.engine = Engine.camoufox
+                    _escalate_cooldown.pop(monitor.id, None)
+                else:
+                    _escalate_cooldown[monitor.id] = time.monotonic() + 3600
 
             snap = Snapshot(monitor_id=monitor.id, render_ms=result.render_ms)
             monitor.last_checked_at = utcnow()

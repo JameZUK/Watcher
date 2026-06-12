@@ -14,6 +14,7 @@ from ._common import (
     click_consent,
     do_wait,
     hide_banners,
+    full_page_png,
     install_consent_autodismiss,
     navigate,
     replay_login,
@@ -178,7 +179,7 @@ class PlaywrightRenderer:
                     "() => ((document.body && document.body.innerText) || '').trim().length")
             except Exception:
                 chars = 0
-            return await page.screenshot(full_page=True, type="png") if chars >= 80 else None
+            return await full_page_png(page) if chars >= 80 else None
         finally:
             try:
                 await context.close()

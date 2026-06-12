@@ -102,6 +102,11 @@ class Settings(BaseSettings):
     screenshot_scale: int = Field(default=2)        # device pixel ratio (retina-crisp)
     mobile_viewport_width: int = Field(default=390)   # iPhone-class logical width
     mobile_viewport_height: int = Field(default=844)
+    # Cap a full-page capture to the top N CSS pixels. An infinite-scroll / very long
+    # page at retina DPR can otherwise produce a 100+ MP PNG that bloats storage and
+    # is slow to decode/diff. 8000 CSS px is a very long page; the change diff is
+    # downscaled separately (max_diff_megapixels).
+    max_screenshot_height_px: int = Field(default=8000)
 
     # Auto-apply the Playwright Firefox driver workaround on startup (idempotent).
     patch_playwright: bool = Field(default=True)

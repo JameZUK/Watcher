@@ -574,6 +574,28 @@ async def warm_up_if_blocked(page, response, monitor: Monitor):
         return None
 
 
+async def full_page_png(page) -> bytes:
+    """A full-page PNG, but cap the captured height to settings.max_screenshot_height_px
+    CSS pixels — an infinite-scroll / very long page at retina DPR can otherwise
+    produce a 100+ MP image that bloats storage and is slow to decode/diff."""
+    cap = settings.max_screenshot_height_px
+    h = 0
+    if cap:
+        try:
+            h = int(await page.evaluate(
+                "() => Math.ceil(document.documentElement.scrollHeight)"))
+        except Exception:
+            h = 0
+    if cap and h > cap:
+        try:
+            w = int(await page.evaluate(
+                "() => Math.ceil(document.documentElement.scrollWidth)")) or 1280
+        except Exception:
+            w = 1280
+        return await page.screenshot(type="png", clip={"x": 0, "y": 0, "width": w, "height": cap})
+    return await page.screenshot(full_page=True, type="png")
+
+
 async def capture(page, response, monitor: Monitor, mobile: bool = True) -> RenderResult:
     """Capture HTML, visible text, screenshot, and selector/JSON value.
 
@@ -668,7 +690,7 @@ async def capture(page, response, monitor: Monitor, mobile: bool = True) -> Rend
 
     # Full-page screenshot at the desktop viewport (PNG).
     try:
-        result.screenshot_png = await page.screenshot(full_page=True, type="png")
+        result.screenshot_png = await full_page_png(page)
     except Exception:
         result.screenshot_png = None
 
@@ -683,7 +705,7 @@ async def capture(page, response, monitor: Monitor, mobile: bool = True) -> Rend
         )
         await page.wait_for_timeout(450)
         await reveal_full_content(page, monitor)   # re-reveal at the mobile size
-        result.screenshot_mobile_png = await page.screenshot(full_page=True, type="png")
+        result.screenshot_mobile_png = await full_page_png(page)
     except Exception:
         result.screenshot_mobile_png = None
     finally:
