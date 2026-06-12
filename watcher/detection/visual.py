@@ -47,6 +47,11 @@ def _fit(a: Image.Image, b: Image.Image) -> tuple[Image.Image, Image.Image]:
 
 def diff_images(before_png: bytes, after_png: bytes, *, threshold: float = 0.1) -> VisualDiff:
     before, after = _fit(_load(before_png), _load(after_png))
+    # _load bounds each image to the megapixel budget, but _fit pads them to a common
+    # canvas that can be larger again when their aspect ratios differ (e.g. a tall
+    # section vs a legacy full-page capture). Re-bound the padded canvas so the pure-
+    # Python pixelmatch always runs on a bounded image and can't blow the detect timeout.
+    before, after = _bound(before), _bound(after)
     overlay = Image.new("RGBA", before.size)
     # includeAA=False → pixelmatch detects and *ignores* anti-aliased pixels, so
     # sub-pixel font/edge rendering jitter between otherwise-identical renders
