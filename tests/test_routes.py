@@ -667,6 +667,44 @@ def test_auto_pause_after_failures():
 
 # --- consent / annoyance-blocking form wiring ------------------------------
 
+def test_monitor_detail_changes_headline():
+    """The detail page shows a top-of-page changes headline: the latest change's
+    stored summary, or 'No changes' / 'No history' states."""
+    async def _t():
+        from watcher.config import settings
+        from watcher.main import create_app
+        from watcher.models import (Change, DetectionMode, Monitor, Snapshot,
+                                     SnapshotStatus, User)
+        settings.registration_open = True
+        transport = httpx.ASGITransport(app=create_app())
+        email = _email()
+        async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                     headers={"Origin": "http://t"}, follow_redirects=True) as c:
+            await c.post("/register", data={"email": email, "password": "password123"})
+            async with SessionLocal() as s:
+                u = (await s.execute(select(User).where(User.email == email))).scalar_one()
+                no_hist = Monitor(user_id=u.id, url="https://a.test", name="NoHist")
+                stable = Monitor(user_id=u.id, url="https://b.test", name="Stable")
+                changed = Monitor(user_id=u.id, url="https://d.test", name="Changed")
+                s.add_all([no_hist, stable, changed]); await s.flush()
+                s.add(Snapshot(monitor_id=stable.id, status=SnapshotStatus.ok))
+                snap = Snapshot(monitor_id=changed.id, status=SnapshotStatus.ok)
+                s.add(snap); await s.flush()
+                s.add(Change(monitor_id=changed.id, to_snapshot_id=snap.id,
+                             change_type=DetectionMode.auto,
+                             ai_headline="Price dropped to £280", ai_importance="high"))
+                await s.commit()
+                ids = (no_hist.id, stable.id, changed.id)
+
+            assert "No history yet" in (await c.get(f"/monitors/{ids[0]}")).text
+            assert "No changes detected" in (await c.get(f"/monitors/{ids[1]}")).text
+            r = (await c.get(f"/monitors/{ids[2]}")).text
+            assert "Price dropped to £280" in r and ">high<" in r
+        return True
+
+    assert _run(_t)
+
+
 def test_status_page():
     """The /status page renders per-monitor success rate + summary for the user."""
     async def _t():

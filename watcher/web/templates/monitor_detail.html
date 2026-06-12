@@ -52,6 +52,47 @@
 <div class="grid lg:grid-cols-[1fr_19rem] gap-6 items-start">
   <!-- Main column -->
   <div class="space-y-6 min-w-0">
+    <!-- Changes headline: server-rendered at the top from the latest stored change
+         summary (already generated during the check — no extra work on page load). -->
+    {% if not snapshots %}
+    <div class="glass rounded-2xl p-4 flex items-center gap-3">
+      <span class="h-9 w-9 shrink-0 rounded-xl bg-white/5 flex items-center justify-center">
+        <svg viewBox="0 0 24 24" class="h-5 w-5 text-slate-400" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+      </span>
+      <div class="min-w-0">
+        <p class="font-semibold text-white">No history yet</p>
+        <p class="text-sm text-slate-400">The first check runs shortly — changes will show up here.</p>
+      </div>
+    </div>
+    {% elif not changes %}
+    <div class="glass rounded-2xl p-4 flex items-center gap-3">
+      <span class="h-9 w-9 shrink-0 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+        <svg viewBox="0 0 24 24" class="h-5 w-5 text-emerald-300" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6 9 17l-5-5"/></svg>
+      </span>
+      <div class="min-w-0">
+        <p class="font-semibold text-white">No changes detected</p>
+        <p class="text-sm text-slate-400">Watched since the first check · last checked {{ monitor.last_checked_at|timeago }}.</p>
+      </div>
+    </div>
+    {% else %}
+    {% set c = changes[0] %}
+    <div class="glass rounded-2xl p-4 flex items-start gap-3">
+      <span class="h-9 w-9 shrink-0 rounded-xl bg-brand-500/15 flex items-center justify-center">
+        <svg viewBox="0 0 24 24" class="h-5 w-5 text-brand-300" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
+      </span>
+      <div class="min-w-0 flex-1">
+        <div class="flex items-center gap-2 flex-wrap">
+          <p class="font-semibold text-white">{{ c.ai_headline or c.summary or 'Change detected' }}</p>
+          {% if c.ai_importance == 'high' %}<span class="pill" style="background:rgba(244,63,94,.18);color:#fda4af;">high</span>
+          {% elif c.ai_importance == 'medium' %}<span class="pill pill-amber">medium</span>
+          {% elif c.ai_importance %}<span class="pill">{{ c.ai_importance }}</span>{% endif %}
+        </div>
+        <p class="text-sm text-slate-400 mt-0.5">
+          Latest change {{ c.detected_at|timeago }}{% if c.ai_category %} · {{ c.ai_category }}{% endif %}{% if changes|length > 1 %} · {{ changes|length }} changes total{% endif %}
+        </p>
+      </div>
+    </div>
+    {% endif %}
     {% if latest and latest.status.value == 'error' %}
     <div class="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 flex items-start gap-3">
       <svg viewBox="0 0 24 24" class="h-5 w-5 text-red-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
