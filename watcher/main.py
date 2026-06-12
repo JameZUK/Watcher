@@ -153,13 +153,14 @@ def create_app() -> FastAPI:
         resp.headers.setdefault("X-Content-Type-Options", "nosniff")
         resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
         resp.headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
-        # CSP: locks down object/base/frame and the resource origins. script/style
-        # keep 'unsafe-inline'/'unsafe-eval' because the UI uses the Tailwind CDN
-        # (a JIT runtime) + inline Alpine — autoescape remains the primary XSS
-        # defence; this adds clickjacking/base-uri/object-src hardening on top.
+        # CSP: scripts are now SAME-ORIGIN only (Tailwind/htmx/Alpine are
+        # self-hosted) — no third-party JS can execute, removing the CDN
+        # supply-chain risk. 'unsafe-inline'/'unsafe-eval' stay because Alpine
+        # evaluates its directive expressions via Function() and uses inline
+        # handlers; autoescape remains the primary XSS defence.
         resp.headers.setdefault("Content-Security-Policy", (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://unpkg.com; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
             "font-src 'self' https://fonts.gstatic.com; "
             "img-src 'self' data:; connect-src 'self'; "

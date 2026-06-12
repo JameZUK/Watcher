@@ -29,23 +29,16 @@
       } catch (e) {}
     })();
   </script>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = { theme: { extend: {
-      fontFamily: { sans: ['Inter','ui-sans-serif','system-ui','sans-serif'],
-                    mono: ['"JetBrains Mono"','ui-monospace','monospace'] },
-      colors: { brand: { 400:'#818cf8',500:'#6366f1',600:'#4f46e5' } },
-    } } }
-  </script>
+  <!-- Self-hosted Tailwind build (prebuilt from the templates — regenerate with
+       `npx tailwindcss@3 -c tailwind.config.js -i …/tailwind-input.css -o …/tailwind.css --minify`).
+       Replaces the Play CDN so no third-party JS can execute in the app. -->
+  <link rel="stylesheet" href="/static/tailwind.css?v={{ asset_v }}">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <script src="https://unpkg.com/htmx.org@2.0.3/dist/htmx.min.js"
-          integrity="sha384-0895/pl2MU10Hqc6jd4RvrthNlDiE9U1tWmX7WRESftEDRosgxNsQG/Ze9YMRzHq"
-          crossorigin="anonymous"></script>
-  <script defer src="https://unpkg.com/alpinejs@3.15.12/dist/cdn.min.js"
-          integrity="sha384-pb6hrQvo4s23cEUFtj0CZkzGE3jyK3pj26RIupXXxhSrrcUA/Cn0lZgcCrGH0t6L"
-          crossorigin="anonymous"></script>
+  <!-- Self-hosted htmx + Alpine (pinned: htmx 2.0.3, Alpine 3.15.12) -->
+  <script src="/static/htmx.min.js?v={{ asset_v }}"></script>
+  <script defer src="/static/alpine.min.js?v={{ asset_v }}"></script>
   <link rel="stylesheet" href="/static/app.css?v={{ asset_v }}">
 </head>
 <body class="h-full font-sans">
