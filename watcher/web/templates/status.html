@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}Status · Watcher{% endblock %}
+{% block content %}
+<div class="max-w-5xl mx-auto space-y-5">
+  <h1 class="text-2xl sm:text-3xl font-bold tracking-tight text-white mb-1">System <span class="grad-text">status</span></h1>
+
+  <!-- Summary cards -->
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+    {% macro stat(label, value, sub='') %}
+    <div class="glass rounded-2xl p-4">
+      <div class="text-2xl font-bold text-white">{{ value }}</div>
+      <div class="text-xs text-slate-400 mt-0.5">{{ label }}</div>
+      {% if sub %}<div class="text-[11px] text-slate-500 mt-1">{{ sub }}</div>{% endif %}
+    </div>
+    {% endmacro %}
+    {{ stat('Monitors', summary.monitors, summary.enabled ~ ' enabled · ' ~ summary.paused ~ ' paused') }}
+    {{ stat('Failing now', summary.failing, 'consecutive failures > 0') }}
+    {{ stat('AI calls', summary.ai_used ~ ' / ' ~ summary.ai_limit, 'last ' ~ summary.ai_window_min ~ ' min') }}
+    {{ stat('Snapshot store', summary.blob_mb ~ ' MB', summary.blob_count ~ ' blobs on disk') }}
+  </div>
+
+  <!-- Per-monitor health -->
+  <section class="glass rounded-2xl overflow-hidden">
+    <div class="px-5 py-3 border-b border-white/10"><h2 class="font-semibold text-white">Per-monitor health</h2></div>
+    {% if rows %}
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="text-xs text-slate-500 border-b border-white/10">
+          <tr>
+            <th class="text-left font-medium px-5 py-2.5">Monitor</th>
+            <th class="text-left font-medium px-3 py-2.5">Engine</th>
+            <th class="text-right font-medium px-3 py-2.5">Checks</th>
+            <th class="text-right font-medium px-3 py-2.5">Success</th>
+            <th class="text-right font-medium px-3 py-2.5">Avg / max render</th>
+            <th class="text-right font-medium px-5 py-2.5">State</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          {% set m = r.monitor %}
+          <tr class="border-b border-white/5 hover:bg-white/[.03]">
+            <td class="px-5 py-2.5 max-w-[18rem] truncate">
+              <a href="/monitors/{{ m.id }}" class="text-white hover:underline">{{ m.name or m.url }}</a>
+            </td>
+            <td class="px-3 py-2.5 text-slate-400">{{ m.engine.value }}</td>
+            <td class="px-3 py-2.5 text-right text-slate-400">{{ r.checks }}</td>
+            <td class="px-3 py-2.5 text-right">
+              {% if r.success_rate is none %}<span class="text-slate-600">—</span>
+              {% else %}
+              <span class="{{ 'text-emerald-300' if r.success_rate >= 90 else ('text-amber-300' if r.success_rate >= 50 else 'text-rose-300') }}">{{ r.success_rate }}%</span>
+              {% endif %}
+            </td>
+            <td class="px-3 py-2.5 text-right text-slate-400">{{ r.avg_ms }} / {{ r.max_ms }} ms</td>
+            <td class="px-5 py-2.5 text-right">
+              {% if not m.enabled %}<span class="pill" style="background:rgba(148,163,184,.15);color:#cbd5e1;">paused</span>
+              {% elif (m.consecutive_failures or 0) > 0 %}<span class="pill" style="background:rgba(239,68,68,.18);color:#fca5a5;">failing ×{{ m.consecutive_failures }}</span>
+              {% else %}<span class="pill pill-brand">ok</span>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="p-12 text-center text-slate-500 text-sm">No monitors yet.</div>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

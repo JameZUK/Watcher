@@ -667,6 +667,36 @@ def test_auto_pause_after_failures():
 
 # --- consent / annoyance-blocking form wiring ------------------------------
 
+def test_status_page():
+    """The /status page renders per-monitor success rate + summary for the user."""
+    async def _t():
+        from watcher.config import settings
+        from watcher.main import create_app
+        from watcher.models import Monitor, Snapshot, SnapshotStatus, User
+        settings.registration_open = True
+        transport = httpx.ASGITransport(app=create_app())
+        email = _email()
+        async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                     headers={"Origin": "http://t"}, follow_redirects=True) as c:
+            await c.post("/register", data={"email": email, "password": "password123"})
+            async with SessionLocal() as s:
+                u = (await s.execute(select(User).where(User.email == email))).scalar_one()
+                m = Monitor(user_id=u.id, url="https://x.test", name="S"); s.add(m); await s.flush()
+                s.add_all([
+                    Snapshot(monitor_id=m.id, status=SnapshotStatus.ok, render_ms=100),
+                    Snapshot(monitor_id=m.id, status=SnapshotStatus.ok, render_ms=300),
+                    Snapshot(monitor_id=m.id, status=SnapshotStatus.error, render_ms=None),
+                ])
+                await s.commit()
+            r = await c.get("/status")
+            assert r.status_code == 200
+            assert "Per-monitor health" in r.text
+            assert "67%" in r.text                 # 2 ok / 3 checks
+        return True
+
+    assert _run(_t)
+
+
 def test_retention_prune_keeps_n_and_referenced():
     """SQL prune keeps the newest-N snapshots + any referenced by a change, and
     deletes the rest (here: the unreferenced middle ones)."""

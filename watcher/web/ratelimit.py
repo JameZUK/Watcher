@@ -43,6 +43,14 @@ def allow(key: str, *, limit: int, window: int) -> bool:
         return True
 
 
+def count(key: str, *, window: int) -> int:
+    """Current hit count for ``key`` within ``window`` seconds, WITHOUT recording a
+    hit (for read-only displays like the status page)."""
+    cutoff = time.monotonic() - window
+    with _lock:
+        return sum(1 for t in _hits.get(key, ()) if t >= cutoff)
+
+
 def reset(key: str) -> None:
     with _lock:
         _hits.pop(key, None)

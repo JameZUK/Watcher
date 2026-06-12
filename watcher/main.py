@@ -25,6 +25,7 @@ from .web.routes import (
     groups,
     monitors,
     settings_routes,
+    status,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -181,6 +182,7 @@ def create_app() -> FastAPI:
     app.include_router(account.router)
     app.include_router(admin.router)
     app.include_router(api.router)
+    app.include_router(status.router)
 
     @app.exception_handler(StarletteHTTPException)
     async def _auth_redirect(request: Request, exc: StarletteHTTPException):
