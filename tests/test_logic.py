@@ -254,6 +254,35 @@ def test_encrypted_json_roundtrip_and_legacy_fallback():
     assert t.process_result_value(None, None) is None
 
 
+def test_navigate_falls_back_when_wait_never_settles():
+    """A strict wait (networkidle) that never settles must not fail the check —
+    navigate() retries with domcontentloaded and returns the page that loaded."""
+    import asyncio
+    from playwright.async_api import TimeoutError as PWTimeout
+    from watcher.engines._common import navigate
+
+    class Page:
+        def __init__(self, ok_on): self.ok_on, self.calls = ok_on, []
+        async def goto(self, url, wait_until, timeout):
+            self.calls.append(wait_until)
+            if wait_until in self.ok_on:
+                return N(status=200)
+            raise PWTimeout("never idle")
+
+    # networkidle times out → falls back to domcontentloaded, succeeds
+    p = Page(ok_on={"domcontentloaded"})
+    mon = N(url="https://x.test", wait_until="networkidle", wait_timeout_ms=15000)
+    resp = asyncio.run(navigate(p, mon))
+    assert resp.status == 200 and p.calls == ["networkidle", "domcontentloaded"]
+
+    # already the most lenient wait and it still times out → a genuine failure
+    p2 = Page(ok_on=set())
+    mon2 = N(url="https://x.test", wait_until="domcontentloaded", wait_timeout_ms=15000)
+    with pytest.raises(PWTimeout):
+        asyncio.run(navigate(p2, mon2))
+    assert p2.calls == ["domcontentloaded"]   # no pointless second attempt
+
+
 def test_looks_blocked_detects_antibot_walls():
     """A cold deep-link that hit an anti-bot wall (4xx or a short challenge
     interstitial) is flagged for a warm-up retry; real content is not."""

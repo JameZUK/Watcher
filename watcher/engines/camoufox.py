@@ -23,6 +23,7 @@ from ._common import (
     do_wait,
     hide_banners,
     install_consent_autodismiss,
+    navigate,
     replay_login,
     reveal_full_content,
     setup_blocking,
@@ -66,11 +67,7 @@ class CamoufoxRenderer:
                 if flow and flow.steps and not reuse_session:
                     await replay_login(page, monitor)
 
-                response = await page.goto(
-                    monitor.url,
-                    wait_until=monitor.wait_until,
-                    timeout=monitor.wait_timeout_ms,
-                )
+                response = await navigate(page, monitor)
                 # A cold deep-link can hit an anti-bot wall (e.g. Glassdoor's
                 # "Humans only"); a site-root warm-up that banks a clearance
                 # cookie usually clears it. No-op when the first hit succeeded.
@@ -145,9 +142,7 @@ class CamoufoxRenderer:
             context.set_default_timeout(settings.render_timeout_seconds * 1000)
             page = await context.new_page()
             await setup_blocking(context, monitor)
-            await page.goto(
-                monitor.url, wait_until=monitor.wait_until, timeout=monitor.wait_timeout_ms
-            )
+            await navigate(page, monitor)
             await do_wait(page, monitor)
             await _settle_for_content(page)
             await click_consent(page, monitor)

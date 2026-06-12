@@ -485,6 +485,30 @@ async def _settle_for_content(page, *, min_chars: int = 150, timeout_ms: int = 9
         pass
 
 
+async def navigate(page, monitor: Monitor):
+    """Navigate to the monitor URL, tolerating a wait condition that never settles.
+
+    `networkidle` (a very common setting) frequently never fires on ad/tracker-
+    heavy sites — analytics, ads and long-poll connections keep the network busy —
+    so a strict goto times out at `wait_timeout_ms` even though the page loaded
+    fine in a fraction of a second. Rather than failing the whole check, fall back
+    to `domcontentloaded` and capture what loaded. `do_wait`/`_settle_for_content`
+    downstream still wait for real content. Returns the navigation response (or
+    None if even the fallback couldn't produce one)."""
+    from playwright.async_api import TimeoutError as PWTimeout
+    try:
+        return await page.goto(monitor.url, wait_until=monitor.wait_until,
+                               timeout=monitor.wait_timeout_ms)
+    except PWTimeout:
+        if monitor.wait_until == "domcontentloaded":
+            raise  # already the most lenient wait — a genuine navigation failure
+        try:
+            return await page.goto(monitor.url, wait_until="domcontentloaded",
+                                   timeout=monitor.wait_timeout_ms)
+        except PWTimeout:
+            return None  # last resort: proceed with whatever the page already has
+
+
 async def do_wait(page, monitor: Monitor) -> None:
     if monitor.wait_selector:
         try:

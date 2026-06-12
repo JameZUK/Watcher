@@ -15,6 +15,7 @@ from ._common import (
     do_wait,
     hide_banners,
     install_consent_autodismiss,
+    navigate,
     replay_login,
     reveal_full_content,
     setup_blocking,
@@ -76,11 +77,7 @@ class PlaywrightRenderer:
                 if flow and flow.steps and not reuse_session:
                     await replay_login(page, monitor)
 
-                response = await page.goto(
-                    monitor.url,
-                    wait_until=monitor.wait_until,
-                    timeout=monitor.wait_timeout_ms,
-                )
+                response = await navigate(page, monitor)
                 # Site-root warm-up to clear a cold-deep-link anti-bot wall.
                 warmed = await warm_up_if_blocked(page, response, monitor)
                 if warmed is not None:
@@ -169,8 +166,7 @@ class PlaywrightRenderer:
             context.set_default_timeout(settings.render_timeout_seconds * 1000)
             page = await context.new_page()
             await setup_blocking(context, monitor)
-            await page.goto(monitor.url, wait_until=monitor.wait_until,
-                            timeout=monitor.wait_timeout_ms)
+            await navigate(page, monitor)
             await do_wait(page, monitor)
             await _settle_for_content(page)
             await click_consent(page, monitor)
