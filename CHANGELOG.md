@@ -2,6 +2,47 @@
 
 All notable changes to Watcher are documented here. Dates are ISO-8601.
 
+## 2026-06-13 — Whole-page section captures, smarter dashboard summary & capture fixes
+
+### Added
+- **Dashboard summary as an AI paragraph with embedded links.** The fleet summary at
+  the top of the dashboard is now a natural-language paragraph that describes what
+  changed across all your sites and highlights what's interesting, with the relevant
+  phrases linking straight to each monitor — instead of a flat list. Generated in the
+  background (never blocks the page), cached per user by a change fingerprint, and
+  safe by construction: the model returns link-aware *segments* whose text is escaped
+  and whose monitor ids are validated against your own changes. Falls back to the
+  headline list when AI isn't configured or hasn't generated yet.
+- **Customisable dashboard summary** (Settings → Dashboard summary): turn the AI
+  paragraph on/off, set the look-back window (1–30 days), and give a free-text focus
+  / tone hint (e.g. "lead with price drops; be terse") that steers the model without
+  overriding its safety rules. Editing any of these regenerates the paragraph.
+- **Whole-page captures as readable, full-width sections.** Very long pages (news
+  homepages, infinite-ish feeds) are now captured in full and sliced top-to-bottom
+  into sharp, full-width sections (`screenshot_section_height_px`, capped at
+  `max_screenshot_sections`) rather than cropped to the top or squished illegibly into
+  one image. The history viewer stacks the sections to reconstruct the whole page
+  (framed as a phone for mobile). The snapshot image route gained `?section=N`; the
+  first section stays the primary blob, so thumbnails/dashboard/RSS/diff are unchanged.
+
+### Fixed
+- **Mobile preview lost on SPA / shadow-DOM pages.** The mobile pass discarded a
+  freshly-rendered page when its `innerText` read low — but modern e-commerce SPAs
+  (e.g. JBL) render into shadow DOM and hydrate asynchronously, so a perfectly good
+  page intermittently read as "empty" and the UI fell back to the desktop image. It
+  now keeps the capture unless the page actually looks like a challenge interstitial,
+  and waits on a populated DOM rather than `innerText`. Fixes both engines' mobile pass.
+- **Tall captures failed to compress / truncated.** A `clip` without `full_page=True`
+  was silently constrained to the viewport (truncating long mobile pages to one
+  screen); and a true full-page capture of a very tall page tripped Pillow's
+  decompression-bomb guard and WebP's 16383-px dimension limit, so it fell back to a
+  raw multi-MB PNG. Captures are now sliced into per-section WebPs that always encode.
+- **`detect()` timing out on tall pages.** The visual diff padded two captures with
+  different aspect ratios onto an oversized common canvas, so the pure-Python
+  pixelmatch blew the detect timeout and aborted change detection for the cycle (a
+  long page like The Register stopped reporting changes). The padded canvas is now
+  re-bounded to the diff megapixel budget.
+
 ## 2026-06-12 — Self-healing logins, proxy pool, status page & a hardening sweep
 
 ### Added
