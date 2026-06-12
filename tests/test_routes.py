@@ -310,6 +310,38 @@ def test_otp_login_flow():
     assert _run(_t)
 
 
+def test_totp_code_is_single_use():
+    """A TOTP code accepted once can't be replayed inside its validity window."""
+    async def _t():
+        import pyotp
+        from watcher.config import settings
+        from watcher.main import create_app
+        from watcher.auth.otp import new_secret
+        from watcher.auth.security import encrypt_secret, hash_password
+        from watcher.models import User
+        settings.registration_open = True
+        transport = httpx.ASGITransport(app=create_app())
+        email = _email()
+        secret = new_secret()
+        async with SessionLocal() as s:
+            s.add(User(email=email, password_hash=hash_password("password123"),
+                       otp_enabled=True, otp_secret_enc=encrypt_secret(secret)))
+            await s.commit()
+        async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                     headers={"Origin": "http://t"}) as c:
+            await c.post("/login", data={"email": email, "password": "password123"})  # → OTP gate
+            code = pyotp.TOTP(secret).now()
+            r = await c.post("/login/otp", data={"code": code})
+            assert r.status_code in (302, 303), r.status_code          # accepted
+            await c.post("/logout")
+            await c.post("/login", data={"email": email, "password": "password123"})
+            r = await c.post("/login/otp", data={"code": code})        # same code again
+            assert r.status_code == 401                                 # replay rejected
+        return True
+
+    assert _run(_t)
+
+
 def test_force_otp_hard_gate():
     async def _t():
         from watcher.app_settings import get_app_settings

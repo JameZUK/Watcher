@@ -2,10 +2,24 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .auth.security import decrypt_secret, encrypt_secret
 from .models import AppSetting
+
+
+@lru_cache(maxsize=64)
+def _decrypt_cached(token: str) -> str | None:
+    """Decrypt a Fernet token, cached by ciphertext. The shared AI key (and SMTP /
+    Telegram secrets) were re-decrypted up to ~3x per check; the ciphertext is a
+    perfect cache key — it changes whenever the stored value does, so no explicit
+    invalidation is needed (a key rotation requires a restart anyway)."""
+    try:
+        return decrypt_secret(token)
+    except Exception:
+        return None
 
 
 async def get_app_settings(session: AsyncSession) -> AppSetting:
@@ -28,12 +42,7 @@ async def get_app_settings(session: AsyncSession) -> AppSetting:
 
 def get_openrouter_key(s: AppSetting) -> str | None:
     """Decrypt the stored OpenRouter key, or None if unset/undecryptable."""
-    if not s.openrouter_key_enc:
-        return None
-    try:
-        return decrypt_secret(s.openrouter_key_enc)
-    except Exception:
-        return None
+    return _decrypt_cached(s.openrouter_key_enc) if s.openrouter_key_enc else None
 
 
 def set_openrouter_key(s: AppSetting, plaintext: str | None) -> None:
@@ -42,12 +51,7 @@ def set_openrouter_key(s: AppSetting, plaintext: str | None) -> None:
 
 
 def _get_enc(token: str | None) -> str | None:
-    if not token:
-        return None
-    try:
-        return decrypt_secret(token)
-    except Exception:
-        return None
+    return _decrypt_cached(token) if token else None
 
 
 def get_smtp_password(s: AppSetting) -> str | None:

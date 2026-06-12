@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...app_settings import get_app_settings
-from ...auth.otp import user_secret, verify
+from ...auth.otp import user_secret, verify_step
 from ...auth.users import authenticate, create_user, get_by_email
 from ...config import settings
 from ...db import get_session
@@ -98,7 +98,11 @@ async def login_otp(
             request, "login.html",
             {"mode": "otp", "error": "Too many attempts — please wait and try again."}, status_code=429)
     user = await session.get(User, uid)
-    if user is None or not user.is_active or not verify(user_secret(user), code):
+    # Single-use: the matched step must be NEWER than the last one we consumed, so a
+    # code can't be replayed within its ~90s window.
+    step = verify_step(user_secret(user), code) if user else None
+    valid = bool(user and user.is_active and step is not None and step > (user.last_otp_step or 0))
+    if not valid:
         # Server-side, per-ACCOUNT throttle (keyed by uid, not IP/session) so an
         # attacker who knows the password can't grind the 6-digit code space by
         # rotating source IPs / clearing cookies.
@@ -111,6 +115,8 @@ async def login_otp(
         return templates.TemplateResponse(
             request, "login.html",
             {"mode": "otp", "error": "Invalid authentication code."}, status_code=401)
+    user.last_otp_step = step
+    await session.commit()
     reset(f"otpverify:{uid}")
     reset(f"otp:{client_ip(request)}")
     app = await get_app_settings(session)

@@ -254,6 +254,19 @@ def test_encrypted_json_roundtrip_and_legacy_fallback():
     assert t.process_result_value(None, None) is None
 
 
+def test_totp_verify_step():
+    """verify_step returns the matched step for a fresh code (enabling single-use)
+    and None for wrong/short codes."""
+    import pyotp
+    from watcher.auth.otp import verify, verify_step
+    sec = pyotp.random_base32()
+    code = pyotp.TOTP(sec).now()
+    assert verify_step(sec, code) is not None and verify(sec, code) is True
+    assert verify_step(sec, "000000") is None          # wrong code
+    assert verify_step(sec, "12345") is None            # wrong length
+    assert verify_step(None, code) is None              # no secret
+
+
 def test_handoff_unattended_fails_clean():
     """In unattended (auto re-login) mode a handoff is a hard error — no human can
     take over — whereas interactive mode hands off to manual control as before."""

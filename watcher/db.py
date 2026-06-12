@@ -48,7 +48,7 @@ _ADDED_COLUMNS = {
         "ntfy_topic": "VARCHAR(128)", "digest_enabled": "BOOLEAN DEFAULT 0",
         "quiet_start": "INTEGER", "quiet_end": "INTEGER", "api_token": "VARCHAR(64)",
         "display_name": "VARCHAR(120)", "otp_secret_enc": "TEXT", "otp_enabled": "BOOLEAN DEFAULT 0",
-        "session_token": "VARCHAR(64)",
+        "session_token": "VARCHAR(64)", "last_otp_step": "INTEGER DEFAULT 0",
     },
     "snapshots": {
         "title": "VARCHAR(512)", "screenshot_mobile_blob": "VARCHAR(64)",
