@@ -649,22 +649,32 @@ _FLEET_SYSTEM = (
 
 async def summarize_fleet(
     *, api_key: str, model: str, base_url: str | None = None,
-    changes: list[dict], timeout: float = 40.0,
+    changes: list[dict], instruction: str | None = None, timeout: float = 40.0,
 ) -> list[dict] | None:
     """A flowing paragraph summarising changes across ALL the user's sites, returned
     as link-aware segments [{text, monitor_id}]. monitor_id is validated against the
-    supplied changes so a link can't point elsewhere. None on failure."""
+    supplied changes so a link can't point elsewhere. None on failure.
+
+    `instruction` is the user's own free-text preference for what the summary should
+    focus on / its tone — applied as a style hint that can't override the safety
+    rules (never invent, JSON-only)."""
     if not api_key or not changes:
         return None
     valid_ids = {c["monitor_id"] for c in changes}
     lines = [f"- [monitor {c['monitor_id']}] {c['monitor']} — {c.get('importance') or 'normal'} — {c['headline']}"
              for c in changes[:40]]
+    messages = [
+        {"role": "system", "content": _FLEET_SYSTEM},
+        {"role": "user", "content": "Changes across the user's sites (newest first):\n" + "\n".join(lines)},
+    ]
+    if instruction and instruction.strip():
+        messages.append({"role": "user", "content":
+            "Tailor the summary to this preference (style and focus only — still never "
+            "invent anything that isn't in the list, and still respond ONLY with the "
+            "JSON): " + instruction.strip()[:500]})
     body = {
         "model": model,
-        "messages": [
-            {"role": "system", "content": _FLEET_SYSTEM},
-            {"role": "user", "content": "Changes across the user's sites (newest first):\n" + "\n".join(lines)},
-        ],
+        "messages": messages,
         "temperature": 0.3,
         "max_tokens": 600,
         "response_format": {"type": "json_schema", "json_schema": _FLEET_SCHEMA},

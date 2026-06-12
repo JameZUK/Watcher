@@ -72,6 +72,12 @@ async def settings_page(
                 "quiet_start": user.quiet_start,
                 "quiet_end": user.quiet_end,
             },
+            # Per-user dashboard AI-summary preferences
+            "summary": {
+                "enabled": user.summary_enabled,
+                "days": user.summary_days or 7,
+                "prompt": user.summary_prompt or "",
+            },
             # Admin transport config (secrets exposed only as set/unset flags)
             "tx": {
                 "smtp_host": app.smtp_host or "", "smtp_port": app.smtp_port,
@@ -122,6 +128,23 @@ async def save_notifications(
     qs, qe = _int_or_none(form.get("quiet_start")), _int_or_none(form.get("quiet_end"))
     user.quiet_start = qs if qs is not None and 0 <= qs <= 23 else None
     user.quiet_end = qe if qe is not None and 0 <= qe <= 23 else None
+    await session.commit()
+    return RedirectResponse("/settings", status_code=303)
+
+
+@router.post("/settings/summary")
+async def save_summary(
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Per-user dashboard AI-summary preferences: on/off, lookback window, and a
+    free-text focus/tone hint fed to the model."""
+    form = await request.form()
+    user.summary_enabled = _bool(form, "summary_enabled")
+    days = _int_or_none(form.get("summary_days")) or 7
+    user.summary_days = max(1, min(30, days))
+    user.summary_prompt = (form.get("summary_prompt") or "").strip()[:500] or None
     await session.commit()
     return RedirectResponse("/settings", status_code=303)
 

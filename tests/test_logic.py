@@ -378,6 +378,73 @@ def test_full_page_png_caps_tall_pages():
     assert calls[-1].get("full_page") is True
 
 
+def test_mobile_screenshot_keeps_low_text_pages():
+    """The mobile pass must NOT discard a page just because its visible text is
+    low — SPA / shadow-DOM pages (modern e-commerce) read as near-empty even when
+    fully rendered, and the desktop pass already proved the site isn't blocking us.
+    Only a recognised challenge interstitial is rejected. Regression: JBL's mobile
+    preview kept falling back to the desktop image because innerText was ~0."""
+    import asyncio
+    from watcher.engines import _common
+
+    async def fake_png(page):
+        return b"PNGDATA"
+
+    _orig = _common.full_page_png
+    _common.full_page_png = fake_png
+    try:
+        class Page:
+            def __init__(self, text): self.text = text
+            async def evaluate(self, js, *a):
+                return self.text
+
+        # Empty/low innerText but not a challenge → keep the capture.
+        assert asyncio.run(_common.mobile_screenshot_or_none(Page(""))) == b"PNGDATA"
+        assert asyncio.run(_common.mobile_screenshot_or_none(Page("a product page"))) == b"PNGDATA"
+        # A real anti-bot interstitial → reject (don't store the challenge page).
+        assert asyncio.run(_common.mobile_screenshot_or_none(
+            Page("Just a moment... checking your browser before accessing"))) is None
+    finally:
+        _common.full_page_png = _orig
+
+
+def test_summarize_fleet_includes_user_instruction():
+    """A user's free-text summary preference is passed to the model as an extra
+    style hint (so the dashboard summary is customisable)."""
+    import asyncio
+    import json as _json
+    from watcher.ai import triage
+
+    captured = {}
+
+    class FakeResp:
+        status_code = 200
+        def json(self):
+            return {"choices": [{"message": {"content":
+                    _json.dumps({"segments": [{"text": "ok", "monitor_id": 0}]})}}]}
+
+    class FakeClient:
+        def __init__(self, *a, **k): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def post(self, url, json=None, headers=None):
+            captured["body"] = json
+            return FakeResp()
+
+    _orig = triage.httpx.AsyncClient
+    triage.httpx.AsyncClient = FakeClient
+    try:
+        changes = [{"monitor_id": 5, "monitor": "Alpha", "importance": "high", "headline": "Price"}]
+        out = asyncio.run(triage.summarize_fleet(
+            api_key="k", model="m", changes=changes, instruction="Lead with price drops."))
+    finally:
+        triage.httpx.AsyncClient = _orig
+
+    contents = " ".join(m["content"] for m in captured["body"]["messages"])
+    assert "Lead with price drops." in contents
+    assert out == [{"text": "ok", "monitor_id": 0}]
+
+
 def test_navigate_falls_back_when_wait_never_settles():
     """A strict wait (networkidle) that never settles must not fail the check —
     navigate() retries with domcontentloaded and returns the page that loaded."""

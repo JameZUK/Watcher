@@ -740,6 +740,50 @@ def test_dashboard_fleet_summary_paragraph():
     assert _run(_t)
 
 
+def test_settings_summary_customization():
+    """Per-user dashboard-summary prefs round-trip through /settings/summary, and
+    turning the summary off suppresses the AI paragraph even when one is cached."""
+    async def _t():
+        from watcher.config import settings
+        from watcher.main import create_app
+        from watcher.models import (Change, DetectionMode, Monitor, Snapshot,
+                                     SnapshotStatus, User)
+        from watcher.web.routes import dashboard as D
+        settings.registration_open = True
+        transport = httpx.ASGITransport(app=create_app())
+        email = _email()
+        async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                     headers={"Origin": "http://t"}, follow_redirects=True) as c:
+            await c.post("/register", data={"email": email, "password": "password123"})
+            # Save custom prefs (no summary_enabled key => switched off); days clamps.
+            await c.post("/settings/summary", data={
+                "summary_days": "99", "summary_prompt": "Lead with price drops."})
+            async with SessionLocal() as s:
+                u = (await s.execute(select(User).where(User.email == email))).scalar_one()
+                assert u.summary_enabled is False
+                assert u.summary_days == 30                      # clamped to max
+                assert u.summary_prompt == "Lead with price drops."
+            assert "Lead with price drops." in (await c.get("/settings")).text
+            # Off-switch: even a cached paragraph is suppressed (no AI, fall back to list).
+            async with SessionLocal() as s:
+                u = (await s.execute(select(User).where(User.email == email))).scalar_one()
+                m = Monitor(user_id=u.id, url="https://a.test", name="Alpha"); s.add(m); await s.flush()
+                snap = Snapshot(monitor_id=m.id, status=SnapshotStatus.ok); s.add(snap); await s.flush()
+                s.add(Change(monitor_id=m.id, to_snapshot_id=snap.id, change_type=DetectionMode.auto,
+                             ai_headline="Price moved", ai_importance="high"))
+                await s.commit()
+                summ = await D._fleet_summary(s, u, [m])
+                D._fleet_cache[u.id] = {"fp": summ["fingerprint"],
+                                        "segments": [{"text": "X", "monitor_id": 0}]}
+                try:
+                    assert await D._fleet_paragraph(s, u, summ) is None   # disabled → suppressed
+                finally:
+                    D._fleet_cache.pop(u.id, None)
+        return True
+
+    assert _run(_t)
+
+
 def test_monitor_detail_changes_headline():
     """The detail page shows a top-of-page changes headline: the latest change's
     stored summary, or 'No changes' / 'No history' states."""

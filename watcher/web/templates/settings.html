@@ -134,6 +134,23 @@
   </section>
 
   <section class="glass rounded-2xl p-5 sm:p-6">
+    <h2 class="font-semibold text-white mb-1">Dashboard summary</h2>
+    <p class="text-sm text-slate-400 mb-4 max-w-xl">The AI paragraph at the top of your dashboard that sums up recent changes across all your sites. Needs AI to be configured; with it off you still get the headline list.</p>
+    <form method="post" action="/settings/summary" class="space-y-4">
+      <label class="flex items-center gap-2.5 text-sm text-slate-200"><input type="checkbox" name="summary_enabled" {{ 'checked' if summary.enabled else '' }} class="rounded bg-white/10 border-white/20 text-brand-500"> Show the AI summary paragraph</label>
+      <div>
+        <label class="block text-sm font-medium text-slate-300 mb-1.5">Look back over <span class="text-slate-500 font-normal">· days</span></label>
+        <input type="number" min="1" max="30" name="summary_days" value="{{ summary.days }}" class="field !w-24">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-300 mb-1.5">Focus &amp; tone <span class="text-slate-500 font-normal">· optional — what should it emphasise?</span></label>
+        <textarea name="summary_prompt" rows="2" maxlength="500" placeholder="e.g. Lead with price drops and stock changes; keep it brief and businesslike." class="field">{{ summary.prompt }}</textarea>
+      </div>
+      <button class="btn btn-primary text-sm">Save summary</button>
+    </form>
+  </section>
+
+  <section class="glass rounded-2xl p-5 sm:p-6">
     <h2 class="font-semibold text-white mb-1">API &amp; feeds</h2>
     <p class="text-sm text-slate-400 mb-4">A personal token for the REST API and your RSS feed.</p>
     {% if new_api_token %}

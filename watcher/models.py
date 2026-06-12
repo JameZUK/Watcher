@@ -135,6 +135,10 @@ class User(Base):
     quiet_start: Mapped[int | None] = mapped_column(Integer, default=None)  # quiet-hours start (0-23)
     quiet_end: Mapped[int | None] = mapped_column(Integer, default=None)
     api_token: Mapped[str | None] = mapped_column(String(64), unique=True, default=None)  # REST API + RSS
+    # Dashboard AI summary preferences (per user).
+    summary_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    summary_days: Mapped[int] = mapped_column(Integer, default=7)        # lookback window (1-30)
+    summary_prompt: Mapped[str | None] = mapped_column(String(500), default=None)  # focus/tone hint
 
     monitors: Mapped[list["Monitor"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
