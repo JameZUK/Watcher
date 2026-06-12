@@ -699,6 +699,47 @@ def test_dashboard_fleet_summary():
     assert _run(_t)
 
 
+def test_dashboard_fleet_summary_paragraph():
+    """When a cached AI summary exists, the dashboard renders it as a paragraph with
+    links embedded to the relevant monitors (and the text is escaped)."""
+    async def _t():
+        from watcher.config import settings
+        from watcher.main import create_app
+        from watcher.models import (Change, DetectionMode, Monitor, Snapshot,
+                                     SnapshotStatus, User)
+        from watcher.web.routes import dashboard as D
+        settings.registration_open = True
+        transport = httpx.ASGITransport(app=create_app())
+        email = _email()
+        async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                     headers={"Origin": "http://t"}, follow_redirects=True) as c:
+            await c.post("/register", data={"email": email, "password": "password123"})
+            async with SessionLocal() as s:
+                u = (await s.execute(select(User).where(User.email == email))).scalar_one()
+                m = Monitor(user_id=u.id, url="https://a.test", name="Alpha"); s.add(m); await s.flush()
+                snap = Snapshot(monitor_id=m.id, status=SnapshotStatus.ok); s.add(snap); await s.flush()
+                s.add(Change(monitor_id=m.id, to_snapshot_id=snap.id, change_type=DetectionMode.auto,
+                             ai_headline="Price moved", ai_importance="high"))
+                await s.commit()
+                mid, uid = m.id, u.id
+                # prime the cache with the CURRENT fingerprint so the route hits it
+                summ = await D._fleet_summary(s, u, [m])
+            D._fleet_cache[uid] = {"fp": summ["fingerprint"], "segments": [
+                {"text": "Across your sites, ", "monitor_id": 0},
+                {"text": "Alpha dropped sharply", "monitor_id": mid},
+                {"text": " <careful>.", "monitor_id": 0}]}
+            try:
+                r = (await c.get("/")).text
+            finally:
+                D._fleet_cache.pop(uid, None)
+            assert "Across your sites," in r
+            assert f'href="/monitors/{mid}"' in r and "Alpha dropped sharply" in r
+            assert "&lt;careful&gt;" in r and "<careful>" not in r     # escaped, no injection
+        return True
+
+    assert _run(_t)
+
+
 def test_monitor_detail_changes_headline():
     """The detail page shows a top-of-page changes headline: the latest change's
     stored summary, or 'No changes' / 'No history' states."""

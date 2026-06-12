@@ -38,7 +38,11 @@
         {% endif %}
         <span class="text-xs text-slate-500">· last {{ summary.days }} days</span>
       </div>
-      {% if summary.top %}
+      {% if summary_segments %}
+      {# AI-written paragraph with links embedded to the relevant monitors. Text is
+         autoescaped; links only ever point at the user's own validated monitor ids. #}
+      <p class="mt-2 text-sm text-slate-300 leading-relaxed">{% for seg in summary_segments %}{% if seg.monitor_id %}<a href="/monitors/{{ seg.monitor_id }}" class="text-brand-300 hover:underline">{{ seg.text }}</a>{% else %}{{ seg.text }}{% endif %}{% endfor %}</p>
+      {% elif summary.top %}
       <div class="mt-2 flex flex-col gap-1.5">
         {% for t in summary.top %}
         <a href="/monitors/{{ t.monitor_id }}" class="group flex items-baseline gap-2 text-sm min-w-0">

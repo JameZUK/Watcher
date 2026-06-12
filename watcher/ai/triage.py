@@ -606,6 +606,91 @@ async def summarize_history(
         return None
 
 
+_FLEET_SCHEMA = {
+    "name": "fleet_summary",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "segments": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "text": {"type": "string",
+                                 "description": "A run of the paragraph (include its own spacing/punctuation)."},
+                        "monitor_id": {"type": "integer",
+                                       "description": "Monitor id this run links to, or 0 for plain text."},
+                    },
+                    "required": ["text", "monitor_id"],
+                },
+                "description": "The summary paragraph split into runs; a non-zero monitor_id makes that run a link.",
+            }
+        },
+        "required": ["segments"],
+    },
+}
+
+_FLEET_SYSTEM = (
+    "You write a short, skimmable summary of what changed across a user's monitored "
+    "websites recently. You get a list of changes — each with a monitor id, the site "
+    "name, an importance, and a headline. Write a natural 2-4 sentence paragraph that "
+    "leads with the most important/interesting changes, groups related ones, and gives "
+    "the overall picture; mention minor/'noise' updates only briefly or in aggregate. "
+    "Return it as 'segments': split the paragraph into text runs, and for a run that "
+    "refers to a specific change set its monitor_id to that change's id (so it becomes "
+    "a link); use 0 for ordinary connective text. Each run must carry its own spaces "
+    "and punctuation so the runs read as one flowing paragraph. Never invent anything "
+    "that isn't in the list. Respond ONLY with the JSON."
+)
+
+
+async def summarize_fleet(
+    *, api_key: str, model: str, base_url: str | None = None,
+    changes: list[dict], timeout: float = 40.0,
+) -> list[dict] | None:
+    """A flowing paragraph summarising changes across ALL the user's sites, returned
+    as link-aware segments [{text, monitor_id}]. monitor_id is validated against the
+    supplied changes so a link can't point elsewhere. None on failure."""
+    if not api_key or not changes:
+        return None
+    valid_ids = {c["monitor_id"] for c in changes}
+    lines = [f"- [monitor {c['monitor_id']}] {c['monitor']} — {c.get('importance') or 'normal'} — {c['headline']}"
+             for c in changes[:40]]
+    body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _FLEET_SYSTEM},
+            {"role": "user", "content": "Changes across the user's sites (newest first):\n" + "\n".join(lines)},
+        ],
+        "temperature": 0.3,
+        "max_tokens": 600,
+        "response_format": {"type": "json_schema", "json_schema": _FLEET_SCHEMA},
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(base_url or OPENROUTER_URL, json=body, headers=headers)
+        if resp.status_code != 200:
+            return None
+        data = json.loads(resp.json()["choices"][0]["message"]["content"])
+        out: list[dict] = []
+        for seg in (data.get("segments") or []):
+            if not isinstance(seg, dict):
+                continue
+            text = str(seg.get("text") or "")
+            if not text:
+                continue
+            mid = seg.get("monitor_id")
+            out.append({"text": text, "monitor_id": mid if (isinstance(mid, int) and mid in valid_ids) else 0})
+        return out or None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("OpenRouter fleet summary error: %s", exc)
+        return None
+
+
 _LOGIN_ACTION_SCHEMA = {
     "name": "login_action",
     "strict": True,
