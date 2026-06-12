@@ -847,6 +847,15 @@ def test_manual_login_start_needs_no_creds_or_ai():
                 # the AI-driven start (no manual) still requires creds/AI
                 r = await c.post(f"/monitors/{mid}/ai-login/start", data={})
                 assert r.status_code == 400 and not r.json().get("ok")
+
+                # SSRF: a private/internal target is refused (default policy), so
+                # the login agent can't be steered at 169.254.169.254 / localhost.
+                async with SessionLocal() as s:
+                    m = (await s.execute(select(Monitor).where(Monitor.id == mid))).scalar_one()
+                    m.url = "http://169.254.169.254/latest/meta-data/"
+                    await s.commit()
+                r = await c.post(f"/monitors/{mid}/ai-login/start", data={"manual": "1"})
+                assert r.status_code == 400 and not r.json().get("ok"), r.text
         finally:
             ai_login.run_agent = orig
         return True

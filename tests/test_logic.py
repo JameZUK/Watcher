@@ -234,6 +234,23 @@ def test_netsec_blocks_internal_targets_and_encodings():
     assert validate_proxy(None) is None
 
 
+def test_encrypted_json_roundtrip_and_legacy_fallback():
+    """session_state is Fernet-encrypted at rest, round-trips to the same dict,
+    and still reads legacy plaintext-JSON rows (so existing data isn't lost)."""
+    import json as _json
+    from watcher.models import EncryptedJSON
+    t = EncryptedJSON()
+    val = {"cookies": [{"name": "sid", "value": "s3cr3t-cookie"}], "origins": []}
+    enc = t.process_bind_param(val, None)
+    assert isinstance(enc, str) and "s3cr3t-cookie" not in enc   # stored as ciphertext
+    assert t.process_result_value(enc, None) == val              # decrypts back
+    # legacy plaintext JSON (written before encryption) still loads
+    assert t.process_result_value(_json.dumps(val), None) == val
+    # None passes through untouched
+    assert t.process_bind_param(None, None) is None
+    assert t.process_result_value(None, None) is None
+
+
 def test_looks_blocked_detects_antibot_walls():
     """A cold deep-link that hit an anti-bot wall (4xx or a short challenge
     interstitial) is flagged for a warm-up retry; real content is not."""

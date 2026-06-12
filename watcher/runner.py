@@ -229,13 +229,11 @@ async def _fail(session, monitor, snap, *, error, http_status, title=None, resul
     snap.title = title
     if result is not None:
         try:
-            if result.screenshot_png:
-                snap.screenshot_blob = blobs.put_bytes(result.screenshot_png)
-            if getattr(result, "screenshot_mobile_png", None):
-                snap.screenshot_mobile_blob = blobs.put_bytes(result.screenshot_mobile_png)
-            if result.html:
-                snap.html_blob = blobs.put_text(result.html)
-                snap.dom_hash = _hash(result.html)
+            _b = await asyncio.to_thread(_store_snapshot_blobs, result)
+            snap.screenshot_blob = _b["screenshot_blob"]
+            snap.screenshot_mobile_blob = _b["screenshot_mobile_blob"]
+            snap.html_blob = _b["html_blob"]
+            snap.dom_hash = _b["dom_hash"]
             if result.title and not snap.title:
                 snap.title = result.title
         except Exception:
@@ -288,6 +286,33 @@ def _hash(*parts: str | None) -> str:
     for p in parts:
         h.update((p or "").encode("utf-8"))
     return h.hexdigest()
+
+
+def _store_snapshot_blobs(result) -> dict:
+    """Hash + write a snapshot's artifacts to the content-addressed blob store.
+    sha256 over multi-MB screenshots plus file writes is CPU/IO-bound, so this is
+    meant to run via ``asyncio.to_thread`` and keep the event loop free."""
+    out: dict = {"html_blob": None, "dom_hash": None, "screenshot_blob": None,
+                 "screenshot_mobile_blob": None}
+    if result.html:
+        out["html_blob"] = blobs.put_text(result.html)
+        out["dom_hash"] = _hash(result.html)
+    if result.screenshot_png:
+        out["screenshot_blob"] = blobs.put_bytes(result.screenshot_png)
+    if getattr(result, "screenshot_mobile_png", None):
+        out["screenshot_mobile_blob"] = blobs.put_bytes(result.screenshot_mobile_png)
+    out["content_hash"] = _hash(getattr(result, "rendered_text", None),
+                                getattr(result, "extracted_value", None), result.html)
+    return out
+
+
+def _store_change_blobs(cr) -> tuple:
+    """Write a change's diff artifacts off-thread (text diff + overlay PNGs)."""
+    return (
+        blobs.put_text(cr.diff_text) if cr.diff_text else None,
+        blobs.put_bytes(cr.diff_overlay_png) if cr.diff_overlay_png is not None else None,
+        blobs.put_bytes(cr.diff_overlay_mobile_png) if cr.diff_overlay_mobile_png is not None else None,
+    )
 
 
 def _host(url: str) -> str:
@@ -431,16 +456,13 @@ async def check_monitor(monitor_id: int) -> None:
             snap.title = result.title
             snap.rendered_text = result.rendered_text
             snap.extracted_value = result.extracted_value
-            if result.html:
-                snap.html_blob = blobs.put_text(result.html)
-                snap.dom_hash = _hash(result.html)
-            if result.screenshot_png:
-                snap.screenshot_blob = blobs.put_bytes(result.screenshot_png)
-            if result.screenshot_mobile_png:
-                snap.screenshot_mobile_blob = blobs.put_bytes(result.screenshot_mobile_png)
-            snap.content_hash = _hash(
-                result.rendered_text, result.extracted_value, result.html
-            )
+            # Hash + write blobs off the event loop (sha256 over multi-MB PNGs).
+            _b = await asyncio.to_thread(_store_snapshot_blobs, result)
+            snap.html_blob = _b["html_blob"]
+            snap.dom_hash = _b["dom_hash"]
+            snap.screenshot_blob = _b["screenshot_blob"]
+            snap.screenshot_mobile_blob = _b["screenshot_mobile_blob"]
+            snap.content_hash = _b["content_hash"]
 
             # Auto-populate the monitor name from the page title if left blank
             # (or still on the legacy "Untitled" placeholder).
@@ -524,15 +546,8 @@ async def check_monitor(monitor_id: int) -> None:
                     await session.commit()
                     return
 
-                text_blob = blobs.put_text(change_result.diff_text) if change_result.diff_text else None
-                visual_blob = (
-                    blobs.put_bytes(change_result.diff_overlay_png)
-                    if change_result.diff_overlay_png is not None else None
-                )
-                visual_mobile_blob = (
-                    blobs.put_bytes(change_result.diff_overlay_mobile_png)
-                    if change_result.diff_overlay_mobile_png is not None else None
-                )
+                text_blob, visual_blob, visual_mobile_blob = await asyncio.to_thread(
+                    _store_change_blobs, change_result)
 
                 headline = threshold_msg or (triage.headline if triage else None)
                 change = Change(

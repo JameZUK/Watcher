@@ -23,11 +23,48 @@ from sqlalchemy.orm import (
     mapped_column,
     relationship,
 )
-from sqlalchemy.types import JSON
+from sqlalchemy.types import JSON, TypeDecorator
 
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+class EncryptedJSON(TypeDecorator):
+    """A JSON column whose value is Fernet-encrypted at rest.
+
+    Transparently encrypts on write and decrypts on read, so callers treat it
+    like a normal JSON column. Used for ``LoginFlow.session_state`` — live auth
+    cookies for logged-in sites, as sensitive as the credentials stored beside
+    them. Rows written before encryption existed (plaintext JSON) are read as-is
+    and silently re-encrypted on the next write, so no migration is needed.
+    """
+    impl = Text
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return None
+        import json as _json
+
+        from .config import settings
+        return settings.fernet().encrypt(_json.dumps(value).encode("utf-8")).decode("ascii")
+
+    def process_result_value(self, value, dialect):
+        if value is None or not isinstance(value, str):
+            return value
+        import json as _json
+
+        from .config import settings
+        text = value
+        try:
+            text = settings.fernet().decrypt(value.encode("ascii")).decode("utf-8")
+        except Exception:
+            pass  # legacy plaintext JSON — will be re-encrypted on next write
+        try:
+            return _json.loads(text)
+        except Exception:
+            return None
 
 
 class Base(DeclarativeBase):
@@ -214,7 +251,7 @@ class LoginFlow(Base):
     # Encrypted credential map {name: token}. Decrypted at replay time only.
     encrypted_secrets: Mapped[dict] = mapped_column(JSON, default=dict)
     # Persisted Playwright storage_state (cookies + localStorage), JSON.
-    session_state: Mapped[dict | None] = mapped_column(JSON, default=None)
+    session_state: Mapped[dict | None] = mapped_column(EncryptedJSON, default=None)
     session_valid_until: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )

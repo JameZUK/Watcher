@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from datetime import timedelta
@@ -600,7 +601,7 @@ async def create_monitor(
     monitor = Monitor(user_id=user.id)
     _apply_form(monitor, form)
     _validate_group(monitor, user, groups)
-    url_err = _validate_targets(monitor)
+    url_err = await asyncio.to_thread(_validate_targets, monitor)
     if url_err:
         return _form_response(request, user, None, error=url_err, status=400, groups=groups)
     try:
@@ -644,7 +645,7 @@ async def update_monitor(
     groups = await _user_groups(session, user)
     _apply_form(monitor, form)
     _validate_group(monitor, user, groups)
-    url_err = _validate_targets(monitor)
+    url_err = await asyncio.to_thread(_validate_targets, monitor)
     if url_err:
         return _form_response(request, user, monitor, error=url_err, status=400, groups=groups)
     try:
@@ -838,6 +839,11 @@ async def ai_login_start(
 
     if url_err := validate_monitor_url(target_url):
         return JSONResponse({"ok": False, "error": url_err}, status_code=400)
+    # Same SSRF policy as every other outbound path: the live login agent drives a
+    # real browser at target_url and streams the response back, so a private/internal
+    # target (169.254.169.254, localhost, RFC1918) must be refused unless explicitly allowed.
+    if not settings.allow_private_targets and (url_err := validate_public_url(target_url)):
+        return JSONResponse({"ok": False, "error": url_err}, status_code=400)
 
     sess = ai_login.create_session(monitor.id, user.id, target_url,
                                    {"username": username, "password": password})
@@ -965,10 +971,16 @@ async def ai_login_input(
     et = ev.get("type") if isinstance(ev, dict) else None
     if et in ("click", "dblclick", "move", "drag", "type", "key", "scroll"):
         if et != "move":
-            ai_login._dlog(
-                "input[%s] %s %s qlen=%d", sid[:8], et,
-                {k: ev.get(k) for k in ("fx", "fy", "fx2", "fy2", "text", "key")
-                 if ev.get(k) is not None}, len(s._events))
+            # Never log the typed `text`/`key` — during a manual login that's the
+            # user's password / OTP / email. Coordinates + a redacted length are
+            # enough to debug input relay. (Whole block is gated off by default.)
+            redacted = {k: ev.get(k) for k in ("fx", "fy", "fx2", "fy2")
+                        if ev.get(k) is not None}
+            if ev.get("text") is not None:
+                redacted["text"] = f"<{len(str(ev.get('text')))} chars>"
+            if ev.get("key") is not None:
+                redacted["key"] = "<key>"
+            ai_login._dlog("input[%s] %s %s qlen=%d", sid[:8], et, redacted, len(s._events))
         # collapse consecutive hover moves so they can never flood out real input
         if et == "move" and s._events and s._events[-1].get("type") == "move":
             s._events[-1] = ev

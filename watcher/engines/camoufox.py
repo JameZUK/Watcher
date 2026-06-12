@@ -99,7 +99,11 @@ class CamoufoxRenderer:
                     pass
 
             # --- Mobile pass: separate instance at a mobile window size ---
-            if result is not None and result.ok:
+            # Skip it when the desktop pass was an anti-bot wall (401/403/429):
+            # a second full Camoufox launch would just re-run the anti-bot gauntlet
+            # to screenshot a block page — wasted time and extra block risk.
+            if (result is not None and result.ok
+                    and result.http_status not in (401, 403, 429)):
                 try:
                     mobile_png = await self._capture_mobile(monitor, launch_kwargs, desktop_state)
                     if mobile_png:
