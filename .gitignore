@@ -12,3 +12,6 @@ data/
 
 # Playwright MCP scratch output
 .playwright-mcp/
+
+# Local security assessments — kept out of the (public) repo
+*pentest*
