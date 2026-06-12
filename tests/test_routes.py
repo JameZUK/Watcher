@@ -831,8 +831,9 @@ def test_auto_relogin_recovery_flow():
 
 
 def test_check_monitor_escalates_to_camoufox_on_block():
-    """A non-stealth render blocked by anti-bot retries on Camoufox; if that clears
-    the wall, the monitor is switched to Camoufox and the good render is used."""
+    """A non-stealth render blocked by anti-bot retries on Camoufox and uses the good
+    render — but only switches the monitor's engine permanently after a streak of
+    blocks (a one-off block must NOT migrate it to the heavier stealth engine)."""
     async def _t():
         import watcher.runner as R
         from watcher.auth.security import hash_password
@@ -852,17 +853,26 @@ def test_check_monitor_escalates_to_camoufox_on_block():
                                     rendered_text="real content here", html="<p>hi</p>")
             return RenderResult(ok=False, http_status=403,
                                 error="403 Cloudflare anti-bot protection")
-        R._render = render; R._escalate_cooldown.clear()
+        R._render = render
+        R._escalate_cooldown.clear(); R._escalate_streak.clear()
         try:
+            # first block: escalation used (snapshot ok) but engine NOT yet switched
             await R.check_monitor(mid)
+            async with SessionLocal() as s:
+                m = (await s.execute(select(Monitor).where(Monitor.id == mid))).scalar_one()
+                snap = (await s.execute(select(Snapshot).where(Snapshot.monitor_id == mid)
+                        .order_by(Snapshot.id.desc()))).scalars().first()
+            assert snap.status == SnapshotStatus.ok and m.engine == Engine.chromium
+
+            # after the streak threshold, it switches permanently
+            for _ in range(R._ESCALATE_PERSIST_AFTER - 1):
+                await R.check_monitor(mid)
+            async with SessionLocal() as s:
+                m = (await s.execute(select(Monitor).where(Monitor.id == mid))).scalar_one()
+            assert m.engine == Engine.camoufox
         finally:
             R._render = orig
-        async with SessionLocal() as s:
-            m = (await s.execute(select(Monitor).where(Monitor.id == mid))).scalar_one()
-            snap = (await s.execute(select(Snapshot).where(Snapshot.monitor_id == mid)
-                    .order_by(Snapshot.id.desc()))).scalars().first()
-        assert m.engine == Engine.camoufox                 # switched permanently
-        assert snap.status == SnapshotStatus.ok            # used the Camoufox render
+            R._escalate_streak.clear()
         return True
 
     assert _run(_t)

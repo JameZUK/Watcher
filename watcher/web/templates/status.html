@@ -16,7 +16,9 @@
     {{ stat('Monitors', summary.monitors, summary.enabled ~ ' enabled · ' ~ summary.paused ~ ' paused') }}
     {{ stat('Failing now', summary.failing, 'consecutive failures > 0') }}
     {{ stat('AI calls', summary.ai_used ~ ' / ' ~ summary.ai_limit, 'last ' ~ summary.ai_window_min ~ ' min') }}
+    {% if summary.blob_mb is defined %}
     {{ stat('Snapshot store', summary.blob_mb ~ ' MB', summary.blob_count ~ ' blobs on disk') }}
+    {% endif %}
   </div>
 
   <!-- Per-monitor health -->

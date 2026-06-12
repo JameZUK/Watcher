@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import case, func, select
@@ -33,6 +34,19 @@ def _blob_store_stats() -> tuple[int, int]:
                     except OSError:
                         pass
     return n, total
+
+
+# The whole-store walk is expensive; cache it so /status doesn't re-walk per load.
+_BLOB_TTL = 300.0
+_blob_cache: dict = {"at": 0.0, "count": 0, "bytes": 0}
+
+
+async def _cached_blob_stats() -> tuple[int, int]:
+    now = time.monotonic()
+    if now - _blob_cache["at"] > _BLOB_TTL:
+        count, total = await asyncio.to_thread(_blob_store_stats)
+        _blob_cache.update(at=now, count=count, bytes=total)
+    return _blob_cache["count"], _blob_cache["bytes"]
 
 
 @router.get("/status")
@@ -72,7 +86,6 @@ async def status_page(
             "max_ms": max_ms,
         })
 
-    blob_count, blob_bytes = await asyncio.to_thread(_blob_store_stats)
     ai_used = ratelimit_count(f"ai:{user.id}", window=settings.ai_window_seconds)
 
     summary = {
@@ -80,12 +93,16 @@ async def status_page(
         "enabled": sum(1 for m in monitors if m.enabled),
         "paused": sum(1 for m in monitors if not m.enabled),
         "failing": sum(1 for m in monitors if (m.consecutive_failures or 0) > 0),
-        "blob_count": blob_count,
-        "blob_mb": round(blob_bytes / 1_048_576, 1),
         "ai_used": ai_used,
         "ai_limit": settings.ai_max_calls,
         "ai_window_min": settings.ai_window_seconds // 60,
     }
+    # The blob store is shared across all users, so only show its (cached) size to
+    # admins — a normal user shouldn't see the deployment's total disk footprint.
+    if user.is_admin:
+        blob_count, blob_bytes = await _cached_blob_stats()
+        summary["blob_count"] = blob_count
+        summary["blob_mb"] = round(blob_bytes / 1_048_576, 1)
     return templates.TemplateResponse(
         request, "status.html",
         {"user": user, "rows": monitor_rows, "summary": summary},

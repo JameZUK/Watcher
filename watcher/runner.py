@@ -45,6 +45,10 @@ _relogin_tasks: set = set()   # strong refs so recovery tasks aren't GC'd mid-ru
 # After a stealth (Camoufox) escalation that ALSO got blocked, skip re-escalating
 # this monitor for a while so a hard-walled site doesn't double-render every check.
 _escalate_cooldown: dict[int, float] = {}
+# Consecutive blocked-then-cleared-by-Camoufox checks before we PERMANENTLY switch a
+# monitor's engine — so a transient block doesn't migrate it onto the stealth slots.
+_escalate_streak: dict[int, int] = {}
+_ESCALATE_PERSIST_AFTER = 3
 
 
 def _relogin_blocked_reason(monitor, flow, app) -> str | None:
@@ -578,13 +582,25 @@ async def check_monitor(monitor_id: int) -> None:
                     and time.monotonic() >= _escalate_cooldown.get(monitor.id, 0.0)):
                 alt = await _render(monitor, engine=Engine.camoufox)
                 if alt.ok and not _blocked_reason(alt):
-                    log.info("monitor %s: %s on %s — cleared on Camoufox; switching engine",
-                             monitor.id, monitor.engine.value, monitor.engine.value)
+                    # Use the good Camoufox render this cycle, but only SWITCH the
+                    # monitor's engine permanently after it's been blocked-then-cleared
+                    # several checks in a row — a one-off block (a transient challenge)
+                    # shouldn't migrate it onto the scarce/heavier stealth slots.
                     result = alt
-                    monitor.engine = Engine.camoufox
                     _escalate_cooldown.pop(monitor.id, None)
+                    streak = _escalate_streak.get(monitor.id, 0) + 1
+                    if streak >= _ESCALATE_PERSIST_AFTER:
+                        log.info("monitor %s: blocked on %s %dx — switching to Camoufox",
+                                 monitor.id, monitor.engine.value, streak)
+                        monitor.engine = Engine.camoufox
+                        _escalate_streak.pop(monitor.id, None)
+                    else:
+                        _escalate_streak[monitor.id] = streak
                 else:
                     _escalate_cooldown[monitor.id] = time.monotonic() + 3600
+                    _escalate_streak.pop(monitor.id, None)
+            elif not _blocked_reason(result):
+                _escalate_streak.pop(monitor.id, None)   # clean render → reset the streak
 
             snap = Snapshot(monitor_id=monitor.id, render_ms=result.render_ms)
             monitor.last_checked_at = utcnow()
