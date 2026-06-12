@@ -148,7 +148,7 @@
     {% set ns = namespace(items=[]) %}
     {% for s in snapshots|reverse %}
       {% if s.screenshot_blob %}
-        {% set ns.items = ns.items + [ {'id': s.id, 'ago': (s.taken_at|timeago), 'changed': (s.id in csids), 'mobile': (s.screenshot_mobile_blob is not none), 'blocked': (s.status.value == 'error')} ] %}
+        {% set ns.items = ns.items + [ {'id': s.id, 'ago': (s.taken_at|timeago), 'changed': (s.id in csids), 'mobile': (s.screenshot_mobile_blob is not none), 'sections': ((s.screenshot_sections|length) or (1 if s.screenshot_blob else 0)), 'msections': ((s.screenshot_mobile_sections|length) or (1 if s.screenshot_mobile_blob else 0)), 'blocked': (s.status.value == 'error')} ] %}
       {% endif %}
     {% endfor %}
     <section class="glass rounded-2xl overflow-hidden" x-data='timeMachine({{ ns.items|tojson }}, {{ monitor.id }})'>
@@ -175,14 +175,18 @@
                  scrolls inside it, instead of rendering a wall of screenshot.
                  Mobile captures render at their true ~380px width, framed. -->
             <div x-ref="stage" class="overflow-y-auto overscroll-contain max-h-[65vh] flex justify-center scroll-thin">
-              <img :src="imgUrl()" @click="$store.lb.open(imgUrl())"
-                   @load="$refs.stage.scrollTop = 0; $nextTick(() => scrollable = $refs.stage.scrollHeight > $refs.stage.clientHeight + 4)"
-                   class="block cursor-zoom-in self-start"
-                   :class="$store.device.isMobile && frames[i] && frames[i].mobile ? 'w-[380px] max-w-full my-5 rounded-2xl border border-white/12 shadow-xl' : 'w-full'">
+              <!-- The whole page is stored as full-width SECTIONS; stack them contiguously
+                   to reconstruct it (framed as a phone for mobile captures). -->
+              <div :class="onMobile() ? 'w-[380px] max-w-full my-5 rounded-2xl overflow-hidden border border-white/12 shadow-xl' : 'w-full'">
+                <template x-for="k in count()" :key="frames[i].id + (onMobile() ? '-m-' : '-d-') + k">
+                  <img :src="imgUrl(k-1)" @click="$store.lb.open(imgUrl(k-1))" @load="onSectionLoad(k)"
+                       class="block w-full cursor-zoom-in">
+                </template>
+              </div>
             </div>
             <span class="absolute top-3 left-3 pill pill-amber backdrop-blur" x-show="frames[i] && frames[i].changed && !frames[i].blocked">change detected</span>
             <span class="absolute top-3 left-3 pill backdrop-blur" style="background:rgba(239,68,68,.18);border-color:rgba(239,68,68,.4);color:#fca5a5;" x-show="frames[i] && frames[i].blocked" x-cloak>⚠ blocked / challenge page</span>
-            <span class="absolute top-3 right-3 pill backdrop-blur" x-show="$store.device.isMobile && frames[i] && !frames[i].mobile" x-cloak>desktop only · no mobile capture yet</span>
+            <span class="absolute top-3 right-3 pill backdrop-blur" x-show="$store.device.isMobile && frames[i] && !frames[i].msections" x-cloak>desktop only · no mobile capture yet</span>
             <!-- "more below" hint, only when the capture overflows the stage -->
             <div class="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/55 to-transparent" x-show="scrollable" x-cloak></div>
             <button type="button" @click="$store.lb.open(imgUrl())" class="absolute bottom-3 right-3 btn btn-ghost !px-2.5 !py-1.5 backdrop-blur" aria-label="Zoom to full size">
@@ -492,9 +496,20 @@ function timeMachine(frames, mid){return {
   i: (frames && frames.length) ? frames.length - 1 : 0,
   scrollable: false,   // true when the current capture overflows the stage
   confirmPurge: false, // delete-older confirmation panel open?
-  imgUrl(){
+  // Show the mobile capture only when this frame actually has mobile sections;
+  // otherwise fall back to the desktop sections (with a "desktop only" badge).
+  onMobile(){ const f = this.frames[this.i]; return !!(this.$store.device.isMobile && f && f.msections); },
+  // Number of whole-page sections to stack for the current frame + device.
+  count(){ const f = this.frames[this.i]; if (!f) return 0;
+    return this.onMobile() ? f.msections : (f.sections || 0); },
+  imgUrl(k){
     if (!this.frames.length) return '';
-    return `/monitors/${this.mid}/snapshots/${this.frames[this.i].id}/image${this.$store.device.q()}`;
+    const q = this.onMobile() ? '?v=mobile' : '';
+    return `/monitors/${this.mid}/snapshots/${this.frames[this.i].id}/image${q}${q ? '&' : '?'}section=${k || 0}`;
+  },
+  onSectionLoad(k){
+    if (k === 1) this.$refs.stage.scrollTop = 0;   // reset to the top on the first section
+    this.$nextTick(() => this.scrollable = this.$refs.stage.scrollHeight > this.$refs.stage.clientHeight + 4);
   },
   get label(){ return this.frames.length ? this.frames[this.i].ago : '—'; },
   // POST the in-view snapshot id; the server deletes everything older than it.

@@ -46,8 +46,11 @@ class RenderResult:
     html: str | None = None
     rendered_text: str | None = None
     extracted_value: str | None = None
-    screenshot_png: bytes | None = None          # desktop viewport
-    screenshot_mobile_png: bytes | None = None   # mobile viewport
+    screenshot_png: bytes | None = None          # desktop viewport (top section)
+    screenshot_mobile_png: bytes | None = None   # mobile viewport (top section)
+    # Whole-page captures sliced into readable, full-width sections (top→bottom).
+    screenshot_sections: list | None = None
+    screenshot_mobile_sections: list | None = None
     content_type: str | None = None
     render_ms: int | None = None
     # Updated browser storage_state if a login flow ran (for session persistence).

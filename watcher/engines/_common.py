@@ -522,6 +522,14 @@ async def mobile_screenshot_or_none(page) -> bytes | None:
     return await full_page_png(page)
 
 
+async def mobile_sections_or_none(page) -> list[bytes] | None:
+    """Like `mobile_screenshot_or_none`, but returns the whole-page sections (or None
+    if the page looks like a challenge interstitial)."""
+    if _looks_blocked(None, await _body_text(page)):
+        return None
+    return await full_page_sections(page)
+
+
 async def navigate(page, monitor: Monitor):
     """Navigate to the monitor URL, tolerating a wait condition that never settles.
 
@@ -611,59 +619,109 @@ async def warm_up_if_blocked(page, response, monitor: Monitor):
         return None
 
 
+# WebP rejects any image with a side longer than this — so even after the megapixel
+# downscale, a very long (document-like) page must be clamped to it or the encode fails.
+_WEBP_MAX_DIM = 16383
+
+
+async def full_page_sections(page) -> list[bytes]:
+    """Capture the WHOLE page as an ordered list of readable, full-width sections.
+
+    The page is captured with `full_page=True` (which correctly scrolls/stitches long
+    pages — a `clip` without it is silently constrained to the viewport, which used to
+    truncate any page taller than the cap to one screen), then sliced top-to-bottom
+    into bands of `screenshot_section_height_px` CSS px. Each band is downscaled to the
+    megapixel budget + WebP's dimension limit and encoded — so the full page is kept,
+    each piece stays sharp at full width, and nothing is cut off. Stacking the sections
+    reconstructs the whole page. Bytes may be WebP (Pillow reads either)."""
+    raw = await page.screenshot(full_page=True, type="png")
+    try:
+        dpr = float(await page.evaluate("() => window.devicePixelRatio || 1"))
+    except Exception:
+        dpr = 1.0
+    return await asyncio.to_thread(_slice_sections, raw, max(dpr, 1.0))
+
+
 async def full_page_png(page) -> bytes:
-    """Capture the FULL page as a compact, readable image.
-
-    The whole page is captured, then downscaled to a megapixel budget (the long page
-    is shrunk uniformly, never truncated) and encoded as WebP — far smaller than PNG
-    for document-like pages while staying readable. A height SAFETY clip
-    (max_screenshot_height_px, ~30000 px — past any real page) only guards against a
-    pathological infinite-scroll capture spiking memory. (The result field is still
-    named *_png for back-compat; the bytes may be WebP — Pillow reads either, so the
-    visual diff is unaffected.)"""
-    cap = settings.max_screenshot_height_px
-    h = 0
-    if cap:
-        try:
-            h = int(await page.evaluate(
-                "() => Math.ceil(document.documentElement.scrollHeight)"))
-        except Exception:
-            h = 0
-    if cap and h > cap:
-        try:
-            w = int(await page.evaluate(
-                "() => Math.ceil(document.documentElement.scrollWidth)")) or 1280
-        except Exception:
-            w = 1280
-        raw = await page.screenshot(type="png", clip={"x": 0, "y": 0, "width": w, "height": cap})
-    else:
-        raw = await page.screenshot(full_page=True, type="png")
-    return await asyncio.to_thread(_compress_screenshot, raw)
+    """The single top section of the full page — back-compat for callers/thumbnails
+    that want one image. See `full_page_sections` for the whole-page capture."""
+    secs = await full_page_sections(page)
+    return secs[0] if secs else b""
 
 
-def _compress_screenshot(png: bytes) -> bytes:
-    """Downscale a captured PNG to the megapixel budget + re-encode as WebP. CPU-
-    bound (run off the event loop). Falls back to the original bytes on any error or
-    when compression is disabled (max_screenshot_megapixels = 0)."""
-    budget_mp = settings.max_screenshot_megapixels
-    if not budget_mp:
-        return png
+def _encode_webp(im) -> bytes:
+    """Downscale a PIL image to the megapixel budget, clamp to WebP's dimension limit,
+    and encode as WebP bytes."""
+    from io import BytesIO
+
+    from PIL import Image
+    w, h = im.width, im.height
+    scale = 1.0
+    budget = (settings.max_screenshot_megapixels or 0) * 1_000_000
+    if budget and w * h > budget:             # retina/long captures → fit the budget
+        scale = (budget / (w * h)) ** 0.5
+    longest = max(w, h)
+    if longest * scale > _WEBP_MAX_DIM:       # …and stay within WebP's dimension limit
+        scale = min(scale, _WEBP_MAX_DIM / longest)
+    if scale < 1.0:
+        im = im.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.LANCZOS)
+    out = BytesIO()
+    im.convert("RGB").save(out, format="WEBP",
+                           quality=settings.screenshot_webp_quality, method=4)
+    return out.getvalue()
+
+
+def _slice_sections(png: bytes, dpr: float) -> list[bytes]:
+    """Slice a full-page PNG into readable, full-width WebP sections (CPU-bound — run
+    off the event loop). Falls back to [png] on any error."""
     try:
         from io import BytesIO
 
         from PIL import Image
+        # Our own screenshots, not untrusted input — Pillow's decompression-bomb guard
+        # is a false positive on tall document captures.
+        Image.MAX_IMAGE_PIXELS = None
         im = Image.open(BytesIO(png))
         im.load()
-        budget = budget_mp * 1_000_000
-        mp = im.width * im.height
-        if mp > budget:                       # retina/long captures → fit the budget
-            scale = (budget / mp) ** 0.5
-            im = im.resize((max(1, int(im.width * scale)), max(1, int(im.height * scale))),
-                           Image.LANCZOS)
-        out = BytesIO()
-        im.convert("RGB").save(out, format="WEBP",
-                               quality=settings.screenshot_webp_quality, method=4)
-        return out.getvalue()
+    except Exception:
+        return [png]
+    try:
+        # Overall safety crop (memory bound) before slicing.
+        hard_cap = int((settings.max_screenshot_height_px or 0) * dpr)
+        if hard_cap and im.height > hard_cap:
+            im = im.crop((0, 0, im.width, hard_cap))
+        band = int((settings.screenshot_section_height_px or 0) * dpr)
+        max_n = settings.max_screenshot_sections or 1
+        if band <= 0 or im.height <= band:    # short page → one section
+            return [_encode_webp(im)]
+        sections: list[bytes] = []
+        y = 0
+        while y < im.height and len(sections) < max_n:
+            sections.append(_encode_webp(im.crop((0, y, im.width, min(y + band, im.height)))))
+            y += band
+        return sections or [_encode_webp(im)]
+    except Exception:
+        try:
+            return [_encode_webp(im)]
+        except Exception:
+            return [png]
+
+
+# Back-compat alias: a few call sites and tests import this name.
+def _compress_screenshot(png: bytes, max_height_px: int = 0) -> bytes:
+    """Single-image compress (top section). Retained for back-compat."""
+    from io import BytesIO
+
+    from PIL import Image
+    if not settings.max_screenshot_megapixels:
+        return png
+    try:
+        Image.MAX_IMAGE_PIXELS = None
+        im = Image.open(BytesIO(png))
+        im.load()
+        if max_height_px and im.height > max_height_px:
+            im = im.crop((0, 0, im.width, max_height_px))
+        return _encode_webp(im)
     except Exception:
         return png
 
@@ -760,10 +818,12 @@ async def capture(page, response, monitor: Monitor, mobile: bool = True) -> Rend
     # the full-page screenshot isn't a tall mostly-blank image.
     await reveal_full_content(page, monitor)
 
-    # Full-page screenshot at the desktop viewport (PNG).
+    # Full-page screenshot at the desktop viewport, sliced into readable sections.
     try:
-        result.screenshot_png = await full_page_png(page)
+        result.screenshot_sections = await full_page_sections(page)
+        result.screenshot_png = result.screenshot_sections[0] if result.screenshot_sections else None
     except Exception:
+        result.screenshot_sections = None
         result.screenshot_png = None
 
     # Second full-page screenshot at a mobile viewport, for device-appropriate
@@ -777,8 +837,11 @@ async def capture(page, response, monitor: Monitor, mobile: bool = True) -> Rend
         )
         await page.wait_for_timeout(450)
         await reveal_full_content(page, monitor)   # re-reveal at the mobile size
-        result.screenshot_mobile_png = await full_page_png(page)
+        result.screenshot_mobile_sections = await full_page_sections(page)
+        result.screenshot_mobile_png = (
+            result.screenshot_mobile_sections[0] if result.screenshot_mobile_sections else None)
     except Exception:
+        result.screenshot_mobile_sections = None
         result.screenshot_mobile_png = None
     finally:
         try:

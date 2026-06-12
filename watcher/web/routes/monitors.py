@@ -1170,7 +1170,8 @@ async def snapshot_image(
     request: Request,
     monitor_id: int,
     snapshot_id: int,
-    v: str | None = None,  # "mobile" for the mobile-viewport capture
+    v: str | None = None,    # "mobile" for the mobile-viewport capture
+    section: int = 0,        # which whole-page section (0 = top); -1 not allowed
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
@@ -1178,9 +1179,14 @@ async def snapshot_image(
     snap = await session.get(Snapshot, snapshot_id)
     if not snap or snap.monitor_id != monitor_id:
         raise HTTPException(404)
-    # Prefer the requested variant; fall back to the desktop capture.
-    key = snap.screenshot_mobile_blob if v == "mobile" else snap.screenshot_blob
-    key = key or snap.screenshot_blob or snap.screenshot_mobile_blob
+    mobile = v == "mobile"
+    sections = (snap.screenshot_mobile_sections if mobile else snap.screenshot_sections) or []
+    if sections and 0 <= section < len(sections):
+        key = sections[section]
+    else:
+        # Legacy snapshots (no sections) or out-of-range → the primary blob.
+        key = snap.screenshot_mobile_blob if mobile else snap.screenshot_blob
+        key = key or snap.screenshot_blob or snap.screenshot_mobile_blob
     return _serve_blob_image(request, key)
 
 

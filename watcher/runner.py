@@ -388,6 +388,8 @@ async def _fail(session, monitor, snap, *, error, http_status, title=None, resul
             _b = await asyncio.to_thread(_store_snapshot_blobs, result)
             snap.screenshot_blob = _b["screenshot_blob"]
             snap.screenshot_mobile_blob = _b["screenshot_mobile_blob"]
+            snap.screenshot_sections = _b["screenshot_sections"]
+            snap.screenshot_mobile_sections = _b["screenshot_mobile_sections"]
             snap.html_blob = _b["html_blob"]
             snap.dom_hash = _b["dom_hash"]
             if result.title and not snap.title:
@@ -451,14 +453,25 @@ def _store_snapshot_blobs(result) -> dict:
     sha256 over multi-MB screenshots plus file writes is CPU/IO-bound, so this is
     meant to run via ``asyncio.to_thread`` and keep the event loop free."""
     out: dict = {"html_blob": None, "dom_hash": None, "screenshot_blob": None,
-                 "screenshot_mobile_blob": None}
+                 "screenshot_mobile_blob": None, "screenshot_sections": [],
+                 "screenshot_mobile_sections": []}
     if result.html:
         out["html_blob"] = blobs.put_text(result.html)
         out["dom_hash"] = _hash(result.html)
-    if result.screenshot_png:
-        out["screenshot_blob"] = blobs.put_bytes(result.screenshot_png)
-    if getattr(result, "screenshot_mobile_png", None):
-        out["screenshot_mobile_blob"] = blobs.put_bytes(result.screenshot_mobile_png)
+    # Whole-page sections (fall back to the single legacy screenshot if an engine
+    # didn't produce sections). The first section doubles as the primary blob used by
+    # thumbnails, the dashboard, RSS and the visual diff.
+    desktop_secs = getattr(result, "screenshot_sections", None) or (
+        [result.screenshot_png] if result.screenshot_png else [])
+    if desktop_secs:
+        out["screenshot_sections"] = [blobs.put_bytes(b) for b in desktop_secs if b]
+        out["screenshot_blob"] = out["screenshot_sections"][0] if out["screenshot_sections"] else None
+    mobile_secs = getattr(result, "screenshot_mobile_sections", None) or (
+        [result.screenshot_mobile_png] if getattr(result, "screenshot_mobile_png", None) else [])
+    if mobile_secs:
+        out["screenshot_mobile_sections"] = [blobs.put_bytes(b) for b in mobile_secs if b]
+        out["screenshot_mobile_blob"] = (
+            out["screenshot_mobile_sections"][0] if out["screenshot_mobile_sections"] else None)
     out["content_hash"] = _hash(getattr(result, "rendered_text", None),
                                 getattr(result, "extracted_value", None), result.html)
     return out
@@ -664,6 +677,8 @@ async def check_monitor(monitor_id: int) -> None:
             snap.dom_hash = _b["dom_hash"]
             snap.screenshot_blob = _b["screenshot_blob"]
             snap.screenshot_mobile_blob = _b["screenshot_mobile_blob"]
+            snap.screenshot_sections = _b["screenshot_sections"]
+            snap.screenshot_mobile_sections = _b["screenshot_mobile_sections"]
             snap.content_hash = _b["content_hash"]
 
             # Auto-populate the monitor name from the page title if left blank

@@ -308,8 +308,11 @@ class Snapshot(Base):
 
     # Content-addressed blob keys (sha256) resolved via storage.blobs
     html_blob: Mapped[str | None] = mapped_column(String(64), default=None)
-    screenshot_blob: Mapped[str | None] = mapped_column(String(64), default=None)         # desktop
-    screenshot_mobile_blob: Mapped[str | None] = mapped_column(String(64), default=None)  # mobile
+    screenshot_blob: Mapped[str | None] = mapped_column(String(64), default=None)         # desktop (top section)
+    screenshot_mobile_blob: Mapped[str | None] = mapped_column(String(64), default=None)  # mobile (top section)
+    # Whole-page captures as ordered blob-key lists (full-width sections, top→bottom).
+    screenshot_sections: Mapped[list] = mapped_column(JSON, default=list)
+    screenshot_mobile_sections: Mapped[list] = mapped_column(JSON, default=list)
 
     render_ms: Mapped[int | None] = mapped_column(Integer, default=None)
 

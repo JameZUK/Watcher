@@ -356,26 +356,100 @@ def test_image_media_type_detection(tmp_path):
         assert _image_media_type(p) == mt
 
 
-def test_full_page_png_caps_tall_pages():
-    """A page taller than the cap is clipped to the cap height; a short page is
-    captured full_page (so the worst-case megapixel count stays bounded)."""
-    import asyncio
+def test_visual_diff_bounds_mismatched_canvas():
+    """Diffing two captures with very different aspect ratios (a tall section vs a
+    legacy full-page capture) must stay within the diff megapixel budget — otherwise
+    _fit's padded canvas balloons and the pure-Python pixelmatch blows the detect
+    timeout (the cause of The Register's 'detect() aborted')."""
+    from io import BytesIO
+
+    from PIL import Image
     from watcher.config import settings
+    from watcher.detection import visual
+
+    def png(w, h):
+        b = BytesIO(); Image.new("RGB", (w, h), "white").save(b, format="PNG"); return b.getvalue()
+
+    vd = visual.diff_images(png(700, 16000), png(1800, 11000))   # 1:23 vs 1:6
+    overlay = Image.open(BytesIO(vd.overlay_png))
+    assert overlay.width * overlay.height <= settings.max_diff_megapixels * 1_000_000 * 1.05
+
+
+def test_slice_sections_tiles_whole_page():
+    """A long page is sliced into multiple readable, full-width WebP sections that
+    together cover the whole page; a short page yields a single section; the section
+    count is capped so a near-infinite page can't balloon storage."""
+    from io import BytesIO
+
+    from PIL import Image
+    from watcher.config import settings
+    from watcher.engines._common import _WEBP_MAX_DIM, _slice_sections
+
+    sec_css = settings.screenshot_section_height_px
+    dpr = 2.0
+    band = int(sec_css * dpr)
+
+    def png_of(h):
+        buf = BytesIO(); Image.new("RGB", (780, h), "white").save(buf, format="PNG")
+        return buf.getvalue()
+
+    # Short page (< one band) → exactly one section.
+    one = _slice_sections(png_of(band // 2), dpr)
+    assert len(one) == 1 and Image.open(BytesIO(one[0])).format == "WEBP"
+
+    # ~3.5 bands tall → 4 sections, each within WebP's limit.
+    many = _slice_sections(png_of(int(band * 3.5)), dpr)
+    assert len(many) == 4
+    for b in many:
+        im = Image.open(BytesIO(b))
+        assert im.format == "WEBP" and max(im.width, im.height) <= _WEBP_MAX_DIM
+
+    # Absurdly tall → capped at max_screenshot_sections (no runaway).
+    capped = _slice_sections(png_of(band * 50), dpr)
+    assert len(capped) == settings.max_screenshot_sections
+
+
+def test_full_page_png_uses_full_page_capture():
+    """The capture must always use full_page=True — a clip without it is constrained
+    to the viewport and silently truncates any page taller than the cap to one screen
+    (the bug that left The Register's mobile preview a single viewport tall)."""
+    import asyncio
     from watcher.engines._common import full_page_png
-    cap = settings.max_screenshot_height_px
     calls = []
 
     class Page:
-        def __init__(self, h): self.h = h
         async def evaluate(self, js):
-            return self.h if "scrollHeight" in js else 1280
+            return 2          # devicePixelRatio
         async def screenshot(self, **kw):
             calls.append(kw); return b"png"
 
-    asyncio.run(full_page_png(Page(cap + 50000)))          # very tall → clipped
-    assert calls[-1].get("clip", {}).get("height") == cap and "full_page" not in calls[-1]
-    asyncio.run(full_page_png(Page(500)))                  # short → full page
-    assert calls[-1].get("full_page") is True
+    asyncio.run(full_page_png(Page()))
+    assert calls[-1].get("full_page") is True and "clip" not in calls[-1]
+
+
+def test_compress_screenshot_handles_huge_tall_pages():
+    """A capture that's both over the megapixel budget AND longer than WebP's 16383px
+    limit (and big enough to trip Pillow's decompression-bomb guard) must still encode
+    to a valid, bounded WebP — not silently fall back to the raw multi-MB PNG."""
+    from io import BytesIO
+
+    from PIL import Image
+    from watcher.engines._common import _WEBP_MAX_DIM, _compress_screenshot
+
+    # 2560 x 40000 ≈ 102 MP, aspect 1:15.6 — both limits exceeded at once.
+    buf = BytesIO()
+    Image.new("RGB", (2560, 40000), "white").save(buf, format="PNG")
+    out = _compress_screenshot(buf.getvalue())            # no height crop
+    im = Image.open(BytesIO(out))
+    assert im.format == "WEBP"
+    assert max(im.width, im.height) <= _WEBP_MAX_DIM       # within WebP's limit
+    assert im.width * im.height <= 20 * 1_000_000 * 1.05   # within the megapixel budget
+
+    # With a height crop, only the top is kept (the rest of the page is dropped),
+    # so the encoded image is far shorter than the original 40000px.
+    cropped = _compress_screenshot(buf.getvalue(), max_height_px=8000)
+    ic = Image.open(BytesIO(cropped))
+    assert ic.format == "WEBP" and ic.height <= 8000 and ic.width >= 2000  # near full width
 
 
 def test_mobile_screenshot_keeps_low_text_pages():

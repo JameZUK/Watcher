@@ -15,7 +15,7 @@ from ._common import (
     do_wait,
     hide_banners,
     install_consent_autodismiss,
-    mobile_screenshot_or_none,
+    mobile_sections_or_none,
     navigate,
     replay_login,
     reveal_full_content,
@@ -114,9 +114,10 @@ class PlaywrightRenderer:
                 # Mobile preview in a phone-emulated context (best-effort).
                 if result is not None and result.ok and result.screenshot_png:
                     try:
-                        mpng = await self._capture_mobile(browser, monitor, mobile_state)
-                        if mpng:
-                            result.screenshot_mobile_png = mpng
+                        msecs = await self._capture_mobile(browser, monitor, mobile_state)
+                        if msecs:
+                            result.screenshot_mobile_sections = msecs
+                            result.screenshot_mobile_png = msecs[0]
                     except Exception:
                         pass
 
@@ -138,10 +139,10 @@ class PlaywrightRenderer:
                 render_ms=int((time.monotonic() - start) * 1000),
             )
 
-    async def _capture_mobile(self, browser, monitor: Monitor, storage_state: dict | None) -> bytes | None:
-        """Capture a mobile-viewport screenshot in a phone-emulated context
-        (mobile UA + touch where supported), re-navigating so UA-sensitive sites
-        serve their real mobile layout. None if it can't get usable content."""
+    async def _capture_mobile(self, browser, monitor: Monitor, storage_state: dict | None) -> list[bytes] | None:
+        """Capture a mobile-viewport screenshot (whole page, as sections) in a
+        phone-emulated context (mobile UA + touch where supported), re-navigating so
+        UA-sensitive sites serve their real mobile layout. None if no usable content."""
         base: dict = {
             "viewport": {"width": settings.mobile_viewport_width,
                          "height": settings.mobile_viewport_height},
@@ -179,7 +180,7 @@ class PlaywrightRenderer:
             await reveal_full_content(page, monitor)
             # Capture unless it's a challenge interstitial (not on innerText alone —
             # SPA/shadow-DOM pages read as low-text even when fully rendered).
-            return await mobile_screenshot_or_none(page)
+            return await mobile_sections_or_none(page)
         finally:
             try:
                 await context.close()

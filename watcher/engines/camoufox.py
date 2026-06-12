@@ -23,7 +23,7 @@ from ._common import (
     do_wait,
     hide_banners,
     install_consent_autodismiss,
-    mobile_screenshot_or_none,
+    mobile_sections_or_none,
     navigate,
     replay_login,
     reveal_full_content,
@@ -105,9 +105,10 @@ class CamoufoxRenderer:
             if (result is not None and result.ok
                     and result.http_status not in (401, 403, 429)):
                 try:
-                    mobile_png = await self._capture_mobile(monitor, launch_kwargs, desktop_state)
-                    if mobile_png:
-                        result.screenshot_mobile_png = mobile_png
+                    mobile_secs = await self._capture_mobile(monitor, launch_kwargs, desktop_state)
+                    if mobile_secs:
+                        result.screenshot_mobile_sections = mobile_secs
+                        result.screenshot_mobile_png = mobile_secs[0]
                 except Exception:
                     pass
 
@@ -128,8 +129,9 @@ class CamoufoxRenderer:
 
     async def _capture_mobile(
         self, monitor: Monitor, launch_kwargs: dict, storage_state: dict | None
-    ) -> bytes | None:
-        """Capture a mobile-viewport screenshot via a dedicated Camoufox window.
+    ) -> list[bytes] | None:
+        """Capture a mobile-viewport screenshot (whole page, as sections) via a
+        dedicated Camoufox window.
 
         Camoufox honours the render size only when the size is fixed at launch
         (`window=`) AND the context uses `no_viewport=True`.
@@ -155,10 +157,10 @@ class CamoufoxRenderer:
 
             # Capture unless it's a challenge interstitial (not on innerText alone —
             # SPA/shadow-DOM pages read as low-text even when fully rendered).
-            png = await mobile_screenshot_or_none(page)
+            secs = await mobile_sections_or_none(page)
 
             try:
                 await context.close()
             except Exception:
                 pass
-            return png
+            return secs

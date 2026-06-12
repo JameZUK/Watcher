@@ -103,15 +103,19 @@ class Settings(BaseSettings):
     screenshot_scale: int = Field(default=2)        # device pixel ratio (retina-crisp)
     mobile_viewport_width: int = Field(default=390)   # iPhone-class logical width
     mobile_viewport_height: int = Field(default=844)
-    # SAFETY clip on a full-page capture (top N CSS px). This is NOT for size — the
-    # megapixel budget below bounds the stored size by downscaling the WHOLE page
-    # uniformly (never truncating). It only stops a pathological infinite-scroll page
-    # (tens of thousands of px) from spiking memory during the capture/decode. 30000
-    # CSS px (~30 screens) is past any real page, so the full page is always captured.
-    max_screenshot_height_px: int = Field(default=30000)
-    # The whole captured page is downscaled to fit this many megapixels and saved as
-    # WebP (far smaller than PNG for document-like pages; text stays readable). The
-    # full page is preserved — long pages are shrunk, not cut off. 0 = native PNG.
+    # The whole page is captured, then sliced into readable, full-width SECTIONS
+    # stacked top-to-bottom (instead of one image cropped to the top, or one squished
+    # to fit). Each section is this many CSS px tall (~10 screens) — small enough to
+    # stay sharp at full width and within WebP's 16383px dimension limit.
+    screenshot_section_height_px: int = Field(default=8000)
+    # Cap on sections per capture, so a near-infinite page can't balloon storage.
+    # section_height × max_sections is the deepest the capture reaches (logged if hit).
+    max_screenshot_sections: int = Field(default=8)
+    # A SAFETY clip on the FULL capture height (top N CSS px) before slicing — only
+    # guards against a pathological infinite-scroll page spiking memory during decode.
+    max_screenshot_height_px: int = Field(default=80000)
+    # Each section is downscaled to fit this many megapixels and saved as WebP (far
+    # smaller than PNG for document-like pages; text stays readable). 0 = native PNG.
     max_screenshot_megapixels: float = Field(default=20.0)
     screenshot_webp_quality: int = Field(default=85)   # high enough to keep text crisp
 
