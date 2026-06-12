@@ -78,7 +78,7 @@ schedule → render (chosen engine) → capture snapshot → diff vs last snapsh
 - **Change** — monitor_id, from_snapshot_id, to_snapshot_id, detected_at,
   change_type, diff_summary, diff_blob/path, magnitude (% or char count), acknowledged
 - **LoginFlow** — monitor_id, steps (ordered navigate/fill/click/wait),
-  encrypted credentials, persisted session/cookies
+  encrypted credentials, persisted session/cookies (also Fernet-encrypted at rest)
 - **Notification** — change_id, channel, status, sent_at
 - **PushSubscription** — user_id, endpoint, keys
 - **Settings** — per-user defaults, webhook endpoints, retention, proxies
@@ -176,8 +176,8 @@ diff/image actually shows and never to invent values it cannot verify.
 
 - Full user accounts; argon2/bcrypt password hashing; secure session cookies; CSRF
   on forms
-- **Encrypted credential storage** (Fernet) for login flows — requires an app
-  secret key (env)
+- **Encrypted-at-rest storage** (Fernet) for login-flow credentials *and* captured
+  session cookies — requires an app secret key (env)
 - SSRF awareness: fetching arbitrary URLs is the product's purpose, but guard
   against internal-network targets when exposed; run browsers sandboxed
 

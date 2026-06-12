@@ -2,6 +2,69 @@
 
 All notable changes to Watcher are documented here. Dates are ISO-8601.
 
+## 2026-06-12 — Anti-bot warm-up, history pruning & a security/efficiency hardening pass
+
+### Added
+- **Automatic anti-bot warm-up.** Some sites (Cloudflare, and Glassdoor's review
+  pagination) reject a cold navigation straight to a deep URL with an empty cookie
+  jar — a real browser first banks a clearance cookie from the site root. If the
+  first navigation looks blocked (HTTP 401/403/429 or a known challenge page), the
+  engine now visits the origin to pick up that cookie, then retries the target with
+  a same-site referer. Zero cost on normal sites (only fires on a detected block),
+  works on both the Playwright and Camoufox engines.
+- **Delete older history.** A subtle control in the history scrubber removes every
+  snapshot + change record older than the render you're viewing (which becomes the
+  new oldest entry), behind an inline confirmation. Reference-safe (a surviving
+  change whose baseline was pruned is detached, not orphaned) and owner-scoped.
+- **Optional verbose login tracing.** `WATCHER_AI_LOGIN_DEBUG` (off by default)
+  gates per-event login traces; useful only when diagnosing a stuck login.
+
+### Security
+- **Session cookies encrypted at rest.** `LoginFlow.session_state` (live auth
+  cookies for logged-in sites) is now Fernet-encrypted via a transparent
+  `EncryptedJSON` column type — as sensitive as the credentials already encrypted
+  beside it. Existing plaintext rows auto-migrate on the next write; an
+  undecryptable session (changed key/corruption) is logged, not silently dropped.
+- **SSRF gate on the live login agent.** `ai-login/start` drives a real browser at
+  the target and streams it back, but only checked the URL scheme — it now also
+  enforces the public-IP policy every other outbound path uses (no
+  `169.254.169.254` / localhost / RFC1918 unless `WATCHER_ALLOW_PRIVATE_TARGETS`).
+- **Debug trace no longer logs typed text.** The manual `/input` trace redacted to
+  `<N chars>` so enabling login debug can't dump a password / OTP / email.
+
+### Performance
+- **Heavy work moved off the event loop.** Snapshot/change blob hashing + writes
+  (sha256 over multi-MB screenshots) and the create/update DNS validation are now
+  offloaded via `asyncio.to_thread`, so a slow target can't stall request serving.
+- **Group pages de-N+1'd.** The dashboard's group summaries and the group detail
+  view replaced per-member queries with batched window-function queries (latest
+  value, latest change, price series).
+- **Camoufox skips the second (mobile) browser launch when the desktop pass was a
+  block (401/403/429)** — no point re-running the anti-bot gauntlet to screenshot a
+  wall.
+
+### Fixed
+- **Glassdoor "login loop" diagnosed.** Review pagination (page 2+) is
+  login-gated while page 1 is public; pointing a monitor at page 1 + the warm-up
+  above renders it with no login. The earlier loop was a paginated URL hitting the
+  sign-in wall on every check, not a stealth failure.
+- **Snappier manual login control.** One screenshot per input batch instead of one
+  per click (a burst no longer backs the queue up to seconds of lag), a higher
+  click-vs-drag threshold so a click on a small target stays a click, and a hard
+  cap on the input backlog.
+- **Dashboard no longer crashes on a price tie with a missing label.** Group
+  "cheapest" now compares on the numeric value only (comparing the whole
+  `(value, label)` tuple could hit `None < str` and TypeError the render).
+- **Email notifications survive a newline in the subject.** A model/page-influenced
+  headline with a newline previously made the message silently fail to send; the
+  subject is now flattened.
+
+### Docs
+- README gained a full **Docker deployment (production)** guide (key generation,
+  data/backups, TLS reverse proxy + loopback rebind, SSRF egress hardening,
+  updating, resources), a **privacy / "what leaves the box"** note, and corrected
+  the network-binding and Subresource-Integrity descriptions.
+
 ## 2026-06-11 — AI-assisted login (with captcha solving)
 
 Turn "This page requires login" into an automated, watch-it-happen flow: you
