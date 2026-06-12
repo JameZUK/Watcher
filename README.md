@@ -158,6 +158,8 @@ All settings are environment variables prefixed `WATCHER_` (see [`.env.example`]
 | `WATCHER_RENDER_TIMEOUT_SECONDS` / `_DETECT_TIMEOUT_SECONDS` | `45` / `20` | Hard ceilings per render / per diff. |
 | `WATCHER_MAX_RENDER_CONCURRENCY` / `_MAX_CAMOUFOX_CONCURRENCY` | `3` / `2` | Concurrent renders overall / for (RAM-heavy) Camoufox. |
 | `WATCHER_MAX_SCREENSHOT_HEIGHT_PX` | `8000` | Cap a full-page capture's height (CSS px) so a long page can't make a 100+ MP image. |
+| `WATCHER_MAX_SCREENSHOT_MEGAPIXELS` / `_WEBP_QUALITY` | `12` / `85` | Stored screenshots are downscaled to this budget and saved as **WebP** (≈ PNG/10–50 for documents; text stays readable). `0` keeps native PNG. |
+| `WATCHER_MAX_DIFF_MEGAPIXELS` | `2` | Downscale screenshots before the (pure-Python) pixel diff — keeps it fast + under the detect timeout. |
 | `WATCHER_AUTO_RELOGIN_COOLDOWN_SECONDS` | `21600` | Wait after a failed automatic AI re-login before retrying (6 h). |
 | `WATCHER_VAPID_PUBLIC_KEY` / `_PRIVATE_KEY` | — | Enable Web Push. Generate with `pip install py-vapid && vapid --gen`. |
 

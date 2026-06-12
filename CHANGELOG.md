@@ -44,17 +44,21 @@ All notable changes to Watcher are documented here. Dates are ISO-8601.
   (`WATCHER_MAX_CAMOUFOX_CONCURRENCY`, default 2).
 - **Retention pruning in SQL** — one windowed `DELETE` instead of loading every
   snapshot row per monitor into Python.
-- **Cap full-page screenshot height** (`WATCHER_MAX_SCREENSHOT_HEIGHT_PX`, default
-  8000 CSS px) — an infinite-scroll page no longer produces a 100+ MP capture.
+- **Screenshots stored as size-capped WebP.** Captures are downscaled to a
+  megapixel budget (`WATCHER_MAX_SCREENSHOT_MEGAPIXELS`, default 12 — retina is
+  overkill for storage, text stays readable) and re-encoded as **WebP** instead of
+  PNG. A real page went ~24 MB PNG → ~0.5 MB WebP (~47×). Also caps the captured
+  height (`WATCHER_MAX_SCREENSHOT_HEIGHT_PX`, default 8000 CSS px).
 
 ### Fixed
 - **Checks failing with `Page.goto timeout … networkidle`.** `networkidle` never
   settles on ad/tracker-heavy sites, so a strict wait timed out even though the page
   loaded fine. Navigation now falls back to `domcontentloaded` and captures what
   loaded instead of failing the whole check.
-- **Change detection silently timing out on very large screenshots** — the visual
-  diff now downscales more aggressively (`WATCHER_MAX_DIFF_MEGAPIXELS` default
-  lowered to 6) so pixelmatch stays under the detect ceiling.
+- **Change detection silently timing out (`detect() aborted`) on long pages.** The
+  pure-Python pixelmatch diff at 6 MP took ~18 s (tripping the detect ceiling) and
+  produced spurious diffs from scale mismatches; `WATCHER_MAX_DIFF_MEGAPIXELS` is now
+  2 (~5 s, accurate — layout/image changes; text is caught by the text diff).
 
 ## 2026-06-12 — Anti-bot warm-up, history pruning & a security/efficiency hardening pass
 
