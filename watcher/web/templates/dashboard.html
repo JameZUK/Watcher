@@ -15,6 +15,48 @@
   </a>
 </div>
 
+{# Fleet summary headline — what's changed across ALL sites (server-rendered from
+   stored change summaries; not affected by the tag/search filter below). #}
+{% if summary.total %}
+<section class="glass rounded-2xl p-4 sm:p-5 mb-6">
+  <div class="flex items-start gap-3">
+    <span class="h-10 w-10 shrink-0 rounded-xl flex items-center justify-center {{ 'bg-brand-500/15' if summary.changes else 'bg-emerald-500/10' }}">
+      {% if summary.changes %}
+      <svg viewBox="0 0 24 24" class="h-5 w-5 text-brand-300" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
+      {% else %}
+      <svg viewBox="0 0 24 24" class="h-5 w-5 text-emerald-300" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6 9 17l-5-5"/></svg>
+      {% endif %}
+    </span>
+    <div class="min-w-0 flex-1">
+      <div class="flex items-center gap-2 flex-wrap">
+        {% if summary.changes %}
+        <p class="font-semibold text-white">{{ summary.changes }} change{{ 's' if summary.changes != 1 }} across {{ summary.sites }} site{{ 's' if summary.sites != 1 }}</p>
+        {% if summary.high %}<span class="pill" style="background:rgba(244,63,94,.18);color:#fda4af;">{{ summary.high }} high</span>{% endif %}
+        {% if summary.medium %}<span class="pill pill-amber">{{ summary.medium }} medium</span>{% endif %}
+        {% else %}
+        <p class="font-semibold text-white">All quiet — nothing changed across {{ summary.total }} site{{ 's' if summary.total != 1 }}</p>
+        {% endif %}
+        <span class="text-xs text-slate-500">· last {{ summary.days }} days</span>
+      </div>
+      {% if summary.top %}
+      <div class="mt-2 flex flex-col gap-1.5">
+        {% for t in summary.top %}
+        <a href="/monitors/{{ t.monitor_id }}" class="group flex items-baseline gap-2 text-sm min-w-0">
+          <span class="h-1.5 w-1.5 rounded-full shrink-0 self-center {{ 'bg-rose-400' if t.importance == 'high' else ('bg-amber-400' if t.importance == 'medium' else 'bg-slate-500') }}"></span>
+          <span class="text-slate-300 group-hover:text-white truncate">{{ t.headline }}</span>
+          <span class="text-slate-500 shrink-0 text-xs">· {{ t.monitor }} · {{ t.at|timeago }}</span>
+        </a>
+        {% endfor %}
+      </div>
+      {% endif %}
+      <p class="text-xs text-slate-500 mt-2">
+        {{ summary.total }} monitor{{ 's' if summary.total != 1 }}{% if summary.failing %} · <span class="text-rose-300">{{ summary.failing }} failing</span>{% endif %}{% if summary.paused %} · <span class="text-slate-400">{{ summary.paused }} paused</span>{% endif %}{% if not summary.failing and not summary.paused %} · all healthy{% endif %}
+      </p>
+    </div>
+  </div>
+</section>
+{% endif %}
+
 {% set imported = request.query_params.get('imported')|int(0) %}
 {% if imported %}
 <div class="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-2.5 text-sm text-emerald-200 mb-4">Imported {{ imported }} monitor(s).</div>

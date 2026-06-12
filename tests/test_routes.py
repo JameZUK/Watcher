@@ -667,6 +667,38 @@ def test_auto_pause_after_failures():
 
 # --- consent / annoyance-blocking form wiring ------------------------------
 
+def test_dashboard_fleet_summary():
+    """The dashboard shows a fleet-wide summary headline across all sites: the recent
+    change count, the importance breakdown, and the top change headlines."""
+    async def _t():
+        from watcher.config import settings
+        from watcher.main import create_app
+        from watcher.models import (Change, DetectionMode, Monitor, Snapshot,
+                                     SnapshotStatus, User)
+        settings.registration_open = True
+        transport = httpx.ASGITransport(app=create_app())
+        email = _email()
+        async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                     headers={"Origin": "http://t"}, follow_redirects=True) as c:
+            await c.post("/register", data={"email": email, "password": "password123"})
+            async with SessionLocal() as s:
+                u = (await s.execute(select(User).where(User.email == email))).scalar_one()
+                m = Monitor(user_id=u.id, url="https://a.test", name="Alpha")
+                s.add(m); await s.flush()
+                snap = Snapshot(monitor_id=m.id, status=SnapshotStatus.ok)
+                s.add(snap); await s.flush()
+                s.add(Change(monitor_id=m.id, to_snapshot_id=snap.id, change_type=DetectionMode.auto,
+                             ai_headline="Price dropped to £199", ai_importance="high"))
+                await s.commit()
+            r = (await c.get("/")).text
+            assert "1 change across 1 site" in r       # cross-site summary
+            assert "Price dropped to £199" in r        # top headline
+            assert "1 high" in r                        # importance breakdown
+        return True
+
+    assert _run(_t)
+
+
 def test_monitor_detail_changes_headline():
     """The detail page shows a top-of-page changes headline: the latest change's
     stored summary, or 'No changes' / 'No history' states."""

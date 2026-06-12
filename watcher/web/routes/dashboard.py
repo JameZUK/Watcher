@@ -2,16 +2,62 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...auth.users import get_current_user
 from ...db import get_session
-from ...models import Change, Group, Monitor, Snapshot, SnapshotStatus, User
+from ...models import Change, Group, Monitor, Snapshot, SnapshotStatus, User, utcnow
 from .. import templates
 
 router = APIRouter()
+
+# How far back the dashboard summary headline looks.
+_SUMMARY_DAYS = 7
+
+
+async def _fleet_summary(session, user, monitors) -> dict:
+    """A one-glance summary across ALL the user's sites: recent change count + the
+    sites/importance breakdown + the top few headlines + fleet health. Built from
+    the already-stored change summaries — no AI call, no per-monitor work."""
+    since = utcnow() - timedelta(days=_SUMMARY_DAYS)
+    recent = (
+        select(Change).join(Monitor, Monitor.id == Change.monitor_id)
+        .where(Monitor.user_id == user.id, Change.detected_at >= since)
+    )
+    changes = (await session.execute(
+        select(func.count()).select_from(recent.subquery()))).scalar_one()
+    sites = (await session.execute(
+        select(func.count(func.distinct(Change.monitor_id)))
+        .join(Monitor, Monitor.id == Change.monitor_id)
+        .where(Monitor.user_id == user.id, Change.detected_at >= since))).scalar_one()
+    imp = dict((await session.execute(
+        select(Change.ai_importance, func.count(Change.id))
+        .join(Monitor, Monitor.id == Change.monitor_id)
+        .where(Monitor.user_id == user.id, Change.detected_at >= since)
+        .group_by(Change.ai_importance))).all())
+    top_rows = (await session.execute(
+        select(Change, Monitor.name, Monitor.id)
+        .join(Monitor, Monitor.id == Change.monitor_id)
+        .where(Monitor.user_id == user.id, Change.detected_at >= since)
+        .order_by(Change.detected_at.desc()).limit(5))).all()
+    top = [{"headline": ch.ai_headline or ch.summary or "Change detected",
+            "monitor": mname or "", "monitor_id": mid,
+            "importance": ch.ai_importance, "at": ch.detected_at} for ch, mname, mid in top_rows]
+    return {
+        "days": _SUMMARY_DAYS,
+        "changes": changes,
+        "sites": sites,
+        "high": imp.get("high", 0),
+        "medium": imp.get("medium", 0),
+        "top": top,
+        "total": len(monitors),
+        "failing": sum(1 for m in monitors if (m.consecutive_failures or 0) > 0),
+        "paused": sum(1 for m in monitors if not m.enabled),
+    }
 
 
 async def card_data(session, monitors):
@@ -106,6 +152,7 @@ async def dashboard(
             "active_tag": tag,
             "query": q or "",
             "groups": await _group_summaries(session, user),
+            "summary": await _fleet_summary(session, user, all_monitors),
         },
     )
 
