@@ -313,10 +313,17 @@ async def _render(monitor, engine=None) -> RenderResult:
 
     Cancellation propagates into the engine's `async with`, tearing the browser
     down on timeout."""
+    import contextlib
     from .auth.ai_login import engine_error_message
+    # Camoufox is much heavier (RAM) than the Playwright browsers, so cap its
+    # concurrency separately (nested inside the global render semaphore) to keep a
+    # batch of stealth checks from OOM-ing the box.
+    eff = engine or monitor.engine
+    slot = _camoufox_semaphore if eff == Engine.camoufox else contextlib.nullcontext()
     try:
-        result = await asyncio.wait_for(render_monitor(monitor, engine=engine),
-                                        timeout=settings.render_timeout_seconds + 30)
+        async with slot:
+            result = await asyncio.wait_for(render_monitor(monitor, engine=engine),
+                                            timeout=settings.render_timeout_seconds + 30)
     except asyncio.TimeoutError:
         return RenderResult(ok=False, error="Render timed out", http_status=None)
     except Exception as exc:  # noqa: BLE001
@@ -400,8 +407,10 @@ def _threshold_crossing(monitor, prev_val, new_val, label):
         return f"Value dropped {'below' if below else 'above'} {t:g} — now {shown}"
     return None
 
-# Cap concurrent browser renders to protect a single box.
+# Cap concurrent browser renders to protect a single box. Camoufox gets a tighter
+# nested cap (it's far more RAM-hungry than the Playwright browsers).
 _semaphore = asyncio.Semaphore(settings.max_render_concurrency)
+_camoufox_semaphore = asyncio.Semaphore(settings.max_camoufox_concurrency)
 
 
 def _hash(*parts: str | None) -> str:

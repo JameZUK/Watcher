@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import timedelta, timezone
+from datetime import timedelta
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, or_, select, union
 
 from ..config import settings
 from ..db import SessionLocal
@@ -44,40 +44,24 @@ async def prune() -> int:
                     await session.execute(delete(Change).where(Change.id.in_(stale[i:i + 500])))
             await session.commit()
 
-        # Snapshot ids referenced by changes must be preserved.
-        referenced: set[int] = set()
-        for col in (Change.from_snapshot_id, Change.to_snapshot_id):
-            referenced.update(
-                k for k in (await session.execute(select(col))).scalars().all() if k is not None
-            )
-
-        to_delete: list[int] = []
-        for mid in monitor_ids:
-            # Only id + taken_at — avoid materialising large text/blob columns.
-            rows = (
-                await session.execute(
-                    select(Snapshot.id, Snapshot.taken_at)
-                    .where(Snapshot.monitor_id == mid)
-                    .order_by(Snapshot.taken_at.desc())
-                )
-            ).all()
-            for idx, (sid, taken_at) in enumerate(rows):
-                if sid in referenced:
-                    continue
-                # SQLite can hand back naive datetimes — treat as UTC so the
-                # comparison against the tz-aware cutoff doesn't raise.
-                if taken_at is not None and taken_at.tzinfo is None:
-                    taken_at = taken_at.replace(tzinfo=timezone.utc)
-                if (taken_at is not None and taken_at < cutoff) or idx >= settings.retention_max_snapshots:
-                    to_delete.append(sid)
-
-        if to_delete:
-            # Bulk delete in chunks (SQLite caps bound parameters).
-            for i in range(0, len(to_delete), 500):
-                chunk = to_delete[i:i + 500]
-                await session.execute(delete(Snapshot).where(Snapshot.id.in_(chunk)))
-                removed += len(chunk)
-            await session.commit()
+        # Prune snapshots in ONE statement: rank each monitor's snapshots newest-
+        # first and delete those beyond the keep-N cap OR older than the cutoff,
+        # EXCEPT any still referenced by a Change (change-point snapshots). The DB
+        # does the filtering — no per-monitor full scan into Python.
+        referenced = union(
+            select(Change.from_snapshot_id).where(Change.from_snapshot_id.is_not(None)),
+            select(Change.to_snapshot_id).where(Change.to_snapshot_id.is_not(None)),
+        )
+        rn = func.row_number().over(
+            partition_by=Snapshot.monitor_id, order_by=Snapshot.taken_at.desc()).label("rn")
+        ranked = select(Snapshot.id, Snapshot.taken_at, rn).subquery()
+        victims = select(ranked.c.id).where(
+            or_(ranked.c.rn > settings.retention_max_snapshots, ranked.c.taken_at < cutoff),
+            ranked.c.id.not_in(select(referenced.subquery())),
+        )
+        result = await session.execute(delete(Snapshot).where(Snapshot.id.in_(victims)))
+        removed = result.rowcount or 0
+        await session.commit()
 
     await _gc_blobs()
     return removed

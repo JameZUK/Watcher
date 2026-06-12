@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     default_interval_seconds: int = Field(default=60 * 60)  # 1 hr default
     schedule_jitter_seconds: int = Field(default=60)
     max_render_concurrency: int = Field(default=3)
+    max_camoufox_concurrency: int = Field(default=2)    # tighter nested cap (Camoufox is RAM-heavy)
     render_timeout_seconds: int = Field(default=45)
 
     # --- Reliability ---

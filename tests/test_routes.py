@@ -667,6 +667,43 @@ def test_auto_pause_after_failures():
 
 # --- consent / annoyance-blocking form wiring ------------------------------
 
+def test_retention_prune_keeps_n_and_referenced():
+    """SQL prune keeps the newest-N snapshots + any referenced by a change, and
+    deletes the rest (here: the unreferenced middle ones)."""
+    async def _t():
+        from datetime import datetime, timedelta, timezone
+        from watcher.config import settings
+        from watcher.auth.security import hash_password
+        from watcher.models import Change, DetectionMode, Monitor, Snapshot, User
+        from watcher.storage import retention
+        keep0, days0 = settings.retention_max_snapshots, settings.retention_max_days
+        settings.retention_max_snapshots = 3
+        settings.retention_max_days = 365000          # no age-based deletion in this test
+        try:
+            base = datetime(2020, 1, 1, tzinfo=timezone.utc)
+            async with SessionLocal() as s:
+                u = User(email=_email(), password_hash=hash_password("x")); s.add(u); await s.flush()
+                m = Monitor(user_id=u.id, url="https://x.test", name="R"); s.add(m); await s.flush()
+                snaps = [Snapshot(monitor_id=m.id, taken_at=base + timedelta(hours=k)) for k in range(6)]
+                s.add_all(snaps); await s.flush()
+                s.add(Change(monitor_id=m.id, to_snapshot_id=snaps[0].id,   # pin the OLDEST
+                             change_type=DetectionMode.auto, detected_at=base))
+                await s.commit()
+                mid = m.id
+                newest3 = {snaps[5].id, snaps[4].id, snaps[3].id}
+                pinned = snaps[0].id
+            await retention.prune()
+            async with SessionLocal() as s:
+                left = set((await s.execute(
+                    select(Snapshot.id).where(Snapshot.monitor_id == mid))).scalars().all())
+            assert left == newest3 | {pinned}, left   # middle two unreferenced ones pruned
+        finally:
+            settings.retention_max_snapshots, settings.retention_max_days = keep0, days0
+        return True
+
+    assert _run(_t)
+
+
 def test_auto_relogin_toggle_persists():
     """The per-monitor auto-relogin opt-in round-trips through create (checked) and
     edit (unchecked => off) into the Monitor row."""
