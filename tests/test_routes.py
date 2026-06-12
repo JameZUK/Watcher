@@ -822,6 +822,37 @@ def test_monitor_detail_changes_headline():
     assert _run(_t)
 
 
+def test_monitor_detail_renders_with_legacy_null_sections():
+    """A snapshot from before the section columns existed has NULL (None) section
+    lists, not []. The detail page's history builder must tolerate that — a bare
+    `|length` on None 500'd the page ('object of type NoneType has no len()')."""
+    async def _t():
+        from watcher.config import settings
+        from watcher.main import create_app
+        from watcher.models import Monitor, Snapshot, SnapshotStatus, User
+        settings.registration_open = True
+        transport = httpx.ASGITransport(app=create_app())
+        email = _email()
+        async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                     headers={"Origin": "http://t"}, follow_redirects=True) as c:
+            await c.post("/register", data={"email": email, "password": "password123"})
+            async with SessionLocal() as s:
+                u = (await s.execute(select(User).where(User.email == email))).scalar_one()
+                m = Monitor(user_id=u.id, url="https://a.test", name="Legacy"); s.add(m); await s.flush()
+                snap = Snapshot(monitor_id=m.id, status=SnapshotStatus.ok,
+                                screenshot_blob="deadbeefcafe")    # a stored capture exists
+                # Simulate a pre-migration row: section lists are NULL, not [].
+                snap.screenshot_sections = None
+                snap.screenshot_mobile_sections = None
+                s.add(snap); await s.commit()
+                mid = m.id
+            r = await c.get(f"/monitors/{mid}")
+            assert r.status_code == 200       # was a 500 before the guard
+        return True
+
+    assert _run(_t)
+
+
 def test_status_page():
     """The /status page renders per-monitor success rate + summary for the user."""
     async def _t():

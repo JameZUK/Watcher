@@ -148,7 +148,7 @@
     {% set ns = namespace(items=[]) %}
     {% for s in snapshots|reverse %}
       {% if s.screenshot_blob %}
-        {% set ns.items = ns.items + [ {'id': s.id, 'ago': (s.taken_at|timeago), 'changed': (s.id in csids), 'mobile': (s.screenshot_mobile_blob is not none), 'sections': ((s.screenshot_sections|length) or (1 if s.screenshot_blob else 0)), 'msections': ((s.screenshot_mobile_sections|length) or (1 if s.screenshot_mobile_blob else 0)), 'blocked': (s.status.value == 'error')} ] %}
+        {% set ns.items = ns.items + [ {'id': s.id, 'ago': (s.taken_at|timeago), 'changed': (s.id in csids), 'mobile': (s.screenshot_mobile_blob is not none), 'sections': ((s.screenshot_sections or [])|length or (1 if s.screenshot_blob else 0)), 'msections': ((s.screenshot_mobile_sections or [])|length or (1 if s.screenshot_mobile_blob else 0)), 'blocked': (s.status.value == 'error')} ] %}
       {% endif %}
     {% endfor %}
     <section class="glass rounded-2xl overflow-hidden" x-data='timeMachine({{ ns.items|tojson }}, {{ monitor.id }})'>
