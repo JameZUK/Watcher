@@ -137,6 +137,7 @@ def _apply_form(monitor: Monitor, form) -> None:
     proxy = (form.get("proxy") or "").strip()
     proxy_scheme = proxy.split("://", 1)[0].lower() if "://" in proxy else ""
     monitor.proxy = proxy if proxy_scheme in ("http", "https", "socks5", "socks5h", "socks4") else None
+    monitor.use_proxy_pool = _bool(form, "use_proxy_pool")
     monitor.block_annoyances = _bool(form, "block_annoyances")
     # Optional manual override: extra selectors to click after load (accept a
     # cookie wall, close a modal, tick a captcha box). Applied in order, best-effort.

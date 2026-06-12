@@ -78,6 +78,7 @@ async def settings_page(
                 "smtp_user": app.smtp_user or "", "smtp_from": app.smtp_from or "",
                 "smtp_tls": app.smtp_tls, "smtp_pass_set": bool(app.smtp_pass_enc),
                 "telegram_token_set": bool(app.telegram_token_enc), "ntfy_server": app.ntfy_server,
+                "proxy_pool": app.proxy_pool or "",
             },
         },
     )
@@ -142,6 +143,7 @@ async def save_transports(
     if not settings.allow_private_targets and validate_public_url(ntfy_server):
         return RedirectResponse("/settings?error=ntfy_url", status_code=303)
     app.ntfy_server = ntfy_server
+    app.proxy_pool = (form.get("proxy_pool") or "").strip() or None
     if (form.get("smtp_pass") or "").strip():
         set_smtp_password(app, form["smtp_pass"].strip())
     if (form.get("telegram_token") or "").strip():

@@ -173,6 +173,7 @@ class Monitor(Base):
     viewport_height: Mapped[int] = mapped_column(Integer, default=800)
     actions: Mapped[list] = mapped_column(JSON, default=list)  # scroll/click/dismiss
     proxy: Mapped[str | None] = mapped_column(String(512), default=None)
+    use_proxy_pool: Mapped[bool] = mapped_column(Boolean, default=False)  # use a pooled proxy when none set
     block_annoyances: Mapped[bool] = mapped_column(Boolean, default=True)  # block ads + hide cookie banners
     consent_clicks: Mapped[list] = mapped_column(JSON, default=list)  # CSS selectors to click after load (accept/dismiss)
     consent_ai_tried: Mapped[bool] = mapped_column(Boolean, default=False)  # AI dismiss-selector learning attempted once (cost bound)
@@ -385,3 +386,6 @@ class AppSetting(Base):
     smtp_tls: Mapped[bool] = mapped_column(Boolean, default=True)
     telegram_token_enc: Mapped[str | None] = mapped_column(Text, default=None)
     ntfy_server: Mapped[str] = mapped_column(String(255), default="https://ntfy.sh")
+    # Shared proxy pool — one proxy URL per line; health-checked and round-robined
+    # to monitors that opt in (use_proxy_pool) and have no explicit proxy.
+    proxy_pool: Mapped[str | None] = mapped_column(Text, default=None)

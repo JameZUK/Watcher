@@ -102,6 +102,11 @@
         <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Telegram bot token</label><input type="password" name="telegram_token" autocomplete="new-password" placeholder="{{ '•••• set (blank = keep)' if tx.telegram_token_set else '123456:ABC-DEF' }}" class="field"></div>
         <div><label class="block text-sm font-medium text-slate-300 mb-1.5">ntfy server</label><input name="ntfy_server" value="{{ tx.ntfy_server }}" placeholder="https://ntfy.sh" class="field"></div>
       </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-300 mb-1.5">Proxy pool <span class="text-slate-500 font-normal">· one proxy URL per line</span></label>
+        <textarea name="proxy_pool" rows="3" placeholder="http://user:pass@host:port&#10;socks5://host:port" class="field font-mono text-xs">{{ tx.proxy_pool }}</textarea>
+        <p class="text-xs text-slate-500 mt-1">Health-checked every ~10 min and round-robined to monitors that enable “use the shared proxy pool”.</p>
+      </div>
       <button class="btn btn-primary text-sm">Save transports</button>
     </form>
   </section>

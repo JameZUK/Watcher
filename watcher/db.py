@@ -66,7 +66,7 @@ _ADDED_COLUMNS = {
         "tags": "JSON", "adaptive_interval": "BOOLEAN DEFAULT 0",
         "group_id": "INTEGER", "block_annoyances": "BOOLEAN DEFAULT 1",
         "consent_clicks": "JSON", "consent_ai_tried": "BOOLEAN DEFAULT 0",
-        "auto_relogin_enabled": "BOOLEAN DEFAULT 0",
+        "auto_relogin_enabled": "BOOLEAN DEFAULT 0", "use_proxy_pool": "BOOLEAN DEFAULT 0",
     },
     "login_flows": {
         "relogin_cooldown_until": "TIMESTAMP",
@@ -80,7 +80,7 @@ _ADDED_COLUMNS = {
         "smtp_host": "VARCHAR(255)", "smtp_port": "INTEGER DEFAULT 587", "smtp_user": "VARCHAR(255)",
         "smtp_pass_enc": "TEXT", "smtp_from": "VARCHAR(255)", "smtp_tls": "BOOLEAN DEFAULT 1",
         "telegram_token_enc": "TEXT", "ntfy_server": "VARCHAR(255) DEFAULT 'https://ntfy.sh'",
-        "ai_base_url": "VARCHAR(255)",
+        "ai_base_url": "VARCHAR(255)", "proxy_pool": "TEXT",
     },
 }
 

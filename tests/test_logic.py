@@ -254,6 +254,23 @@ def test_encrypted_json_roundtrip_and_legacy_fallback():
     assert t.process_result_value(None, None) is None
 
 
+def test_proxy_pool_parse_and_pick():
+    """parse_pool keeps only scheme-valid proxies; effective_proxy prefers the
+    monitor's own, else round-robins a healthy pooled one, else None."""
+    import watcher.proxy_pool as P
+    assert P.parse_pool("http://h:1\nnope\n  \nsocks5://h:2\nftp://x:3") == [
+        "http://h:1", "socks5://h:2"]
+    P._pool = ["http://a:1", "http://b:2"]
+    P._healthy = {"http://a:1": True, "http://b:2": False}
+    P._rebuild_cycle()
+    assert P.effective_proxy(N(proxy="http://own:9", use_proxy_pool=True)) == "http://own:9"
+    assert P.effective_proxy(N(proxy=None, use_proxy_pool=True)) == "http://a:1"   # only healthy
+    assert P.effective_proxy(N(proxy=None, use_proxy_pool=False)) is None
+    assert P.healthy_count() == (1, 2)
+    P._pool, P._healthy = [], {}; P._rebuild_cycle()
+    assert P.effective_proxy(N(proxy=None, use_proxy_pool=True)) is None           # empty pool
+
+
 def test_totp_verify_step():
     """verify_step returns the matched step for a fresh code (enabling single-use)
     and None for wrong/short codes."""

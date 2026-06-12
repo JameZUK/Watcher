@@ -23,6 +23,7 @@ from ._common import (
     warm_up_if_blocked,
 )
 from .base import RenderResult
+from ..proxy_pool import effective_proxy
 
 # Mobile preview is captured in a dedicated, UA-emulated context (not a viewport
 # resize) so sites that serve different markup to phones — Amazon, etc. — render
@@ -45,7 +46,8 @@ class PlaywrightRenderer:
         flow = monitor.login_flow
         reuse_session = session_is_valid(flow)
 
-        proxy = {"server": monitor.proxy} if monitor.proxy else None
+        _proxy = effective_proxy(monitor)
+        proxy = {"server": _proxy} if _proxy else None
 
         # Captured before teardown so a close-time driver crash can't mask it.
         result: RenderResult | None = None
@@ -146,8 +148,9 @@ class PlaywrightRenderer:
             "user_agent": _MOBILE_UA,
             "device_scale_factor": settings.screenshot_scale,
         }
-        if monitor.proxy:
-            base["proxy"] = {"server": monitor.proxy}
+        _mproxy = effective_proxy(monitor)
+        if _mproxy:
+            base["proxy"] = {"server": _mproxy}
         if storage_state:
             base["storage_state"] = storage_state
 

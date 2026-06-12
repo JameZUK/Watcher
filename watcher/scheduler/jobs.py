@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 from apscheduler.jobstores.base import JobLookupError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -22,6 +23,7 @@ scheduler = AsyncIOScheduler(timezone="UTC")
 
 _PRUNE_JOB = "retention-prune"
 _DIGEST_JOB = "notification-digest"
+_PROXY_JOB = "proxy-health"
 
 
 async def _run_digests() -> None:
@@ -32,6 +34,21 @@ async def _run_digests() -> None:
             log.info("sent %d notification digest(s)", n)
     except Exception:  # noqa: BLE001
         log.exception("digest run failed")
+
+
+async def _run_proxy_health() -> None:
+    """Refresh + re-test the admin-configured proxy pool (no-op when empty)."""
+    try:
+        from ..app_settings import get_app_settings
+        from ..proxy_pool import health_check, healthy_count
+        async with SessionLocal() as session:
+            app = await get_app_settings(session)
+        await health_check(app)
+        h, t = healthy_count()
+        if t:
+            log.info("proxy pool: %d/%d healthy", h, t)
+    except Exception:  # noqa: BLE001
+        log.exception("proxy health check failed")
 
 
 def _job_id(monitor_id: int) -> str:
@@ -132,6 +149,13 @@ def start_scheduler() -> None:
         scheduler.add_job(
             _run_digests, trigger=IntervalTrigger(hours=1), id=_DIGEST_JOB,
             replace_existing=True, max_instances=1, coalesce=True,
+        )
+        # Proxy-pool health: re-test configured proxies every 10 min (cheap/no-op
+        # when the pool is empty), and once now so they're usable from the start.
+        scheduler.add_job(
+            _run_proxy_health, trigger=IntervalTrigger(minutes=10), id=_PROXY_JOB,
+            replace_existing=True, max_instances=1, coalesce=True,
+            next_run_time=datetime.now(timezone.utc),
         )
         scheduler.start()
 

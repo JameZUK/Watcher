@@ -31,6 +31,7 @@ from ._common import (
     warm_up_if_blocked,
 )
 from .base import RenderResult
+from ..proxy_pool import effective_proxy
 
 
 class CamoufoxRenderer:
@@ -49,8 +50,9 @@ class CamoufoxRenderer:
         reuse_session = session_is_valid(flow)
 
         launch_kwargs: dict = {"headless": True, "humanize": True}
-        if monitor.proxy:
-            launch_kwargs["proxy"] = {"server": monitor.proxy}
+        _proxy = effective_proxy(monitor)
+        if _proxy:
+            launch_kwargs["proxy"] = {"server": _proxy}
 
         result: RenderResult | None = None
         desktop_state: dict | None = None
