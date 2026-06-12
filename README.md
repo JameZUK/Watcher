@@ -31,7 +31,7 @@
 - **Value tracking & trends** — extract a numeric value (price, stock count, rating) each check, chart it over time, and fire **threshold alerts** ("tell me when it drops below £300").
 - **Notifications** — in-app **inbox**, **Web Push**, **HMAC-signed webhooks**, **Email/SMTP**, **Telegram**, **Discord**, and **ntfy** — with **hourly digests** and **quiet hours** so non-urgent changes batch up instead of pinging you at 3am.
 - **Reliability** — per-check render/detect timeouts, retries, **auto-pause** after repeated failures (with a recovery alert), and **adaptive intervals** that speed up on active pages and back off on quiet ones.
-- **Anti-bot & authenticated sites** — Camoufox stealth rendering; blocked / challenge pages (DataDome, Cloudflare, PerimeterX, …) are detected and surfaced instead of silently failing; **paste Cookie Editor JSON** to reuse a logged-in session or clear a bot check; recorded **login flows** and **per-monitor proxies**. Credentials and sessions are **encrypted at rest**.
+- **Anti-bot & authenticated sites** — Camoufox stealth rendering with an automatic **site-root warm-up** that clears cold-deep-link walls (banks a clearance cookie, then retries with a same-site referer); blocked / challenge pages (DataDome, Cloudflare, PerimeterX, …) are detected and surfaced instead of silently failing; **paste Cookie Editor JSON** to reuse a logged-in session or clear a bot check; recorded **login flows** and **per-monitor proxies**. Stored credentials and pasted session cookies are **encrypted at rest**.
 - **Noise control** — ignore selectors, ReDoS-safe regex ignore patterns, a per-monitor minimum-change threshold, **and a global visual noise floor** that absorbs anti-aliasing, lazy-loaded images, and carousels so trivial pixel churn never alerts you.
 - **Accounts, 2FA & admin** — multi-user with self-service **profile / password** changes and **TOTP two-factor auth** (authenticator app), plus an **admin panel** to create/manage users, toggle self-service signup, and **require 2FA** for everyone.
 - **Organise & integrate** — **groups**, **tags** + search, three **dashboard views** (large / compact / list), JSON **import/export**, a token-authed **REST API**, an **RSS** feed, and a **browser extension** to add the current tab in one click.
@@ -55,11 +55,57 @@
 ```bash
 git clone https://github.com/JameZUK/Watcher.git
 cd Watcher
-cp .env.example .env          # then set WATCHER_SECRET_KEY (and ideally WATCHER_ENCRYPTION_KEY)
-docker compose up --build
+cp .env.example .env
+# REQUIRED — the app refuses to start without a strong secret:
+python -c "import secrets; print('WATCHER_SECRET_KEY=' + secrets.token_urlsafe(48))" >> .env
+# RECOMMENDED — a stable key so stored credentials survive a secret rotation:
+python -c "from cryptography.fernet import Fernet; print('WATCHER_ENCRYPTION_KEY=' + Fernet.generate_key().decode())" >> .env
+mkdir -p data && chmod -R a+rwX data    # the container runs as uid 1001
+docker compose up --build -d
 ```
 
-Open **http://localhost:8000**, create an account, and add your first monitor. The Docker image bundles the Playwright browsers **and** Camoufox, so it works out of the box.
+Open **http://&lt;host&gt;:8000**, create the first account (it becomes the **admin**), and add your first monitor. The image bundles Playwright's Chromium / Firefox / WebKit **and** Camoufox, so every engine works out of the box.
+
+## 🐳 Docker deployment (production)
+
+The shipped [`docker-compose.yml`](docker-compose.yml) runs a single container as a **non-root** user (`pwuser`, uid 1001), reads secrets from `.env` on the host, and bind-mounts `./data` for the database and screenshot blobs.
+
+**1 — Keys & secrets.** Set both in `.env` (see the Quick start above):
+
+| Key | Why it matters |
+|---|---|
+| `WATCHER_SECRET_KEY` | Signs session cookies + webhook payloads, and (by default) derives the credential-encryption key. Startup **fails** on the placeholder value. |
+| `WATCHER_ENCRYPTION_KEY` | Explicit Fernet key for credentials/cookies at rest. Set it so you can rotate `SECRET_KEY` without locking yourself out of stored logins. |
+
+Both are read from `.env` **on the host** by Compose, so the same keys carry across rebuilds and your encrypted credentials stay decryptable.
+
+**2 — Data & backups.** The SQLite DB (`watcher.db`) and the content-addressed blob store live under `./data` → `/data`. To back up or migrate, copy the **whole `./data` directory _and_ your `.env`** — the encrypted data is only readable with the same keys. The dir holds **plaintext captured content** (screenshots / rendered HTML of the pages you monitor, including any logged-in pages), so protect it at the filesystem level.
+
+**3 — Network exposure & TLS.** For convenience on a trusted LAN, Compose publishes `0.0.0.0:8000`. **The container terminates no TLS.** For anything internet-facing:
+
+- Front it with a TLS-terminating reverse proxy (Caddy / nginx / Traefik).
+- Re-bind the published port to loopback — change the `ports:` line to `"127.0.0.1:8000:8000"`.
+- Set `WATCHER_SECURE_COOKIES=true` (Secure cookie + HSTS) and `WATCHER_TRUSTED_HOSTS=watcher.example.com` (your public host, for the CSRF/Origin check).
+
+A minimal Caddy front-end:
+
+```caddyfile
+watcher.example.com {
+    reverse_proxy 127.0.0.1:8000
+}
+```
+
+**4 — SSRF egress hardening (untrusted exposure).** The in-process guard validates resolved IPs, but a real browser re-resolves DNS itself (a DNS-rebinding residual). If the instance is reachable by untrusted users, **also block outbound RFC1918 / loopback / link-local / `169.254.169.254` at the network** (egress firewall or a locked-down Docker network) so a crafted target can't reach internal services. Leave `WATCHER_ALLOW_PRIVATE_TARGETS=false` unless you deliberately monitor internal hosts on a trusted network.
+
+**5 — Updating.**
+
+```bash
+git pull && docker compose up --build -d
+```
+
+Schema migrations are applied idempotently at startup; your `./data` persists across upgrades.
+
+**6 — Resources.** `shm_size: 1gb` is set for Chromium stability — keep it. `WATCHER_MAX_RENDER_CONCURRENCY` (default `3`) caps simultaneous browsers; budget roughly 300–500 MB RAM per Chromium/Firefox and more for Camoufox before raising it.
 
 ## 🧑‍💻 Local development
 
@@ -157,9 +203,10 @@ Watcher is built to be exposed to the public internet behind a TLS-terminating r
 - **Secrets**: a strong `WATCHER_SECRET_KEY` is **required** — the app refuses to start with the dev placeholder (override in local dev only with `WATCHER_ALLOW_INSECURE=1`). Credentials, session state, and global API keys (OpenRouter/SMTP/Telegram) are encrypted at rest with Fernet (key HKDF-derived from the secret, or set `WATCHER_ENCRYPTION_KEY` explicitly in prod). API tokens are stored **hashed** (shown once on generation).
 - **Accounts & 2FA**: multi-user with an **admin** role that gates global settings + the **user-management** panel (create/disable/delete users, reset passwords, reset a user's 2FA). Self-registration is **closed by default** (admins toggle it, or open it via `WATCHER_REGISTRATION_OPEN`); only the bootstrap account self-registers otherwise. Optional **TOTP two-factor auth** per user, which admins can **require for everyone**. Login/registration/2FA are **rate-limited** per IP; TOTP secrets are encrypted at rest.
 - **SSRF**: every render target, proxy, login URL, webhook, and ntfy/Discord destination is scheme-checked and its resolved IPs validated — private / loopback / link-local / CGNAT / metadata ranges (incl. IPv4-mapped & NAT64 forms) are blocked, re-checked just before each render. Set `WATCHER_ALLOW_PRIVATE_TARGETS=true` only on trusted networks that intentionally monitor internal hosts. A real browser re-resolves DNS, so for untrusted exposure **also place the renderer behind an egress firewall** that blocks internal ranges.
-- **Web hardening**: a fail-closed Origin/Referer **CSRF** guard on cookie-authed writes; **security headers** (CSP, X-Frame-Options, nosniff, Referrer-Policy, Permissions-Policy, HSTS when `WATCHER_SECURE_COOKIES=true`); request **body-size limit**; CDN scripts pinned with **SRI**; API docs (`/docs`) off by default (`WATCHER_ENABLE_DOCS`).
-- **Abuse / DoS**: per-user monitor cap, manual-check cooldown, ReDoS-safe regex (timeout), bounded screenshot diffing, capped change retention, and outbound timeouts on every notifier.
-- **Deployment**: the container runs as a **non-root** user; `docker-compose.yml` binds to loopback (front it with Caddy/nginx/Traefik for TLS). Set `WATCHER_SECURE_COOKIES=true` and `WATCHER_TRUSTED_HOSTS=<public-host>` behind the proxy.
+- **Web hardening**: a fail-closed Origin/Referer **CSRF** guard on cookie-authed writes; **security headers** (CSP, X-Frame-Options, nosniff, Referrer-Policy, Permissions-Policy, HSTS when `WATCHER_SECURE_COOKIES=true`); request **body-size limit**; third-party scripts (htmx, Alpine) pinned with **Subresource Integrity**; API docs (`/docs`) off by default (`WATCHER_ENABLE_DOCS`).
+- **Abuse / DoS**: per-user monitor cap, manual-check cooldown, ReDoS-safe regex (timeout), bounded screenshot diffing, capped change retention, and outbound timeouts on every notifier. Heavy work (DNS resolution, image diffing, blob hashing/writes) is offloaded off the event loop so a slow target can't stall the server.
+- **Privacy — what leaves the box**: Watcher is self-hosted and sends nothing to its authors. But two opt-in features egress your monitored content: **AI triage/setup** sends the changed page's URL, text diff, a slice of page text, and screenshots to your configured LLM endpoint (OpenRouter/Gemini — or keep it on-box with a local **Ollama** endpoint), and **notifications** include the change summary + URL in the channel you chose (email/Telegram/Discord/ntfy/webhook). If you monitor **private/authenticated** pages, bear in mind that content is what gets sent. Captured screenshots/HTML are stored **unencrypted** under `./data` (credentials and pasted session cookies *are* encrypted). The optional `WATCHER_AI_LOGIN_DEBUG` login-trace is **off by default**; leave it off in production (it logs navigation URLs for debugging).
+- **Deployment**: the container runs as a **non-root** user. `docker-compose.yml` publishes `0.0.0.0:8000` for a trusted LAN — for untrusted exposure, re-bind it to `127.0.0.1:8000:8000`, front it with Caddy/nginx/Traefik for TLS, and set `WATCHER_SECURE_COOKIES=true` + `WATCHER_TRUSTED_HOSTS=<public-host>`. See **[Docker deployment (production)](#-docker-deployment-production)**.
 
 ## 📄 License
 
