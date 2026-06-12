@@ -575,9 +575,13 @@ async def warm_up_if_blocked(page, response, monitor: Monitor):
 
 
 async def full_page_png(page) -> bytes:
-    """A full-page PNG, but cap the captured height to settings.max_screenshot_height_px
-    CSS pixels — an infinite-scroll / very long page at retina DPR can otherwise
-    produce a 100+ MP image that bloats storage and is slow to decode/diff."""
+    """Capture the page as a compact, readable image.
+
+    Caps the captured HEIGHT (max_screenshot_height_px) so an infinite-scroll page
+    can't produce a giant capture, then downscales to a megapixel budget and encodes
+    as WebP — far smaller than PNG for document-like pages, while keeping text
+    readable. (The result field is still named *_png for back-compat; the bytes may
+    be WebP. Pillow reads either, so the visual diff is unaffected.)"""
     cap = settings.max_screenshot_height_px
     h = 0
     if cap:
@@ -592,8 +596,37 @@ async def full_page_png(page) -> bytes:
                 "() => Math.ceil(document.documentElement.scrollWidth)")) or 1280
         except Exception:
             w = 1280
-        return await page.screenshot(type="png", clip={"x": 0, "y": 0, "width": w, "height": cap})
-    return await page.screenshot(full_page=True, type="png")
+        raw = await page.screenshot(type="png", clip={"x": 0, "y": 0, "width": w, "height": cap})
+    else:
+        raw = await page.screenshot(full_page=True, type="png")
+    return await asyncio.to_thread(_compress_screenshot, raw)
+
+
+def _compress_screenshot(png: bytes) -> bytes:
+    """Downscale a captured PNG to the megapixel budget + re-encode as WebP. CPU-
+    bound (run off the event loop). Falls back to the original bytes on any error or
+    when compression is disabled (max_screenshot_megapixels = 0)."""
+    budget_mp = settings.max_screenshot_megapixels
+    if not budget_mp:
+        return png
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+        im = Image.open(BytesIO(png))
+        im.load()
+        budget = budget_mp * 1_000_000
+        mp = im.width * im.height
+        if mp > budget:                       # retina/long captures → fit the budget
+            scale = (budget / mp) ** 0.5
+            im = im.resize((max(1, int(im.width * scale)), max(1, int(im.height * scale))),
+                           Image.LANCZOS)
+        out = BytesIO()
+        im.convert("RGB").save(out, format="WEBP",
+                               quality=settings.screenshot_webp_quality, method=4)
+        return out.getvalue()
+    except Exception:
+        return png
 
 
 async def capture(page, response, monitor: Monitor, mobile: bool = True) -> RenderResult:

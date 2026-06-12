@@ -329,6 +329,33 @@ def test_auto_relogin_eligibility():
     assert R._relogin_blocked_reason(mon(), flow(cooldown=past), app) is None           # cooldown lapsed
 
 
+def test_screenshot_compressed_to_webp_under_budget():
+    """A large capture is downscaled to the megapixel budget and re-encoded as WebP,
+    and still decodes (readable)."""
+    from io import BytesIO
+    from PIL import Image
+    import watcher.engines._common as C
+    from watcher.config import settings
+    buf = BytesIO()
+    Image.new("RGB", (2560, 12000), "white").save(buf, format="PNG")   # ~31 MP, over budget
+    out = C._compress_screenshot(buf.getvalue())
+    res = Image.open(BytesIO(out))
+    assert res.format == "WEBP"
+    assert res.width * res.height <= settings.max_screenshot_megapixels * 1_000_000
+    res.load()                                                          # decodes → readable
+
+
+def test_image_media_type_detection(tmp_path):
+    """The blob server sniffs WebP / PNG / JPEG from the file header."""
+    from PIL import Image
+    from watcher.web.routes.monitors import _image_media_type
+    for fmt, ext, mt in (("PNG", "png", "image/png"), ("WEBP", "webp", "image/webp"),
+                         ("JPEG", "jpg", "image/jpeg")):
+        p = tmp_path / f"x.{ext}"
+        Image.new("RGB", (4, 4), "white").save(p, fmt)
+        assert _image_media_type(p) == mt
+
+
 def test_full_page_png_caps_tall_pages():
     """A page taller than the cap is clipped to the cap height; a short page is
     captured full_page (so the worst-case megapixel count stays bounded)."""

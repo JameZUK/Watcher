@@ -78,11 +78,11 @@ class Settings(BaseSettings):
     max_request_bytes: int = Field(default=2_000_000)    # body-size ceiling (~2 MB)
     max_changes_per_monitor: int = Field(default=500)    # prune oldest beyond this
     # Downscale screenshots to at most this many megapixels BEFORE the (pure-Python)
-    # pixelmatch diff. Full-page retina captures of long pages reach 20-150 MP, where
-    # pixelmatch blows past the detect timeout and change detection is silently
-    # skipped. 6 MP keeps ample resolution for spotting layout/image changes (text
-    # changes are caught exactly by the separate text diff, unaffected by this).
-    max_diff_megapixels: float = Field(default=6.0)
+    # pixelmatch diff. pixelmatch is ~slow per pixel, so on a long page even 6 MP
+    # took ~18s (tripping the detect timeout) AND produced spurious diffs from minor
+    # scale mismatches. 2 MP runs in ~5s and is ample for spotting layout/image
+    # changes — text changes are caught exactly by the separate text diff.
+    max_diff_megapixels: float = Field(default=2.0)
     login_max_attempts: int = Field(default=10)          # per IP per window
     login_window_seconds: int = Field(default=300)
 
@@ -108,6 +108,11 @@ class Settings(BaseSettings):
     # is slow to decode/diff. 8000 CSS px is a very long page; the change diff is
     # downscaled separately (max_diff_megapixels).
     max_screenshot_height_px: int = Field(default=8000)
+    # Stored screenshots are downscaled to fit this many megapixels (retina capture
+    # is overkill for storage — text stays readable well below it) and saved as WebP,
+    # which is far smaller than PNG for document-like pages. 0 = keep native size/PNG.
+    max_screenshot_megapixels: float = Field(default=12.0)
+    screenshot_webp_quality: int = Field(default=85)   # high enough to keep text crisp
 
     # Auto-apply the Playwright Firefox driver workaround on startup (idempotent).
     patch_playwright: bool = Field(default=True)

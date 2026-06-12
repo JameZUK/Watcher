@@ -1147,7 +1147,22 @@ def _serve_blob_image(request: Request, key: str | None):
     headers = {"ETag": etag, "Cache-Control": _IMG_CACHE}
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers=headers)
-    return FileResponse(p, media_type="image/png", headers=headers)
+    # Blobs are a mix of formats (legacy PNG + new WebP) — sniff from magic bytes.
+    return FileResponse(p, media_type=_image_media_type(p), headers=headers)
+
+
+def _image_media_type(path) -> str:
+    """Detect image/{webp,png,jpeg} from the file header (defaults to png)."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(12)
+    except OSError:
+        return "image/png"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    if head[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    return "image/png"
 
 
 @router.get("/monitors/{monitor_id}/snapshots/{snapshot_id}/image")
