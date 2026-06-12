@@ -296,21 +296,20 @@ def test_auto_relogin_eligibility():
     def mon(**kw):
         return N(**{"id": 1, "user_id": 1, "auto_relogin_enabled": True, **kw})
 
-    def flow(valid=False, creds=True, state=True):
+    def flow(valid=False, creds=True, state=True, cooldown=None):
         return N(session_state=({"cookies": []} if state else None),
                  session_valid_until=(future if valid else past),
+                 relogin_cooldown_until=cooldown,
                  encrypted_secrets=({"username": "u", "password": "p"} if creds else {}))
 
-    R._relogin_cooldown.clear()
     assert R._relogin_blocked_reason(mon(auto_relogin_enabled=False), flow(), app) == "not enabled"
     assert R._relogin_blocked_reason(mon(), flow(state=False), app) == "no stored session"
     assert R._relogin_blocked_reason(mon(), flow(valid=True), app) == "session still valid"
     assert R._relogin_blocked_reason(mon(), flow(creds=False), app) == "no stored credentials"
     assert R._relogin_blocked_reason(mon(), flow(), no_ai) == "AI not configured"
     assert R._relogin_blocked_reason(mon(), flow(), app) is None            # all conditions met
-    R._relogin_cooldown[1] = R.time.monotonic() + 1000
-    assert "cooldown" in R._relogin_blocked_reason(mon(), flow(), app)      # recently failed
-    R._relogin_cooldown.clear()
+    assert "cooldown" in R._relogin_blocked_reason(mon(), flow(cooldown=future), app)  # in cooldown
+    assert R._relogin_blocked_reason(mon(), flow(cooldown=past), app) is None           # cooldown lapsed
 
 
 def test_full_page_png_caps_tall_pages():

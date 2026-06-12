@@ -271,6 +271,10 @@ class LoginFlow(Base):
     session_valid_until: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )
+    # Skip auto re-login until this time after a failed attempt (survives restarts).
+    relogin_cooldown_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
 
     monitor: Mapped["Monitor"] = relationship(back_populates="login_flow")
 

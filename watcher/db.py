@@ -68,6 +68,9 @@ _ADDED_COLUMNS = {
         "consent_clicks": "JSON", "consent_ai_tried": "BOOLEAN DEFAULT 0",
         "auto_relogin_enabled": "BOOLEAN DEFAULT 0",
     },
+    "login_flows": {
+        "relogin_cooldown_until": "TIMESTAMP",
+    },
     "groups": {
         "watch_intent": "TEXT", "kind": "VARCHAR(16) DEFAULT 'price'",
         "hide_members": "BOOLEAN DEFAULT 0",

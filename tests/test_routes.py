@@ -764,7 +764,7 @@ def test_auto_relogin_recovery_flow():
         orig_run, orig_trig = ai_login.run_agent, scheduler.trigger_now
         triggered: list = []
         scheduler.trigger_now = lambda i: triggered.append(i)
-        R._relogin_cooldown.clear(); R._relogin_inflight.clear()
+        R._relogin_inflight.clear()
 
         # success: agent persists a fresh session and reports done
         async def ok_agent(sess, action_fn, persist_fn, **kw):
@@ -779,10 +779,11 @@ def test_auto_relogin_recovery_flow():
             fl = (await s.execute(select(LoginFlow).where(LoginFlow.monitor_id == mid))).scalar_one()
             assert session_is_valid(fl)                          # refreshed → future TTL
             assert fl.session_state["cookies"][0]["name"] == "new"
-        assert triggered == [mid] and mid not in R._relogin_cooldown   # re-checked, no cooldown
+            assert fl.relogin_cooldown_until is None             # cleared on success
+        assert triggered == [mid]                                # re-checked
 
-        # fail-fast: agent errors (needs a human) → cooldown, no re-check
-        triggered.clear(); R._relogin_cooldown.clear()
+        # fail-fast: agent errors (needs a human) → cooldown set, no re-check
+        triggered.clear()
         async def fail_agent(sess, action_fn, persist_fn, **kw):
             sess.status, sess.error = "error", "needs a human"
         ai_login.run_agent = fail_agent
@@ -790,7 +791,10 @@ def test_auto_relogin_recovery_flow():
             await R._run_relogin(mid, uid, "model", None, "sk-test")
         finally:
             ai_login.run_agent = orig_run; scheduler.trigger_now = orig_trig
-        assert triggered == [] and mid in R._relogin_cooldown
+        async with SessionLocal() as s:
+            fl = (await s.execute(select(LoginFlow).where(LoginFlow.monitor_id == mid))).scalar_one()
+            assert fl.relogin_cooldown_until is not None          # cooldown persisted
+        assert triggered == []
         return True
 
     assert _run(_t)
@@ -875,7 +879,7 @@ def test_check_monitor_triggers_relogin_on_failed_expired_session():
         R._render = fail_render
         ai_login.run_agent = ok_agent
         scheduler.trigger_now = lambda i: triggered.append(i)
-        R._relogin_cooldown.clear(); R._relogin_inflight.clear()
+        R._relogin_inflight.clear()
         try:
             await R.check_monitor(mid)
             for t in list(R._relogin_tasks):          # await the spawned recovery task

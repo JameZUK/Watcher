@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import logging
 import time
+from datetime import timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -39,7 +40,6 @@ _LOW_VALUE = {"low", "noise"}
 # (monotonic deadline). Both in-memory: lost on restart is fine — the per-user AI
 # rate-limit is the real budget ceiling; this just avoids hammering.
 _relogin_inflight: set[int] = set()
-_relogin_cooldown: dict[int, float] = {}
 _relogin_tasks: set = set()   # strong refs so recovery tasks aren't GC'd mid-run
 
 # After a stealth (Camoufox) escalation that ALSO got blocked, skip re-escalating
@@ -62,8 +62,12 @@ def _relogin_blocked_reason(monitor, flow, app) -> str | None:
         return "no stored credentials"
     if not (app.ai_enabled and get_openrouter_key(app)):
         return "AI not configured"
-    if time.monotonic() < _relogin_cooldown.get(monitor.id, 0.0):
-        return "cooldown after a recent failed attempt"
+    cd = flow.relogin_cooldown_until
+    if cd is not None:
+        if cd.tzinfo is None:
+            cd = cd.replace(tzinfo=timezone.utc)
+        if cd > utcnow():
+            return "cooldown after a recent failed attempt"
     return None
 
 
@@ -94,7 +98,7 @@ async def _run_relogin(monitor_id: int, user_id: int, model, base_url, key) -> N
     then re-check on success. On any need-a-human stop (captcha/OTP) or error, set a
     cooldown so it doesn't retry every check."""
     from .auth import ai_login
-    cooldown_until = time.monotonic() + settings.auto_relogin_cooldown_seconds
+    until = utcnow() + timedelta(seconds=settings.auto_relogin_cooldown_seconds)
     try:
         async with SessionLocal() as s:
             m = (await s.execute(
@@ -133,18 +137,36 @@ async def _run_relogin(monitor_id: int, user_id: int, model, base_url, key) -> N
                                  wait_until=wait_until, unattended=True, solve_captcha_fn=None)
 
         if sess.status == "done":
-            _relogin_cooldown.pop(monitor_id, None)
+            await _set_relogin_cooldown(monitor_id, None, notify_ok=True)
             log.info("auto re-login succeeded for monitor %s — re-checking", monitor_id)
             from .scheduler import trigger_now
             trigger_now(monitor_id)
         else:
-            _relogin_cooldown[monitor_id] = cooldown_until
+            await _set_relogin_cooldown(monitor_id, until)
             log.warning("auto re-login failed for monitor %s: %s", monitor_id, sess.error)
     except Exception:
-        _relogin_cooldown[monitor_id] = cooldown_until
+        await _set_relogin_cooldown(monitor_id, until)
         log.exception("auto re-login crashed for monitor %s", monitor_id)
     finally:
         _relogin_inflight.discard(monitor_id)
+
+
+async def _set_relogin_cooldown(monitor_id: int, until, *, notify_ok: bool = False) -> None:
+    """Persist the post-attempt cooldown on the login flow (survives restarts). On a
+    successful recovery (until=None, notify_ok), also drop an inbox note."""
+    async with SessionLocal() as s:
+        m = (await s.execute(
+            select(Monitor).where(Monitor.id == monitor_id)
+            .options(selectinload(Monitor.login_flow)))).scalar_one_or_none()
+        if m is None or m.login_flow is None:
+            return
+        m.login_flow.relogin_cooldown_until = until
+        if notify_ok:
+            await notify_monitor_alert(
+                s, m, f"Re-logged in: {m.name or m.url}",
+                "Watcher signed back in automatically after the session expired — "
+                "the monitor is working again.")
+        await s.commit()
 
 
 async def _maybe_group_alert(session, monitor) -> None:
