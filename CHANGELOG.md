@@ -2,6 +2,60 @@
 
 All notable changes to Watcher are documented here. Dates are ISO-8601.
 
+## 2026-06-12 — Self-healing logins, proxy pool, status page & a hardening sweep
+
+### Added
+- **Automatic AI re-login on session expiry.** Opt-in per monitor: when a check
+  fails because the stored login session expired, the AI agent re-logs in
+  *headlessly* (no human), refreshes the session, and re-checks. Credential logins
+  only — a new unattended agent mode gives up cleanly the moment it would need a
+  captcha or one-time code (no captcha solving). Gated by the per-user AI budget +
+  an in-flight guard + a persistent post-failure cooldown; runs out-of-band so it
+  never holds a render slot. A successful self-heal drops an inbox note.
+- **Auto-escalate the engine on a bot block.** When a non-stealth render is bot-
+  walled (Cloudflare/403/…), it retries once on **Camoufox**; if that clears the
+  wall the monitor is switched to Camoufox permanently (a failed escalation sets a
+  short cooldown to avoid double-rendering every check).
+- **Status page** (`/status`, in the nav) — per-monitor check count + success rate
+  and avg/max render time, plus summary cards: monitors enabled/paused, how many
+  are failing, AI calls used vs the per-window budget, and the on-disk snapshot
+  blob-store size.
+- **Shared proxy pool.** Admins paste a list of proxy URLs (Settings → transports);
+  a job health-checks them every ~10 min and round-robins healthy ones to monitors
+  that opt in (and have no explicit proxy) — useful against IP-reputation walls.
+
+### Security
+- **Self-hosted Tailwind / htmx / Alpine + same-origin CSP.** Dropped the Tailwind
+  Play CDN (an unpinnable runtime) and the unpkg scripts; the CSS is now prebuilt
+  from the templates and all JS is vendored. `script-src` is `'self'` only — a CDN
+  compromise can no longer execute JS in the app.
+- **TOTP codes are single-use.** A code accepted at login can't be replayed inside
+  its ~90s window (a new `last_otp_step` rejects any code at or below the last used).
+- **CSRF Origin check now validates the port.** A same-host origin on a *different*
+  port (e.g. another app on localhost) is rejected; proxy deployments (port-less
+  Host) are unaffected.
+- **No login user-enumeration via timing.** Unknown/inactive logins now run a
+  constant-time dummy password hash so they can't be distinguished by response time.
+
+### Performance
+- **Cache decrypted secrets** (OpenRouter key, SMTP/Telegram) by ciphertext — they
+  were Fernet-decrypted up to ~3× per check.
+- **Per-engine concurrency cap** — Camoufox (RAM-heavy) gets a tighter nested cap
+  (`WATCHER_MAX_CAMOUFOX_CONCURRENCY`, default 2).
+- **Retention pruning in SQL** — one windowed `DELETE` instead of loading every
+  snapshot row per monitor into Python.
+- **Cap full-page screenshot height** (`WATCHER_MAX_SCREENSHOT_HEIGHT_PX`, default
+  8000 CSS px) — an infinite-scroll page no longer produces a 100+ MP capture.
+
+### Fixed
+- **Checks failing with `Page.goto timeout … networkidle`.** `networkidle` never
+  settles on ad/tracker-heavy sites, so a strict wait timed out even though the page
+  loaded fine. Navigation now falls back to `domcontentloaded` and captures what
+  loaded instead of failing the whole check.
+- **Change detection silently timing out on very large screenshots** — the visual
+  diff now downscales more aggressively (`WATCHER_MAX_DIFF_MEGAPIXELS` default
+  lowered to 6) so pixelmatch stays under the detect ceiling.
+
 ## 2026-06-12 — Anti-bot warm-up, history pruning & a security/efficiency hardening pass
 
 ### Added

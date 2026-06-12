@@ -174,10 +174,13 @@ diff/image actually shows and never to invent values it cannot verify.
 
 ## 11. Security
 
-- Full user accounts; argon2/bcrypt password hashing; secure session cookies; CSRF
-  on forms
+- Full user accounts; argon2 password hashing (constant-time on unknown users);
+  secure session cookies; host+port CSRF guard on cookie-authed writes
+- Optional TOTP 2FA; codes are single-use (no replay within their window)
 - **Encrypted-at-rest storage** (Fernet) for login-flow credentials *and* captured
   session cookies — requires an app secret key (env)
+- Front-end assets (Tailwind/htmx/Alpine) self-hosted → CSP `script-src` is
+  same-origin only (no third-party-CDN JS)
 - SSRF awareness: fetching arbitrary URLs is the product's purpose, but guard
   against internal-network targets when exposed; run browsers sandboxed
 
