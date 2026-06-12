@@ -103,15 +103,16 @@ class Settings(BaseSettings):
     screenshot_scale: int = Field(default=2)        # device pixel ratio (retina-crisp)
     mobile_viewport_width: int = Field(default=390)   # iPhone-class logical width
     mobile_viewport_height: int = Field(default=844)
-    # Cap a full-page capture to the top N CSS pixels. An infinite-scroll / very long
-    # page at retina DPR can otherwise produce a 100+ MP PNG that bloats storage and
-    # is slow to decode/diff. 8000 CSS px is a very long page; the change diff is
-    # downscaled separately (max_diff_megapixels).
-    max_screenshot_height_px: int = Field(default=8000)
-    # Stored screenshots are downscaled to fit this many megapixels (retina capture
-    # is overkill for storage — text stays readable well below it) and saved as WebP,
-    # which is far smaller than PNG for document-like pages. 0 = keep native size/PNG.
-    max_screenshot_megapixels: float = Field(default=12.0)
+    # SAFETY clip on a full-page capture (top N CSS px). This is NOT for size — the
+    # megapixel budget below bounds the stored size by downscaling the WHOLE page
+    # uniformly (never truncating). It only stops a pathological infinite-scroll page
+    # (tens of thousands of px) from spiking memory during the capture/decode. 30000
+    # CSS px (~30 screens) is past any real page, so the full page is always captured.
+    max_screenshot_height_px: int = Field(default=30000)
+    # The whole captured page is downscaled to fit this many megapixels and saved as
+    # WebP (far smaller than PNG for document-like pages; text stays readable). The
+    # full page is preserved — long pages are shrunk, not cut off. 0 = native PNG.
+    max_screenshot_megapixels: float = Field(default=20.0)
     screenshot_webp_quality: int = Field(default=85)   # high enough to keep text crisp
 
     # Auto-apply the Playwright Firefox driver workaround on startup (idempotent).

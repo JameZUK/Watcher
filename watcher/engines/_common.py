@@ -575,13 +575,15 @@ async def warm_up_if_blocked(page, response, monitor: Monitor):
 
 
 async def full_page_png(page) -> bytes:
-    """Capture the page as a compact, readable image.
+    """Capture the FULL page as a compact, readable image.
 
-    Caps the captured HEIGHT (max_screenshot_height_px) so an infinite-scroll page
-    can't produce a giant capture, then downscales to a megapixel budget and encodes
-    as WebP — far smaller than PNG for document-like pages, while keeping text
-    readable. (The result field is still named *_png for back-compat; the bytes may
-    be WebP. Pillow reads either, so the visual diff is unaffected.)"""
+    The whole page is captured, then downscaled to a megapixel budget (the long page
+    is shrunk uniformly, never truncated) and encoded as WebP — far smaller than PNG
+    for document-like pages while staying readable. A height SAFETY clip
+    (max_screenshot_height_px, ~30000 px — past any real page) only guards against a
+    pathological infinite-scroll capture spiking memory. (The result field is still
+    named *_png for back-compat; the bytes may be WebP — Pillow reads either, so the
+    visual diff is unaffected.)"""
     cap = settings.max_screenshot_height_px
     h = 0
     if cap:
