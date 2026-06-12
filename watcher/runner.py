@@ -5,24 +5,142 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import time
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from .ai import extract_value, triage_change
+from .ai import ai_login_action, extract_value, triage_change
 from .app_settings import get_app_settings, get_openrouter_key
-from .auth.login_flows import session_is_valid
+from .auth.login_flows import (
+    build_secret_map,
+    mark_session,
+    resolve_secrets,
+    session_is_valid,
+)
 from .config import settings
 from .db import SessionLocal
 from .detection import detect
 from .detection.value import parse_number
 from .engines import RenderResult, render_monitor
-from .models import Change, DetectionMode, Group, Monitor, Snapshot, SnapshotStatus, utcnow
+from .models import (
+    Change, DetectionMode, Group, LoginFlow, Monitor, Snapshot, SnapshotStatus, utcnow,
+)
 from .notify import dispatch, notify_monitor_alert
 from .storage import blobs
 
+log = logging.getLogger("watcher")
+
 # Importance ratings the AI considers "low value" and subject to the gating policy.
 _LOW_VALUE = {"low", "noise"}
+
+# --- Automatic AI re-login on session expiry --------------------------------
+# In-flight monitors (avoid concurrent recoveries) + post-failure cooldowns
+# (monotonic deadline). Both in-memory: lost on restart is fine — the per-user AI
+# rate-limit is the real budget ceiling; this just avoids hammering.
+_relogin_inflight: set[int] = set()
+_relogin_cooldown: dict[int, float] = {}
+_relogin_tasks: set = set()   # strong refs so recovery tasks aren't GC'd mid-run
+
+
+def _relogin_blocked_reason(monitor, flow, app) -> str | None:
+    """None if an automatic AI re-login should be attempted for this failed check,
+    otherwise a short reason it shouldn't. Cheap checks only (no decryption / I/O)."""
+    if not getattr(monitor, "auto_relogin_enabled", False):
+        return "not enabled"
+    if not flow or not flow.session_state:
+        return "no stored session"
+    if session_is_valid(flow):
+        return "session still valid"        # the failure wasn't a stale session
+    # Credentials must exist (cookie-only flows can't be re-driven). build_secret_map
+    # only stores keys with non-empty values, so key presence ⇒ a usable value.
+    if not {"username", "password"} <= set(flow.encrypted_secrets or {}):
+        return "no stored credentials"
+    if not (app.ai_enabled and get_openrouter_key(app)):
+        return "AI not configured"
+    if time.monotonic() < _relogin_cooldown.get(monitor.id, 0.0):
+        return "cooldown after a recent failed attempt"
+    return None
+
+
+async def _maybe_auto_relogin(monitor, flow, app) -> bool:
+    """Launch an out-of-band AI re-login if this failed check looks like an expired
+    login session on an opted-in monitor. Returns True when a recovery is in
+    progress (so the caller skips the penalising _fail this cycle), else False."""
+    if monitor.id in _relogin_inflight:
+        return True                          # already recovering — keep skipping _fail
+    if _relogin_blocked_reason(monitor, flow, app) is not None:
+        return False
+    # Count the attempt against the owner's shared-AI-key budget (records a hit).
+    from .web.ratelimit import allow
+    if not allow(f"ai:{monitor.user_id}", limit=settings.ai_max_calls,
+                 window=settings.ai_window_seconds):
+        return False                         # over budget → let it fail normally
+    _relogin_inflight.add(monitor.id)
+    task = asyncio.create_task(_run_relogin(
+        monitor.id, monitor.user_id, app.ai_model, app.ai_base_url, get_openrouter_key(app)))
+    _relogin_tasks.add(task)
+    task.add_done_callback(_relogin_tasks.discard)
+    log.info("auto re-login launched for monitor %s", monitor.id)
+    return True
+
+
+async def _run_relogin(monitor_id: int, user_id: int, model, base_url, key) -> None:
+    """Drive the AI login agent headlessly (no human) to refresh an expired session,
+    then re-check on success. On any need-a-human stop (captcha/OTP) or error, set a
+    cooldown so it doesn't retry every check."""
+    from .auth import ai_login
+    cooldown_until = time.monotonic() + settings.auto_relogin_cooldown_seconds
+    try:
+        async with SessionLocal() as s:
+            m = (await s.execute(
+                select(Monitor).where(Monitor.id == monitor_id)
+                .options(selectinload(Monitor.login_flow)))).scalar_one_or_none()
+            if m is None or m.login_flow is None:
+                return
+            creds = resolve_secrets(m.login_flow)
+            # Re-login at the recorded login page if there is one (first goto step),
+            # otherwise the monitored URL itself.
+            login_url = next((st["url"] for st in (m.login_flow.steps or [])
+                              if isinstance(st, dict) and st.get("url")), m.url)
+            engine, proxy, wait_until = m.engine.value, m.proxy, m.wait_until
+
+        sess = ai_login.create_session(monitor_id, user_id, login_url, creds)
+
+        async def action_fn(**kw):
+            return await ai_login_action(api_key=key, model=model, base_url=base_url, **kw)
+
+        async def persist_fn(state):
+            async with SessionLocal() as s2:
+                m2 = (await s2.execute(
+                    select(Monitor).where(Monitor.id == monitor_id)
+                    .options(selectinload(Monitor.login_flow)))).scalar_one_or_none()
+                if m2 is None:
+                    return
+                fl = m2.login_flow or LoginFlow(monitor_id=m2.id)
+                mark_session(fl, state)
+                fl.encrypted_secrets = {**(fl.encrypted_secrets or {}),
+                                        **build_secret_map({k: v for k, v in creds.items() if v})}
+                if m2.login_flow is None:
+                    s2.add(fl)
+                await s2.commit()
+
+        await ai_login.run_agent(sess, action_fn, persist_fn, engine=engine, proxy=proxy,
+                                 wait_until=wait_until, unattended=True, solve_captcha_fn=None)
+
+        if sess.status == "done":
+            _relogin_cooldown.pop(monitor_id, None)
+            log.info("auto re-login succeeded for monitor %s — re-checking", monitor_id)
+            from .scheduler import trigger_now
+            trigger_now(monitor_id)
+        else:
+            _relogin_cooldown[monitor_id] = cooldown_until
+            log.warning("auto re-login failed for monitor %s: %s", monitor_id, sess.error)
+    except Exception:
+        _relogin_cooldown[monitor_id] = cooldown_until
+        log.exception("auto re-login crashed for monitor %s", monitor_id)
+    finally:
+        _relogin_inflight.discard(monitor_id)
 
 
 async def _maybe_group_alert(session, monitor) -> None:
@@ -417,6 +535,22 @@ async def check_monitor(monitor_id: int) -> None:
 
             snap = Snapshot(monitor_id=monitor.id, render_ms=result.render_ms)
             monitor.last_checked_at = utcnow()
+            blocked = _blocked_reason(result)
+
+            # Auto re-login: when a check fails or is blocked AND the stored login
+            # session has expired AND the monitor opted in, fire an out-of-band AI
+            # re-login (no human). Record a soft, non-penalising error this cycle and
+            # return — a fresh check runs once the session is refreshed. If it isn't
+            # eligible (no creds, cooldown, over budget, …) fall through to _fail.
+            if not result.ok or blocked:
+                app = await get_app_settings(session)
+                if await _maybe_auto_relogin(monitor, monitor.login_flow, app):
+                    snap.status = SnapshotStatus.error
+                    snap.error = "Login session expired — automatic re-login in progress…"
+                    snap.http_status = result.http_status
+                    session.add(snap)
+                    await session.commit()
+                    return
 
             if not result.ok:
                 await _fail(session, monitor, snap,
@@ -428,7 +562,6 @@ async def check_monitor(monitor_id: int) -> None:
             # silently storing an empty "ok" snapshot. A captcha/anti-bot block
             # gets actionable "add session cookies" guidance in the alert, and the
             # block page itself is saved (result=) for later review.
-            blocked = _blocked_reason(result)
             if blocked:
                 await _fail(session, monitor, snap, error=blocked + _help_hint(blocked),
                             http_status=result.http_status, title=result.title, result=result)

@@ -94,6 +94,7 @@ class LoginSession:
     _shot_needs_stop: bool = False  # this page never stops loading; halt before shot
     _shot_url: str = ""           # url the above was decided for
     _shot_url_since: float = 0.0  # when we first saw _shot_url (grace before halting)
+    _unattended: bool = False     # auto re-login: no human, fail instead of handoff
 
     def submit_code(self, code: str) -> None:
         self._code = (code or "").strip()
@@ -201,13 +202,20 @@ async def run_agent(
     proxy: str | None = None,
     wait_until: str = "domcontentloaded",
     solve_captcha_fn: Callable[..., Awaitable[list[int] | None]] | None = None,
+    unattended: bool = False,
 ) -> None:
     """The agent loop: observe → decide (action_fn) → act, pausing for a code.
     persist_fn(state) stores the captured session on success.
 
     solve_captcha_fn(target, rows, cols, png) -> cells lets the agent attempt a
-    reCAPTCHA image challenge before treating it as a dead end."""
+    reCAPTCHA image challenge before treating it as a dead end.
+
+    unattended=True is for automatic re-login (no human watching): instead of
+    handing off to manual control or waiting for a one-time code, the agent fails
+    cleanly (status='error') the moment it would need a person — so a credential
+    login self-heals but a captcha/OTP login gives up immediately."""
     available = [k for k, v in session.secrets.items() if v]
+    session._unattended = unattended
     session._native_human = (engine == "camoufox")   # Camoufox humanises input itself
     history: list[str] = []
     code_pending = False
@@ -243,6 +251,10 @@ async def run_agent(
         empty_retry = 0
         ai_steps = 0
         while True:
+            # Unattended re-login has no human to take over, so a handoff is a hard
+            # stop: _handoff() sets status='error' (keeping mode='ai'); bail here.
+            if unattended and session.status == "error":
+                return
             if _expired(session):
                 if session.status != "done":
                     session.status, session.error = "error", "Login timed out."
@@ -488,6 +500,9 @@ async def run_agent(
                     except Exception:
                         pass
             elif a == "await_code":
+                if unattended:   # no human to read the code — give up cleanly now
+                    _handoff(session, "a one-time code is required")
+                    continue
                 session.prompt = ("Enter the one-time code the site just sent you "
                                   "(email / SMS / authenticator).")
                 session.status = "need_code"
@@ -935,7 +950,16 @@ def _expired(session) -> bool:
 
 def _handoff(session, reason: str) -> None:
     """Hand control to the user instead of hard-failing — the core of the manual
-    fallback. The AI agent pauses; the modal lets the user drive the live page."""
+    fallback. The AI agent pauses; the modal lets the user drive the live page.
+
+    In unattended mode (auto re-login) there's no one to take over, so fail cleanly
+    instead — the run_agent loop sees status='error' and stops."""
+    if getattr(session, "_unattended", False):
+        session.mode = "ai"
+        session.status = "error"
+        session.error = f"{reason} — needs a human (captcha/OTP); auto re-login can't continue"
+        session.log.append(f"Auto re-login stopped — {reason}.")
+        return
     session.mode = "manual"
     session.status = "running"
     session.error = None

@@ -254,6 +254,52 @@ def test_encrypted_json_roundtrip_and_legacy_fallback():
     assert t.process_result_value(None, None) is None
 
 
+def test_handoff_unattended_fails_clean():
+    """In unattended (auto re-login) mode a handoff is a hard error — no human can
+    take over — whereas interactive mode hands off to manual control as before."""
+    from watcher.auth.ai_login import LoginSession, _handoff
+    s = LoginSession(id="x", monitor_id=1, user_id=1, url="http://t", secrets={})
+    s._unattended = True
+    _handoff(s, "a captcha is blocking")
+    assert s.status == "error" and s.mode == "ai" and "captcha" in s.error
+
+    s2 = LoginSession(id="y", monitor_id=1, user_id=1, url="http://t", secrets={})
+    _handoff(s2, "a captcha is blocking")
+    assert s2.status == "running" and s2.mode == "manual"   # interactive: takeover
+
+
+def test_auto_relogin_eligibility():
+    """_relogin_blocked_reason gates auto re-login: only an opted-in monitor with a
+    stored-but-expired session, credentials, an AI key, and no cooldown qualifies."""
+    from datetime import datetime, timezone
+    import watcher.runner as R
+    from watcher.auth.security import encrypt_secret
+    past = datetime(2000, 1, 1, tzinfo=timezone.utc)
+    future = datetime(2099, 1, 1, tzinfo=timezone.utc)
+    app = N(ai_enabled=True, openrouter_key_enc=encrypt_secret("sk-test"),
+            ai_model="m", ai_base_url=None)
+    no_ai = N(ai_enabled=False, openrouter_key_enc=None)
+
+    def mon(**kw):
+        return N(**{"id": 1, "user_id": 1, "auto_relogin_enabled": True, **kw})
+
+    def flow(valid=False, creds=True, state=True):
+        return N(session_state=({"cookies": []} if state else None),
+                 session_valid_until=(future if valid else past),
+                 encrypted_secrets=({"username": "u", "password": "p"} if creds else {}))
+
+    R._relogin_cooldown.clear()
+    assert R._relogin_blocked_reason(mon(auto_relogin_enabled=False), flow(), app) == "not enabled"
+    assert R._relogin_blocked_reason(mon(), flow(state=False), app) == "no stored session"
+    assert R._relogin_blocked_reason(mon(), flow(valid=True), app) == "session still valid"
+    assert R._relogin_blocked_reason(mon(), flow(creds=False), app) == "no stored credentials"
+    assert R._relogin_blocked_reason(mon(), flow(), no_ai) == "AI not configured"
+    assert R._relogin_blocked_reason(mon(), flow(), app) is None            # all conditions met
+    R._relogin_cooldown[1] = R.time.monotonic() + 1000
+    assert "cooldown" in R._relogin_blocked_reason(mon(), flow(), app)      # recently failed
+    R._relogin_cooldown.clear()
+
+
 def test_navigate_falls_back_when_wait_never_settles():
     """A strict wait (networkidle) that never settles must not fail the check —
     navigate() retries with domcontentloaded and returns the page that loaded."""

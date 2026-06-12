@@ -18,6 +18,10 @@ def _run(coro_factory):
     async def _wrap():
         await engine.dispose()
         await init_db()
+        # Reset the in-memory auth rate-limiter so accumulated login/register
+        # attempts from earlier tests don't trip a later test's /register.
+        from watcher.web.ratelimit import _hits
+        _hits.clear()
         return await coro_factory()
     return asyncio.run(_wrap())
 
@@ -630,6 +634,162 @@ def test_auto_pause_after_failures():
 
 
 # --- consent / annoyance-blocking form wiring ------------------------------
+
+def test_auto_relogin_toggle_persists():
+    """The per-monitor auto-relogin opt-in round-trips through create (checked) and
+    edit (unchecked => off) into the Monitor row."""
+    async def _t():
+        from watcher.config import settings
+        from watcher.main import create_app
+        from watcher.models import Monitor
+        settings.registration_open = True
+        transport = httpx.ASGITransport(app=create_app())
+        email = _email()
+        async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                     headers={"Origin": "http://t"}, follow_redirects=True) as c:
+            await c.post("/register", data={"email": email, "password": "password123"})
+            base = {"url": "https://example.com", "engine": "chromium", "detection_mode": "text",
+                    "interval_minutes": "60", "wait_until": "load", "notify_channels": "inbox",
+                    "name": "Relogin Monitor"}
+            await c.post("/monitors", data={**base, "auto_relogin_enabled": "on"})
+            async with SessionLocal() as s:
+                m = (await s.execute(
+                    select(Monitor).where(Monitor.name == "Relogin Monitor"))).scalar_one()
+                assert m.auto_relogin_enabled is True            # checked => on
+                mid = m.id
+            await c.post(f"/monitors/{mid}", data=base)          # edit, field omitted
+            async with SessionLocal() as s:
+                m = (await s.execute(select(Monitor).where(Monitor.id == mid))).scalar_one()
+                assert m.auto_relogin_enabled is False           # unchecked => off
+        return True
+
+    assert _run(_t)
+
+
+def test_auto_relogin_recovery_flow():
+    """_run_relogin refreshes the session + re-checks on a successful agent run, and
+    on a fail-fast (captcha/OTP) sets a cooldown and does NOT re-check. The agent and
+    scheduler are stubbed, so this exercises the orchestration with no browser/AI."""
+    async def _t():
+        from datetime import datetime, timezone
+        import watcher.runner as R
+        from watcher import scheduler
+        from watcher.auth import ai_login
+        from watcher.auth.login_flows import build_secret_map, session_is_valid
+        from watcher.auth.security import hash_password
+        from watcher.models import LoginFlow, Monitor, User
+
+        async with SessionLocal() as s:
+            u = User(email=_email(), password_hash=hash_password("x")); s.add(u); await s.flush()
+            m = Monitor(user_id=u.id, url="https://site.test", name="L",
+                        auto_relogin_enabled=True, notify_channels=["inbox"])
+            s.add(m); await s.flush()
+            s.add(LoginFlow(
+                monitor_id=m.id,
+                encrypted_secrets=build_secret_map({"username": "u@e.test", "password": "pw"}),
+                session_state={"cookies": [{"name": "old", "value": "1"}]},
+                session_valid_until=datetime(2000, 1, 1, tzinfo=timezone.utc)))  # expired
+            await s.commit()
+            mid, uid = m.id, u.id
+
+        orig_run, orig_trig = ai_login.run_agent, scheduler.trigger_now
+        triggered: list = []
+        scheduler.trigger_now = lambda i: triggered.append(i)
+        R._relogin_cooldown.clear(); R._relogin_inflight.clear()
+
+        # success: agent persists a fresh session and reports done
+        async def ok_agent(sess, action_fn, persist_fn, **kw):
+            await persist_fn({"cookies": [{"name": "new", "value": "2"}]})
+            sess.status = "done"
+        ai_login.run_agent = ok_agent
+        try:
+            await R._run_relogin(mid, uid, "model", None, "sk-test")
+        finally:
+            ai_login.run_agent = orig_run
+        async with SessionLocal() as s:
+            fl = (await s.execute(select(LoginFlow).where(LoginFlow.monitor_id == mid))).scalar_one()
+            assert session_is_valid(fl)                          # refreshed → future TTL
+            assert fl.session_state["cookies"][0]["name"] == "new"
+        assert triggered == [mid] and mid not in R._relogin_cooldown   # re-checked, no cooldown
+
+        # fail-fast: agent errors (needs a human) → cooldown, no re-check
+        triggered.clear(); R._relogin_cooldown.clear()
+        async def fail_agent(sess, action_fn, persist_fn, **kw):
+            sess.status, sess.error = "error", "needs a human"
+        ai_login.run_agent = fail_agent
+        try:
+            await R._run_relogin(mid, uid, "model", None, "sk-test")
+        finally:
+            ai_login.run_agent = orig_run; scheduler.trigger_now = orig_trig
+        assert triggered == [] and mid in R._relogin_cooldown
+        return True
+
+    assert _run(_t)
+
+
+def test_check_monitor_triggers_relogin_on_failed_expired_session():
+    """End-to-end hook: a failed render + expired session on an opted-in monitor
+    fires the recovery (no failure counted, soft snapshot, re-check on success)."""
+    async def _t():
+        from datetime import datetime, timezone
+        import watcher.runner as R
+        from watcher import scheduler
+        from watcher.app_settings import get_app_settings
+        from watcher.auth import ai_login
+        from watcher.auth.login_flows import build_secret_map
+        from watcher.auth.security import encrypt_secret, hash_password
+        from watcher.engines import RenderResult
+        from watcher.models import LoginFlow, Monitor, Snapshot, SnapshotStatus, User
+
+        async with SessionLocal() as s:
+            u = User(email=_email(), password_hash=hash_password("x")); s.add(u); await s.flush()
+            m = Monitor(user_id=u.id, url="https://gated.test", name="G", enabled=True,
+                        auto_relogin_enabled=True, notify_channels=["inbox"], consecutive_failures=0)
+            s.add(m); await s.flush()
+            s.add(LoginFlow(monitor_id=m.id,
+                            encrypted_secrets=build_secret_map({"username": "u", "password": "p"}),
+                            session_state={"cookies": [{"name": "old", "value": "1"}]},
+                            session_valid_until=datetime(2000, 1, 1, tzinfo=timezone.utc)))
+            app = await get_app_settings(s)
+            app.ai_enabled = True
+            app.openrouter_key_enc = encrypt_secret("sk-test")
+            await s.commit(); mid = m.id
+
+        orig_render, orig_run, orig_trig = R._render, ai_login.run_agent, scheduler.trigger_now
+        triggered: list = []
+
+        async def fail_render(_m):
+            return RenderResult(ok=False, error="login wall", http_status=403)
+
+        async def ok_agent(sess, action_fn, persist_fn, **kw):
+            await persist_fn({"cookies": [{"name": "new", "value": "2"}]})
+            sess.status = "done"
+
+        R._render = fail_render
+        ai_login.run_agent = ok_agent
+        scheduler.trigger_now = lambda i: triggered.append(i)
+        R._relogin_cooldown.clear(); R._relogin_inflight.clear()
+        try:
+            await R.check_monitor(mid)
+            for t in list(R._relogin_tasks):          # await the spawned recovery task
+                try:
+                    await asyncio.wait_for(t, 10)
+                except Exception:
+                    pass
+        finally:
+            R._render, ai_login.run_agent, scheduler.trigger_now = orig_render, orig_run, orig_trig
+
+        async with SessionLocal() as s:
+            m = (await s.execute(select(Monitor).where(Monitor.id == mid))).scalar_one()
+            snap = (await s.execute(select(Snapshot).where(Snapshot.monitor_id == mid)
+                    .order_by(Snapshot.id.desc()))).scalars().first()
+        assert m.consecutive_failures == 0            # recovery in progress is NOT a failure
+        assert snap.status == SnapshotStatus.error and "re-login" in (snap.error or "").lower()
+        assert triggered == [mid]                     # agent succeeded → re-checked
+        return True
+
+    assert _run(_t)
+
 
 def test_consent_clicks_and_block_annoyances_persist():
     """The manual consent_clicks override + block_annoyances toggle round-trip

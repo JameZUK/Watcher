@@ -66,6 +66,7 @@ _ADDED_COLUMNS = {
         "tags": "JSON", "adaptive_interval": "BOOLEAN DEFAULT 0",
         "group_id": "INTEGER", "block_annoyances": "BOOLEAN DEFAULT 1",
         "consent_clicks": "JSON", "consent_ai_tried": "BOOLEAN DEFAULT 0",
+        "auto_relogin_enabled": "BOOLEAN DEFAULT 0",
     },
     "groups": {
         "watch_intent": "TEXT", "kind": "VARCHAR(16) DEFAULT 'price'",

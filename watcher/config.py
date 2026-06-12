@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     render_retries: int = Field(default=1)              # extra render attempts on transient failure
     retry_backoff_seconds: float = Field(default=3.0)
     auto_pause_after_failures: int = Field(default=6)   # 0 disables auto-pause
+    # After a failed automatic AI re-login, wait this long before trying again (the
+    # per-user AI rate-limit is the hard budget ceiling; this just avoids hammering).
+    auto_relogin_cooldown_seconds: int = Field(default=6 * 3600)
     detect_timeout_seconds: int = Field(default=20)     # ceiling on diffing (regex-DoS guard)
 
     # --- Abuse / resource limits (public-exposure hardening) ---

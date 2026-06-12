@@ -156,6 +156,9 @@ def _apply_form(monitor: Monitor, form) -> None:
     policy = (form.get("ai_policy") or "").strip()
     monitor.ai_policy = policy if policy in ("silent", "label", "drop") else None
 
+    # Auto re-login when the stored session expires (credential logins only)
+    monitor.auto_relogin_enabled = _bool(form, "auto_relogin_enabled")
+
     # Value tracking
     monitor.track_value = _bool(form, "track_value")
     try:

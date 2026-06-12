@@ -195,6 +195,9 @@ class Monitor(Base):
 
     # Reliability
     consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
+    # Opt-in: when a scheduled check fails because the stored login session expired,
+    # run the AI agent headlessly to re-login (credential logins only — no captcha/OTP).
+    auto_relogin_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Organization
     tags: Mapped[list] = mapped_column(JSON, default=list)
