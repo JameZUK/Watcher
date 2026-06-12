@@ -485,6 +485,43 @@ async def _settle_for_content(page, *, min_chars: int = 150, timeout_ms: int = 9
         pass
 
 
+async def _settle_for_render(page, *, timeout_ms: int = 12000) -> None:
+    """Wait until the page has rendered real content — either meaningful visible
+    text OR a populated DOM. More tolerant than `_settle_for_content` for SPA /
+    shadow-DOM pages (e.g. modern e-commerce) whose `innerText` stays low even when
+    fully rendered, so the mobile pass doesn't screenshot a half-hydrated page."""
+    try:
+        await page.wait_for_function(
+            """() => {
+              const b = document.body; if (!b) return false;
+              const text = ((b.innerText || '')).trim().length;
+              const els = b.querySelectorAll('*').length;
+              return text >= 150 || els >= 60;
+            }""",
+            timeout=timeout_ms,
+        )
+    except Exception:
+        pass
+
+
+async def mobile_screenshot_or_none(page) -> bytes | None:
+    """Screenshot the current (mobile-viewport) page, unless it's an anti-bot
+    challenge interstitial. Shared by both engines' mobile pass so they behave
+    identically.
+
+    We only reach the mobile pass after the desktop pass already succeeded and
+    wasn't anti-bot-walled, using the same cookies — so the mobile page is real
+    content unless it's specifically a challenge page. We therefore reject ONLY a
+    recognised challenge interstitial, never on a low `innerText` alone: SPA
+    hydration is async and shadow-DOM text isn't counted by `innerText`, so a
+    perfectly-rendered product page can momentarily read as empty. Gating on the
+    text length (the old behaviour) intermittently discarded good mobile captures,
+    leaving the UI to fall back to the desktop image."""
+    if _looks_blocked(None, await _body_text(page)):
+        return None
+    return await full_page_png(page)
+
+
 async def navigate(page, monitor: Monitor):
     """Navigate to the monitor URL, tolerating a wait condition that never settles.
 

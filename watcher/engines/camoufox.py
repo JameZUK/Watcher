@@ -16,14 +16,14 @@ from ..auth.login_flows import mark_session, session_is_valid
 from ..config import settings
 from ..models import Monitor
 from ._common import (
-    _settle_for_content,
+    _settle_for_render,
     apply_actions,
     capture,
     click_consent,
     do_wait,
     hide_banners,
-    full_page_png,
     install_consent_autodismiss,
+    mobile_screenshot_or_none,
     navigate,
     replay_login,
     reveal_full_content,
@@ -147,22 +147,15 @@ class CamoufoxRenderer:
             await setup_blocking(context, monitor)
             await navigate(page, monitor)
             await do_wait(page, monitor)
-            await _settle_for_content(page)
+            await _settle_for_render(page)
             await click_consent(page, monitor)
             await install_consent_autodismiss(page, monitor)
             await hide_banners(page, monitor)
             await reveal_full_content(page, monitor)
 
-            # Don't store a blocked/empty challenge page as the "mobile" preview.
-            try:
-                chars = await page.evaluate(
-                    "() => ((document.body && document.body.innerText) || '').trim().length"
-                )
-            except Exception:
-                chars = 0
-            png = None
-            if chars >= 100:
-                png = await full_page_png(page)
+            # Capture unless it's a challenge interstitial (not on innerText alone —
+            # SPA/shadow-DOM pages read as low-text even when fully rendered).
+            png = await mobile_screenshot_or_none(page)
 
             try:
                 await context.close()
