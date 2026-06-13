@@ -135,6 +135,7 @@ select.field option { background:#0b0d1f; }
 .pill { font-size:.7rem; padding:.15rem .55rem; border-radius:9999px; border:1px solid rgba(255,255,255,.12);
   background:rgba(255,255,255,.05); color:#cbd5e1; }
 .pill-amber { background:rgba(245,158,11,.15); border-color:rgba(245,158,11,.3); color:#fcd34d; }
+.pill-red { background:rgba(244,63,94,.15); border-color:rgba(244,63,94,.35); color:#fda4af; }
 
 /* Diff rendering ----------------------------------------------------------- */
 pre.diff { tab-size:2; }

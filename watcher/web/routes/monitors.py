@@ -1220,8 +1220,20 @@ async def monitor_detail(
     elif changes:
         selected = changes[0]
 
-    diff_payload = _diff_payload(selected) if selected else None
-    overlays = await _overlays_payload(session, monitor, selected) if selected else None
+    # The unified timeline marks which snapshots are change-points (a change's
+    # to_snapshot) and carries the change's headline/rating for the badge + sidebar.
+    # The diff itself is fetched on demand (/changes/{id}/overlays) when scrubbed to.
+    imp_label = {"high": "high importance", "medium": "medium",
+                 "low": "low importance", "noise": "noise"}
+    change_by_snap = {
+        c.to_snapshot_id: {
+            "cid": c.id, "headline": c.ai_headline or c.summary,
+            "imp": c.ai_importance, "imp_label": imp_label.get(c.ai_importance, c.ai_importance),
+            "cat": c.ai_category, "acked": bool(c.acknowledged),
+        }
+        for c in changes if c.to_snapshot_id
+    }
+    initial_snap_id = selected.to_snapshot_id if selected else None
     latest = snapshots[0] if snapshots else None
 
     # Tracked-value time series (chronological) for the history chart.
@@ -1237,8 +1249,8 @@ async def monitor_detail(
         request, "monitor_detail.html",
         {
             "user": user, "monitor": monitor, "changes": changes,
-            "snapshots": snapshots, "selected": selected, "diff": diff_payload,
-            "overlays": overlays,
+            "snapshots": snapshots, "selected": selected,
+            "change_by_snap": change_by_snap, "initial_snap_id": initial_snap_id,
             "latest": latest, "value_series": value_series, "value_current": value_current,
             "checking": is_checking(monitor.id),
         },
@@ -1351,6 +1363,32 @@ async def snapshot_image(
         key = snap.screenshot_mobile_blob if mobile else snap.screenshot_blob
         key = key or snap.screenshot_blob or snap.screenshot_mobile_blob
     return _serve_blob_image(request, key)
+
+
+@router.get("/monitors/{monitor_id}/changes/{change_id}/overlays")
+async def change_overlays_json(
+    monitor_id: int,
+    change_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """The slot-matched element diff (overlays + word diffs) for one change, fetched
+    on demand by the unified timeline when you scrub to a change-point. Falls back to
+    the raw text-diff lines when the change predates element maps (no overlays)."""
+    monitor = await _owned_monitor(session, user, monitor_id)
+    change = await session.get(Change, change_id)
+    if not change or change.monitor_id != monitor_id:
+        raise HTTPException(404)
+    overlays = await _overlays_payload(session, monitor, change)
+    text_lines = (blobs.get_text(change.diff_blob) or "").splitlines() if change.diff_blob else []
+    return JSONResponse({
+        "overlays": overlays,
+        "text": text_lines[:4000],
+        "headline": change.ai_headline or change.summary,
+        "category": change.ai_category,
+        "importance": change.ai_importance,
+        "acknowledged": bool(change.acknowledged),
+    })
 
 
 @router.get("/monitors/{monitor_id}/changes/{change_id}/overlay")
