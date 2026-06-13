@@ -779,9 +779,11 @@ _FLEET_SCHEMA = {
 }
 
 _FLEET_SYSTEM = (
-    "You write a short, skimmable summary of what changed across a user's monitored "
-    "websites recently. You get a list of changes — each with a monitor id, the site "
-    "name, an importance, and a headline. Write a natural 2-4 sentence paragraph that "
+    "You write a short, skimmable summary of what's NEW across a user's monitored "
+    "websites — these are changes the user has NOT yet reviewed, so summarise them as "
+    "new/recent (don't restate things as if already known). You get a list of changes — "
+    "each with a monitor id, the site name, an importance, and a headline. Write a "
+    "natural 2-4 sentence paragraph that "
     "leads with the most important/interesting changes, groups related ones, and gives "
     "the overall picture; mention minor/'noise' updates only briefly or in aggregate.\n"
     "\n"

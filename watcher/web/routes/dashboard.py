@@ -37,39 +37,37 @@ def _summary_days(user) -> int:
 
 
 async def _fleet_summary(session, user, monitors) -> dict:
-    """A one-glance summary across ALL the user's sites: recent change count + the
-    sites/importance breakdown + the top few headlines + fleet health. Built from
-    the already-stored change summaries — no AI call, no per-monitor work."""
+    """A one-glance summary of what's NEW across ALL the user's sites: the count of
+    *unreviewed* (unacknowledged) changes + the sites/importance breakdown + the top
+    few headlines + fleet health. Acknowledged changes are excluded so the summary
+    doesn't re-state what the user has already seen. No AI call, no per-monitor work."""
     days = _summary_days(user)
     since = utcnow() - timedelta(days=days)
-    recent = (
-        select(Change).join(Monitor, Monitor.id == Change.monitor_id)
-        .where(Monitor.user_id == user.id, Change.detected_at >= since)
-    )
+    # New = within the window AND not yet acknowledged (reviewed).
+    where = (Monitor.user_id == user.id, Change.detected_at >= since,
+             Change.acknowledged.is_(False))
+    recent = select(Change).join(Monitor, Monitor.id == Change.monitor_id).where(*where)
     changes = (await session.execute(
         select(func.count()).select_from(recent.subquery()))).scalar_one()
     sites = (await session.execute(
         select(func.count(func.distinct(Change.monitor_id)))
-        .join(Monitor, Monitor.id == Change.monitor_id)
-        .where(Monitor.user_id == user.id, Change.detected_at >= since))).scalar_one()
+        .join(Monitor, Monitor.id == Change.monitor_id).where(*where))).scalar_one()
     imp = dict((await session.execute(
         select(Change.ai_importance, func.count(Change.id))
-        .join(Monitor, Monitor.id == Change.monitor_id)
-        .where(Monitor.user_id == user.id, Change.detected_at >= since)
+        .join(Monitor, Monitor.id == Change.monitor_id).where(*where)
         .group_by(Change.ai_importance))).all())
     top_rows = (await session.execute(
         select(Change, Monitor.name, Monitor.id)
-        .join(Monitor, Monitor.id == Change.monitor_id)
-        .where(Monitor.user_id == user.id, Change.detected_at >= since)
+        .join(Monitor, Monitor.id == Change.monitor_id).where(*where)
         .order_by(Change.detected_at.desc()).limit(5))).all()
     top = [{"headline": ch.ai_headline or ch.summary or "Change detected",
             "monitor": mname or "", "monitor_id": mid,
             "importance": ch.ai_importance, "at": ch.detected_at} for ch, mname, mid in top_rows]
     max_id = (await session.execute(
         select(func.max(Change.id)).join(Monitor, Monitor.id == Change.monitor_id)
-        .where(Monitor.user_id == user.id, Change.detected_at >= since))).scalar() or 0
-    # The fingerprint also folds in the user's summary settings, so editing the
-    # focus/window invalidates the cached paragraph and regenerates it.
+        .where(*where))).scalar() or 0
+    # The fingerprint folds in the user's summary settings AND the unreviewed set, so the
+    # paragraph regenerates when a new change arrives OR when the user reviews some.
     prompt_sig = hash((user.summary_prompt or "").strip()) & 0xFFFFFFFF
     return {
         "days": days,
@@ -106,7 +104,8 @@ async def _generate_fleet_paragraph(user_id, fp, model, base_url, key, days, ins
                 select(Change, Monitor.name, Monitor.id, Monitor.url, Snapshot.title)
                 .join(Monitor, Monitor.id == Change.monitor_id)
                 .outerjoin(Snapshot, Snapshot.id == Change.to_snapshot_id)
-                .where(Monitor.user_id == user_id, Change.detected_at >= since)
+                .where(Monitor.user_id == user_id, Change.detected_at >= since,
+                       Change.acknowledged.is_(False))           # only what's unreviewed
                 .order_by(Change.detected_at.desc()).limit(40))).all()
         changes = [{"monitor_id": mid, "monitor": mname or "", "domain": _domain(murl),
                     "title": stitle or "", "importance": ch.ai_importance,

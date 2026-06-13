@@ -689,10 +689,15 @@ def test_dashboard_fleet_summary():
                 s.add(snap); await s.flush()
                 s.add(Change(monitor_id=m.id, to_snapshot_id=snap.id, change_type=DetectionMode.auto,
                              ai_headline="Price dropped to £199", ai_importance="high"))
+                # An ALREADY-REVIEWED change must NOT be summarised.
+                ack_snap = Snapshot(monitor_id=m.id, status=SnapshotStatus.ok); s.add(ack_snap); await s.flush()
+                s.add(Change(monitor_id=m.id, to_snapshot_id=ack_snap.id, change_type=DetectionMode.auto,
+                             ai_headline="Old reviewed change", ai_importance="high", acknowledged=True))
                 await s.commit()
             r = (await c.get("/")).text
-            assert "1 change across 1 site" in r       # cross-site summary
-            assert "Price dropped to £199" in r        # top headline
+            assert "1 new change across 1 site" in r   # only the unreviewed one counts
+            assert "Price dropped to £199" in r        # top (unreviewed) headline
+            assert "Old reviewed change" not in r      # acknowledged → excluded
             assert "1 high" in r                        # importance breakdown
         return True
 

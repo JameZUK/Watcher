@@ -30,13 +30,13 @@
     <div class="min-w-0 flex-1">
       <div class="flex items-center gap-2 flex-wrap">
         {% if summary.changes %}
-        <p class="font-semibold text-white">{{ summary.changes }} change{{ 's' if summary.changes != 1 }} across {{ summary.sites }} site{{ 's' if summary.sites != 1 }}</p>
+        <p class="font-semibold text-white">{{ summary.changes }} new change{{ 's' if summary.changes != 1 }} across {{ summary.sites }} site{{ 's' if summary.sites != 1 }}</p>
         {% if summary.high %}<span class="pill" style="background:rgba(244,63,94,.18);color:#fda4af;">{{ summary.high }} high</span>{% endif %}
         {% if summary.medium %}<span class="pill pill-amber">{{ summary.medium }} medium</span>{% endif %}
         {% else %}
-        <p class="font-semibold text-white">All quiet — nothing changed across {{ summary.total }} site{{ 's' if summary.total != 1 }}</p>
+        <p class="font-semibold text-white">You're all caught up — nothing new across {{ summary.total }} site{{ 's' if summary.total != 1 }}</p>
         {% endif %}
-        <span class="text-xs text-slate-500">· last {{ summary.days }} days</span>
+        <span class="text-xs text-slate-500">· unreviewed · last {{ summary.days }} days</span>
       </div>
       {# AI-written paragraph with links embedded to the relevant monitors. Text is
          autoescaped; links only ever point at the user's own validated monitor ids. #}

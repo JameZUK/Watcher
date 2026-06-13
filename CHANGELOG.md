@@ -2,6 +2,16 @@
 
 All notable changes to Watcher are documented here. Dates are ISO-8601.
 
+## 2026-06-13 — Dashboard summary only reports what's unreviewed
+
+### Changed
+- **The home summary is review-aware.** It now summarises only **unacknowledged**
+  changes — the things you haven't reviewed yet — instead of re-stating everything in
+  the window. Acknowledging a change (individually or "mark all read") drops it from the
+  summary, and when you've reviewed everything the banner reads "You're all caught up —
+  nothing new". The AI paragraph regenerates as new changes arrive and as you review
+  them. The banner now counts "N new change(s)".
+
 ## 2026-06-13 — Title-aware headlines + a collapsible home summary
 
 ### Changed
