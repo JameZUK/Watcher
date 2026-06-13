@@ -683,6 +683,13 @@ async def _check_monitor_inner(monitor_id: int, *, manual: bool = False) -> None
                                 error=f"Blocked internal target — {target_err}", http_status=None)
                     return
 
+            # End the read transaction BEFORE the (up-to-75s) render so it doesn't pin
+            # SQLite's WAL checkpoint horizon for the whole render — under concurrent
+            # slow renders the WAL would grow unbounded and never truncate. commit()
+            # (not rollback, which always expires) + expire_on_commit=False keeps
+            # `monitor`/`prev` fully usable here; the writes below autobegin a fresh txn.
+            await session.commit()
+
             result = await _render(monitor)
             # Retry transient render failures (driver crash / network / 5xx) with backoff.
             attempt = 0

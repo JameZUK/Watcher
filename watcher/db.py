@@ -13,7 +13,16 @@ from sqlalchemy.ext.asyncio import (
 
 from .config import settings
 
-engine = create_async_engine(settings.database_url, echo=False, future=True)
+# A bigger pool than the default 5: a check holds its connection for the whole cycle
+# (now without an open transaction across the render — see runner), and web requests +
+# scheduler jobs need connections concurrently. connect_args timeout is a driver-level
+# backstop alongside the per-connection busy_timeout PRAGMA below.
+_is_sqlite = settings.database_url.startswith("sqlite")
+engine = create_async_engine(
+    settings.database_url, echo=False, future=True,
+    pool_size=settings.db_pool_size, max_overflow=settings.db_max_overflow,
+    connect_args={"timeout": 15} if _is_sqlite else {},
+)
 
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 
