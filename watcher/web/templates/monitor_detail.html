@@ -375,7 +375,7 @@
     {% endif %}
 
     <!-- AI's understanding of this page (drives smart, scoped change triage) -->
-    <div class="glass rounded-2xl p-4" x-data="{ busy:false, profile: {{ (monitor.ai_page_profile or '')|tojson }}, err:'' }">
+    <div class="glass rounded-2xl p-4" x-data='{ busy:false, profile: {{ (monitor.ai_page_profile or "")|tojson }}, err:"" }'>
       <div class="flex items-center justify-between gap-2 mb-1">
         <span class="text-sm font-semibold text-white">Page understanding</span>
         <button type="button" class="btn btn-ghost !px-2 !py-1 text-xs inline-flex items-center gap-1" :disabled="busy"
