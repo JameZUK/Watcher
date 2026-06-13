@@ -214,6 +214,10 @@ def test_triage_prompt_enforces_scope_and_grounding(fake_http):
     user = msgs[1]["content"]
     user_text = user if isinstance(user, str) else " ".join(p.get("text", "") for p in user)
     assert "only reviews, ignore job listings" in user_text
+    # The change is framed as explicit BEFORE (removed) / AFTER (added) blocks, not a
+    # raw unified diff — clearer state framing that isolates the change on churny pages.
+    lt = user_text.lower()
+    assert "before (text present last check" in lt and "after (text added this check" in lt
 
 
 def test_extract_value_threads_base_url(fake_http):
