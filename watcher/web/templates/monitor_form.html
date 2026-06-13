@@ -12,7 +12,7 @@
   <input name="{{ name }}" type="{{ type }}" value="{{ value if value is not none else '' }}" placeholder="{{ placeholder }}" class="field">
 {% endmacro %}
 {% block content %}
-<div class="max-w-3xl mx-auto">
+<div class="max-w-6xl mx-auto">
   <div class="flex items-center justify-between mb-6">
     <h1 class="text-2xl sm:text-3xl font-bold tracking-tight text-white">{{ 'Edit monitor' if m else 'New' }} {% if not m %}<span class="grad-text">monitor</span>{% endif %}</h1>
     {% if m %}<a href="/monitors/{{ m.id }}" class="text-sm text-slate-400 hover:text-white">Cancel</a>{% endif %}
@@ -61,6 +61,7 @@
     <!-- Manual configuration (advanced for new monitors; always shown when editing) -->
     <div x-show="adv" x-cloak class="space-y-5">
 
+    <div class="card-grid">
     <!-- Basics -->
     <section class="glass rounded-2xl p-5 sm:p-6 space-y-4">
       <div class="grid sm:grid-cols-2 gap-4">
@@ -541,6 +542,7 @@
         {{ field('webhook_url', m.webhook_url if m else '', type='url', placeholder='https://hooks.example.com/...') }}
       </div>
     </section>
+    </div><!-- /card-grid -->
 
     <div class="flex items-center justify-between gap-4">
       <label class="flex items-center gap-2.5 text-sm text-slate-300">

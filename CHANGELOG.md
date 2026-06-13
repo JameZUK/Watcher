@@ -2,7 +2,7 @@
 
 All notable changes to Watcher are documented here. Dates are ISO-8601.
 
-## 2026-06-14 — Two-column Settings & Account on desktop
+## 2026-06-14 — Two-column Settings, Account & monitor form on desktop
 
 ### Changed
 - **Settings and Account now use the desktop width.** Both pages were a single ~640px
@@ -11,6 +11,12 @@ All notable changes to Watcher are documented here. Dates are ISO-8601.
   on screens ≥1024px, and collapse back to a single readable column below that. No card
   internals changed — it's purely the page-level layout. (`.card-grid` helper in
   `app.css`.) A desktop-wide review of every other view found no layout issues to fix.
+- **The new/edit monitor form gets the same two-column treatment.** Its advanced-config
+  section cards (Basics, Detection, Rendering, Authentication, Session cookies, AI triage,
+  Value tracking, Notifications) now flow into two balanced columns on wide screens, while
+  the URL field, the "Set up with AI" intro and the Save row stay full-width. The AI-login
+  modal is `position: fixed`, so it still covers the whole viewport — multicol doesn't clip
+  it. Single column below 1024px, unchanged.
 
 ## 2026-06-14 — Mobile UX fixes
 
