@@ -113,12 +113,15 @@
   </nav>
 
   <!-- Fullscreen image lightbox: zoom (buttons / double-tap / pinch) + scroll-to-pan -->
-  <div x-data="{ moved: false,
+  <div x-data="{ moved: false, hov: null,
                  pos(){ if (this.moved) return; const el = $refs.lbscroll; if (!el) return;
                    const max = Math.max(0, el.scrollHeight - el.clientHeight);
                    el.scrollTop = Math.min(max, Math.max(0, $store.lb.atFrac * el.scrollHeight - el.clientHeight / 2)); },
                  lbBoxStyle(b){ const d = $store.lb.dims || {}; const pw = d.pw || 1, ph = d.ph || 1;
-                   return `left:${100*(b.x||0)/pw}%;top:${100*(b.y||0)/ph}%;width:${100*(b.w||0)/pw}%;height:${100*(b.h||0)/ph}%`; } }"
+                   return `left:${100*(b.x||0)/pw}%;top:${100*(b.y||0)/ph}%;width:${100*(b.w||0)/pw}%;height:${100*(b.h||0)/ph}%`; },
+                 segCls(s){ return s.op === 'add' ? 'diff-add' : s.op === 'del' ? 'diff-del' : 'text-slate-400'; },
+                 kindCls(b){ return b ? 'ov-' + b.kind + '-t' : ''; },
+                 popSide(b){ const d = $store.lb.dims || {}; return ((b.x||0)/(d.pw||1) < 0.55) ? 'right' : 'left'; } }"
        x-cloak x-show="$store.lb.shown" x-transition.opacity
        class="fixed inset-0 z-[60] bg-black/90 backdrop-blur-sm flex flex-col"
        x-effect="if ($store.lb.shown) { $store.lb.srcs; moved = false; $nextTick(() => pos()); }"
@@ -142,9 +145,19 @@
                class="block w-full select-none" :class="$store.lb.zoom>1 ? 'cursor-zoom-out' : 'cursor-zoom-in'">
         </template>
         <template x-if="$store.lb.boxes.length && $store.lb.dims">
-          <div class="absolute inset-0 pointer-events-none">
+          <div class="absolute inset-0">
             <template x-for="(b, bi) in $store.lb.boxes" :key="bi">
-              <div class="ov-box on" :class="'ov-'+b.kind" :style="lbBoxStyle(b)"></div>
+              <div class="ov-box on" :class="'ov-'+b.kind" :style="lbBoxStyle(b)"
+                   @mouseenter="hov=b" @mouseleave="hov=null" @dblclick="$store.lb.toggle()">
+                <div x-show="hov===b" x-cloak class="ov-pop" :class="popSide(b)">
+                  <div class="flex items-center gap-1.5 mb-1">
+                    <span class="text-[10px] uppercase tracking-wide font-semibold" :class="kindCls(b)" x-text="b.kind"></span>
+                    <span class="text-[10px] text-slate-500" x-text="b.type"></span>
+                  </div>
+                  <template x-if="b.diff && b.diff.length"><p class="text-xs leading-snug break-words"><template x-for="(s, sj) in b.diff" :key="sj"><span :class="segCls(s)" x-text="s.t + ' '"></span></template></p></template>
+                  <template x-if="!(b.diff && b.diff.length)"><p class="text-xs text-slate-300 break-words" x-text="b.snippet"></p></template>
+                </div>
+              </div>
             </template>
           </div>
         </template>
