@@ -304,7 +304,7 @@ async def _maybe_profile_page(app, monitor, result) -> None:
     task.add_done_callback(_profile_tasks.discard)
 
 
-async def _maybe_triage(app, monitor, change_result, result, intent=None):
+async def _maybe_triage(app, monitor, change_result, result, intent=None, prev=None, snap=None):
     """Best-effort AI triage of a detected change. Returns a Triage or None."""
     if not (monitor.ai_enabled and app.ai_enabled):
         return None
@@ -321,12 +321,28 @@ async def _maybe_triage(app, monitor, change_result, result, intent=None):
         return None
     has_text = bool((change_result.diff_text or "").strip())
     image = None if has_text else (change_result.diff_overlay_png or result.screenshot_png)
+    # Content-anchored localization (resolution-independent): a structured summary of
+    # which discrete content blocks changed + a focused crop of a representative one.
+    # Pixel/whole-page views can't do this on reflowing pages; the element map can.
+    element_summary, crop_png = None, None
+    try:
+        if prev is not None and snap is not None and getattr(snap, "element_map", None):
+            from .detection.elements import localize_change
+            loc = await asyncio.to_thread(
+                localize_change, prev.element_map, snap.element_map,
+                snap.screenshot_sections, prev.screenshot_sections)
+            element_summary = (loc.get("summary") or "").strip() or None
+            crop_png = loc.get("crop")
+    except Exception:
+        logging.getLogger("watcher").warning(
+            "element-localization failed for monitor %s", monitor.id)
     return await triage_change(
         api_key=key, model=app.ai_model, base_url=app.ai_base_url, url=monitor.url, title=result.title,
         intent=intent if intent is not None else monitor.ai_watch_intent,
         diff_text=change_result.diff_text, image_png=image,
         page_profile=monitor.ai_page_profile,
         churn_hint=churn.churny_texts(monitor.churn_lines),
+        element_summary=element_summary, crop_png=crop_png,
     )
 
 
@@ -844,7 +860,8 @@ async def _check_monitor_inner(monitor_id: int) -> None:
                     g = await session.get(Group, monitor.group_id)
                     effective_intent = _combine_intent(g.watch_intent if g else None, monitor.ai_watch_intent)
                 # AI triage only when there's a real content change to summarise.
-                triage = await _maybe_triage(app, monitor, change_result, result, effective_intent) if change_result.changed else None
+                triage = await _maybe_triage(app, monitor, change_result, result, effective_intent,
+                                             prev=prev, snap=snap) if change_result.changed else None
                 importance = triage.importance if triage else None
                 # A threshold crossing is always notable and overrides muting.
                 if threshold_msg:

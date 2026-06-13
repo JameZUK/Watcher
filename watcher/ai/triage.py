@@ -186,7 +186,8 @@ def _split_diff(diff_text: str, *, cap: int = 6000) -> tuple[str, str]:
     return r, a
 
 
-def _user_content(url, title, intent, diff_text, image_png, page_profile=None, churn_hint=None):
+def _user_content(url, title, intent, diff_text, image_png, page_profile=None, churn_hint=None,
+                  element_summary=None, crop_png=None):
     domain = ""
     try:
         domain = urlparse(url).netloc
@@ -215,6 +216,26 @@ def _user_content(url, title, intent, diff_text, image_png, page_profile=None, c
             + "\n- ".join(churn_hint[:25])
             + "\n===== END UNTRUSTED CHURN LINES =====")
 
+    # Structured element-diff — Watcher parsed the page's content blocks and these are
+    # the discrete items ADDED/REMOVED with their type. It's the authoritative,
+    # churn-free, resolution-independent record of WHAT changed (the quoted snippets
+    # are page text); use it to ground the item-type and scope decisions.
+    if element_summary and element_summary.strip():
+        lines.append(
+            "\nStructured change analysis (the discrete content blocks that were "
+            "added/removed, by type — treat this as the authoritative list of WHAT "
+            "changed; the quoted snippets are page text):\n" + element_summary.strip())
+
+    images = []
+    if crop_png:
+        _cu = _compact_image(crop_png)
+        if _cu:
+            lines.append(
+                "\nAttached image: a focused screenshot of a representative changed "
+                "block, for visual context (which kind of section it is — e.g. a reviews "
+                "list vs a jobs widget).")
+            images.append({"type": "image_url", "image_url": {"url": _cu}})
+
     if diff_text and diff_text.strip():
         # Present the change as explicit BEFORE (removed) / AFTER (added) state rather
         # than a raw unified diff. The split reads more clearly for the model (what the
@@ -230,7 +251,8 @@ def _user_content(url, title, intent, diff_text, image_png, page_profile=None, c
             + "\n===== AFTER (text added this check) =====\n"
             + (added or "(nothing added)")
             + "\n===== END =====")
-        return "\n".join(lines)
+        text = "\n".join(lines)
+        return ([{"type": "text", "text": text}, *images]) if images else text
 
     # Visual-only change: attach a screenshot if we have one.
     data_url = _compact_image(image_png) if image_png else None
@@ -251,9 +273,11 @@ def _user_content(url, title, intent, diff_text, image_png, page_profile=None, c
         return [
             {"type": "text", "text": "\n".join(lines)},
             {"type": "image_url", "image_url": {"url": data_url}},
+            *images,
         ]
     lines.append("\nThe page changed but no diff or screenshot is available.")
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    return ([{"type": "text", "text": text}, *images]) if images else text
 
 
 def _parse(content: str) -> Triage | None:
@@ -295,6 +319,8 @@ async def triage_change(
     image_png: bytes | None = None,
     page_profile: str | None = None,
     churn_hint: list | None = None,
+    element_summary: str | None = None,
+    crop_png: bytes | None = None,
     timeout: float = 30.0,
 ) -> Triage | None:
     """Call OpenRouter and return a Triage, or None on any failure."""
@@ -306,7 +332,8 @@ async def triage_change(
             {"role": "system", "content": _SYSTEM},
             {"role": "user",
              "content": _user_content(url, title, intent, diff_text, image_png,
-                                      page_profile, churn_hint)},
+                                      page_profile, churn_hint,
+                                      element_summary=element_summary, crop_png=crop_png)},
         ],
         "temperature": 0.1,
         "max_tokens": 400,

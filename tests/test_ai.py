@@ -220,6 +220,20 @@ def test_triage_prompt_enforces_scope_and_grounding(fake_http):
     assert "before (text present last check" in lt and "after (text added this check" in lt
 
 
+def test_triage_user_content_includes_element_summary(fake_http):
+    """The structured element-diff summary is threaded into the triage prompt as
+    authoritative grounding for WHAT changed (Option B)."""
+    _run(T.triage_change(api_key="k", model="m", url="u", title="t", intent="x",
+                         diff_text="- a\n+ b",
+                         element_summary="ADDED 2 content block(s) — 2× job. e.g.: Sr. Analyst View job"))
+    msgs = fake_http.last["json"]["messages"]
+    user = msgs[1]["content"]
+    text = user if isinstance(user, str) else " ".join(p.get("text", "") for p in user)
+    lt = text.lower()
+    assert "structured change analysis" in lt
+    assert "added 2 content block" in lt
+
+
 def test_extract_value_threads_base_url(fake_http):
     r = _run(T.extract_value(api_key="k", model="m", base_url="http://x/v1",
                              url="u", title="t", page_text="Price £1.50"))
