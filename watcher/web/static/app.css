@@ -252,3 +252,17 @@ html.view-list .mon-foot { margin-top: 0; flex: none; text-align: right; flex-di
   -webkit-backdrop-filter: blur(16px);
 }
 html.perf-lite .popover { background: #14121e; backdrop-filter: none; -webkit-backdrop-filter: none; }
+
+/* Two-column card masonry for stacked, independent cards (Settings, Account).
+   These pages were a single ~640px column that left wide empty margins on
+   desktop. CSS multicol packs the variable-height cards into two balanced
+   columns on large screens; break-inside:avoid keeps a card whole. Below the
+   lg breakpoint it stays a single readable column. Spacing matches gap-5. */
+.card-grid > * { margin-bottom: 1.25rem; }
+@media (min-width: 1024px) {
+  .card-grid { column-count: 2; column-gap: 1.25rem; }
+  .card-grid > * {
+    break-inside: avoid;
+    -webkit-column-break-inside: avoid;
+  }
+}

@@ -3,12 +3,13 @@
 {% set msgs = {'profile':'Profile updated.','password':'Password changed.','otp_scan':'Scan the QR with your authenticator, then enter a code to finish.','otp_on':'Two-factor authentication is now on.','otp_off':'Two-factor authentication is off.'} %}
 {% set errs = {'email_taken':'That email is already in use.','bad_password':'Current password is incorrect.','weak_password':'New password must be 8–1024 characters.','otp_code':'That code didn’t verify — try again.','otp_off':'Enter your password or a current code to turn 2FA off.','otp_required':'Your administrator requires two-factor authentication. Please set it up below.'} %}
 {% block content %}
-<div class="max-w-2xl mx-auto space-y-5">
-  <h1 class="text-2xl sm:text-3xl font-bold tracking-tight text-white mb-1">Your <span class="grad-text">account</span></h1>
+<div class="max-w-4xl mx-auto">
+  <h1 class="text-2xl sm:text-3xl font-bold tracking-tight text-white mb-4">Your <span class="grad-text">account</span></h1>
 
-  {% if msg and msgs.get(msg) %}<div class="rounded-xl bg-emerald-500/10 border border-emerald-500/25 px-4 py-2.5 text-sm text-emerald-200">{{ msgs[msg] }}</div>{% endif %}
-  {% if err and errs.get(err) %}<div class="rounded-xl bg-red-500/10 border border-red-500/25 px-4 py-2.5 text-sm text-red-300">{{ errs[err] }}</div>{% endif %}
+  {% if msg and msgs.get(msg) %}<div class="rounded-xl bg-emerald-500/10 border border-emerald-500/25 px-4 py-2.5 text-sm text-emerald-200 mb-5">{{ msgs[msg] }}</div>{% endif %}
+  {% if err and errs.get(err) %}<div class="rounded-xl bg-red-500/10 border border-red-500/25 px-4 py-2.5 text-sm text-red-300 mb-5">{{ errs[err] }}</div>{% endif %}
 
+  <div class="card-grid">
   <!-- Profile -->
   <section class="glass rounded-2xl p-5 sm:p-6">
     <h2 class="font-semibold text-white mb-4">Profile</h2>
@@ -82,5 +83,6 @@
     </form>
     {% endif %}
   </section>
+  </div>
 </div>
 {% endblock %}

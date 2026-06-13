@@ -1,9 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Settings · Watcher{% endblock %}
 {% block content %}
-<div class="max-w-2xl mx-auto space-y-5">
-  <h1 class="text-3xl font-bold tracking-tight text-white mb-2">Settings</h1>
+<div class="max-w-5xl mx-auto">
+  <h1 class="text-3xl font-bold tracking-tight text-white mb-5">Settings</h1>
 
+  <div class="card-grid">
   <section class="glass rounded-2xl p-5 sm:p-6">
     <h2 class="font-semibold text-white mb-1">Account</h2>
     <p class="text-sm text-slate-400">Signed in as <span class="font-medium text-slate-200">{{ user.email }}</span></p>
@@ -210,6 +211,7 @@
     <h2 class="font-semibold text-white mb-1">Webhooks</h2>
     <p class="text-sm text-slate-400">Configured per monitor. Payloads are signed with HMAC-SHA256 in the <code class="text-brand-400">X-Watcher-Signature</code> header.</p>
   </section>
+  </div>
 </div>
 {% endblock %}
 {% block scripts %}

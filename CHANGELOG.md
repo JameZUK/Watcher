@@ -2,6 +2,16 @@
 
 All notable changes to Watcher are documented here. Dates are ISO-8601.
 
+## 2026-06-14 — Two-column Settings & Account on desktop
+
+### Changed
+- **Settings and Account now use the desktop width.** Both pages were a single ~640px
+  column that left wide empty margins on large screens. Their independent cards now pack
+  into two balanced columns (CSS multicol with `break-inside: avoid`, so no card splits)
+  on screens ≥1024px, and collapse back to a single readable column below that. No card
+  internals changed — it's purely the page-level layout. (`.card-grid` helper in
+  `app.css`.) A desktop-wide review of every other view found no layout issues to fix.
+
 ## 2026-06-14 — Mobile UX fixes
 
 ### Fixed
