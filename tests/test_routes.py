@@ -699,6 +699,26 @@ def test_dashboard_fleet_summary():
     assert _run(_t)
 
 
+def test_dashboard_summary_fragment_endpoint():
+    """The polled /dashboard/summary endpoint returns JSON {ready, segments} so the
+    page can swap the AI paragraph in without a reload (AI off in tests → not ready)."""
+    async def _t():
+        from watcher.config import settings
+        from watcher.main import create_app
+        settings.registration_open = True
+        transport = httpx.ASGITransport(app=create_app())
+        email = _email()
+        async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                     headers={"Origin": "http://t"}, follow_redirects=True) as c:
+            await c.post("/register", data={"email": email, "password": "password123"})
+            r = await c.get("/dashboard/summary")
+            assert r.status_code == 200 and r.json()["ready"] is False
+            assert r.json()["segments"] == []
+        return True
+
+    assert _run(_t)
+
+
 def test_dashboard_fleet_summary_paragraph():
     """When a cached AI summary exists, the dashboard renders it as a paragraph with
     links embedded to the relevant monitors (and the text is escaped)."""

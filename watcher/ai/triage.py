@@ -764,12 +764,21 @@ _FLEET_SYSTEM = (
     "websites recently. You get a list of changes — each with a monitor id, the site "
     "name, an importance, and a headline. Write a natural 2-4 sentence paragraph that "
     "leads with the most important/interesting changes, groups related ones, and gives "
-    "the overall picture; mention minor/'noise' updates only briefly or in aggregate. "
-    "Return it as 'segments': split the paragraph into text runs, and for a run that "
-    "refers to a specific change set its monitor_id to that change's id (so it becomes "
-    "a link); use 0 for ordinary connective text. Each run must carry its own spaces "
-    "and punctuation so the runs read as one flowing paragraph. Never invent anything "
-    "that isn't in the list. Respond ONLY with the JSON."
+    "the overall picture; mention minor/'noise' updates only briefly or in aggregate.\n"
+    "\n"
+    "GROUND EVERY STATEMENT IN THE HEADLINES — summarise only what they actually say. "
+    "Do NOT infer, upgrade or embellish. A price / 'cheapest' / 'dropped' headline is "
+    "about PRICE ONLY — it says NOTHING about whether the item is in stock or available. "
+    "A review/related-items change is NOT a product or price change. STRICT RULE: do not "
+    "use the words 'available', 'in stock', 'back in stock' or 'now available' UNLESS "
+    "those exact words appear in a headline. Never state a price, value, stock state or "
+    "status that is not present verbatim in a headline.\n"
+    "\n"
+    "Return it as 'segments': split the paragraph into a FEW coarse runs (whole clauses, "
+    "NOT individual words). For a run that refers to a specific change, set its monitor_id "
+    "to that change's id (making it a link); use 0 for ordinary connective text. Each run "
+    "carries its own spaces/punctuation so the runs read as one flowing paragraph. "
+    "Respond ONLY with the JSON."
 )
 
 
@@ -801,8 +810,8 @@ async def summarize_fleet(
     body = {
         "model": model,
         "messages": messages,
-        "temperature": 0.3,
-        "max_tokens": 600,
+        "temperature": 0.1,        # low — summarise, don't embellish
+        "max_tokens": 1500,        # coarse runs + headroom so the JSON isn't truncated
         "response_format": {"type": "json_schema", "json_schema": _FLEET_SCHEMA},
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
@@ -811,7 +820,10 @@ async def summarize_fleet(
             resp = await client.post(base_url or OPENROUTER_URL, json=body, headers=headers)
         if resp.status_code != 200:
             return None
-        data = json.loads(resp.json()["choices"][0]["message"]["content"])
+        content = resp.json()["choices"][0]["message"]["content"] or ""
+        # Tolerate stray prose around the JSON object (some models add a preamble).
+        s, e = content.find("{"), content.rfind("}")
+        data = json.loads(content[s:e + 1] if s != -1 and e != -1 else content)
         out: list[dict] = []
         for seg in (data.get("segments") or []):
             if not isinstance(seg, dict):

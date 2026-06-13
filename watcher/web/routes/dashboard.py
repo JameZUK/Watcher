@@ -217,6 +217,7 @@ async def dashboard(
         .where(Monitor.user_id == user.id, Change.acknowledged.is_(False)))).scalar_one()
 
     summary = await _fleet_summary(session, user, all_monitors)
+    segments = await _fleet_paragraph(session, user, summary)
 
     return templates.TemplateResponse(
         request,
@@ -233,9 +234,37 @@ async def dashboard(
             "query": q or "",
             "groups": await _group_summaries(session, user),
             "summary": summary,
-            "summary_segments": await _fleet_paragraph(session, user, summary),
+            "summary_segments": segments,
+            # The AI paragraph generates in the background; when it's not ready yet but
+            # IS expected, the page polls for it (so it appears without a manual reload).
+            "summary_pending": await _summary_pending(session, user, summary, segments),
         },
     )
+
+
+async def _summary_pending(session, user, summary, segments) -> bool:
+    """True when the AI paragraph isn't ready yet but is expected to generate — so the
+    client should poll /dashboard/summary for it instead of waiting for a reload."""
+    if segments is not None or not (summary["changes"] and user.summary_enabled):
+        return False
+    from ...app_settings import get_app_settings, get_openrouter_key
+    app = await get_app_settings(session)
+    return bool(app.ai_enabled and get_openrouter_key(app))
+
+
+@router.get("/dashboard/summary")
+async def dashboard_summary_fragment(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Polled by the dashboard: returns the AI fleet-summary paragraph once the
+    background generation finishes, so it can swap in without a page reload."""
+    from fastapi.responses import JSONResponse
+    all_monitors = (await session.execute(
+        select(Monitor).where(Monitor.user_id == user.id))).scalars().all()
+    summary = await _fleet_summary(session, user, all_monitors)
+    segments = await _fleet_paragraph(session, user, summary)
+    return JSONResponse({"ready": segments is not None, "segments": segments or []})
 
 
 async def _group_summaries(session, user):

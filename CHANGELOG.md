@@ -2,7 +2,18 @@
 
 All notable changes to Watcher are documented here. Dates are ISO-8601.
 
-## 2026-06-13 — Smarter, page-aware change triage (no per-site rules)
+## 2026-06-13 — Dashboard summary: grounded prose + no reload needed
+
+### Fixed
+- **Dashboard summary no longer embellishes.** It claimed a product was "now available"
+  from a price-drop headline (the item was out of stock). The summary is now strictly
+  grounded in the change headlines — a price/'cheapest' headline is treated as price
+  only, and the words "available"/"in stock" are forbidden unless a headline contains
+  them — and it can't invent prices/values/states. Also fixed truncated output (the
+  per-run JSON was hitting the token cap and falling back to the plain list).
+- **The summary paragraph appears without a reload.** It generates in the background;
+  the page used to show the old headline list until you reloaded. The dashboard now
+  polls `/dashboard/summary` and swaps the paragraph in as soon as it's ready.
 
 A monitor watching Glassdoor "only for new reviews" kept alerting on *new analyst
 reviews* that didn't exist — the page's rotating **jobs widget** churned every check

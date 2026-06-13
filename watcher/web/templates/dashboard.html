@@ -38,11 +38,9 @@
         {% endif %}
         <span class="text-xs text-slate-500">· last {{ summary.days }} days</span>
       </div>
-      {% if summary_segments %}
       {# AI-written paragraph with links embedded to the relevant monitors. Text is
          autoescaped; links only ever point at the user's own validated monitor ids. #}
-      <p class="mt-2 text-sm text-slate-300 leading-relaxed">{% for seg in summary_segments %}{% if seg.monitor_id %}<a href="/monitors/{{ seg.monitor_id }}" class="text-brand-300 hover:underline">{{ seg.text }}</a>{% else %}{{ seg.text }}{% endif %}{% endfor %}</p>
-      {% elif summary.top %}
+      {% macro headline_list() %}
       <div class="mt-2 flex flex-col gap-1.5">
         {% for t in summary.top %}
         <a href="/monitors/{{ t.monitor_id }}" class="group flex items-baseline gap-2 text-sm min-w-0">
@@ -52,6 +50,18 @@
         </a>
         {% endfor %}
       </div>
+      {% endmacro %}
+      {% if summary_segments %}
+      <p class="mt-2 text-sm text-slate-300 leading-relaxed">{% for seg in summary_segments %}{% if seg.monitor_id %}<a href="/monitors/{{ seg.monitor_id }}" class="text-brand-300 hover:underline">{{ seg.text }}</a>{% else %}{{ seg.text }}{% endif %}{% endfor %}</p>
+      {% elif summary_pending %}
+      {# Not ready yet but generating — show the headline list now and poll for the
+         paragraph, swapping it in (no manual reload). #}
+      <div x-data="fleetSummary()" x-init="poll()">
+        <p x-ref="para" x-show="ready" x-cloak class="mt-2 text-sm text-slate-300 leading-relaxed"></p>
+        <div x-show="!ready">{% if summary.top %}{{ headline_list() }}{% else %}<p class="mt-2 text-xs text-slate-500">Summarising recent changes…</p>{% endif %}</div>
+      </div>
+      {% elif summary.top %}
+      {{ headline_list() }}
       {% endif %}
       <p class="text-xs text-slate-500 mt-2">
         {{ summary.total }} monitor{{ 's' if summary.total != 1 }}{% if summary.failing %} · <span class="text-rose-300">{{ summary.failing }} failing</span>{% endif %}{% if summary.paused %} · <span class="text-slate-400">{{ summary.paused }} paused</span>{% endif %}{% if not summary.failing and not summary.paused %} · all healthy{% endif %}
@@ -219,6 +229,35 @@ function groupForm(){return {
     if (!this.goal.trim()){ e.preventDefault(); this.aiError = 'Describe what to track in this group.'; return; }
     if (!this.urls.trim()){ e.preventDefault(); this.aiError = 'Add at least one page URL (one per line).'; return; }
     this.aiError = '';
+  },
+}}
+// Poll for the AI fleet-summary paragraph and swap it in when ready, so it appears
+// without a manual reload. Builds the DOM with textContent (XSS-safe) and only links
+// to /monitors/<id> for the server-validated monitor ids the API returns.
+function fleetSummary(){return {
+  ready: false,
+  async poll(){
+    for (let i = 0; i < 15 && !this.ready; i++){
+      await new Promise(r => setTimeout(r, 2500));
+      try {
+        const d = await (await fetch('/dashboard/summary', {headers:{'Accept':'application/json'}})).json();
+        if (d.ready && Array.isArray(d.segments) && d.segments.length){ this.render(d.segments); this.ready = true; }
+      } catch (e) {}
+    }
+  },
+  render(segs){
+    const p = this.$refs.para; p.textContent = '';
+    for (const s of segs){
+      if (s.monitor_id){
+        const a = document.createElement('a');
+        a.href = '/monitors/' + encodeURIComponent(s.monitor_id);
+        a.className = 'text-brand-300 hover:underline';
+        a.textContent = s.text;
+        p.appendChild(a);
+      } else {
+        p.appendChild(document.createTextNode(s.text));
+      }
+    }
   },
 }}
 function dashView(){return {
