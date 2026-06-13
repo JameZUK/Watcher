@@ -103,12 +103,16 @@ def _compact_image(png: bytes, *, max_side: int = 1280, quality: int = 70) -> st
         return None
 
 
-def _user_content(url, title, intent, diff_text, image_png):
+def _user_content(url, title, intent, diff_text, image_png, page_profile=None):
     lines = [f"URL: {url}"]
     if title:
         lines.append(f"Page title: {title}")
     if intent:
         lines.append(f'What the user is watching for: "{intent}"')
+    if page_profile and page_profile.strip():
+        # A previously-derived understanding of THIS page's regions — use it to judge
+        # which part of the diff changed and whether that part is in scope or churn.
+        lines.append("\nWhat we know about this page (for judging scope):\n" + page_profile.strip())
 
     if diff_text and diff_text.strip():
         # Cap the diff so a huge change can't blow up cost.
@@ -173,6 +177,7 @@ async def triage_change(
     intent: str | None,
     diff_text: str | None,
     image_png: bytes | None = None,
+    page_profile: str | None = None,
     timeout: float = 30.0,
 ) -> Triage | None:
     """Call OpenRouter and return a Triage, or None on any failure."""
@@ -182,7 +187,8 @@ async def triage_change(
         "model": model,
         "messages": [
             {"role": "system", "content": _SYSTEM},
-            {"role": "user", "content": _user_content(url, title, intent, diff_text, image_png)},
+            {"role": "user",
+             "content": _user_content(url, title, intent, diff_text, image_png, page_profile)},
         ],
         "temperature": 0.1,
         "max_tokens": 400,
@@ -204,6 +210,93 @@ async def triage_change(
         logger.warning("OpenRouter triage error: %s", exc)
         return None
     return _parse(content)
+
+
+_PROFILE_SCHEMA = {
+    "name": "page_profile",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "page_summary": {"type": "string",
+                             "description": "One line: what this page is."},
+            "relevant": {"type": "string",
+                         "description": "The region(s)/content whose changes the user cares about, described generically (no CSS)."},
+            "noise": {"type": "string",
+                      "description": "Region(s)/content on this page that change on their own and should be treated as churn / out of scope (e.g. rotating jobs, ads, recommendations, counts, timestamps)."},
+        },
+        "required": ["page_summary", "relevant", "noise"],
+    },
+}
+
+_PROFILE_SYSTEM = (
+    "You are profiling a monitored web page so that later change-detection can tell a "
+    "meaningful change from incidental page churn. You are given the page's URL, title, "
+    "the user's watch instruction (what they want to be alerted about), and the page's "
+    "visible text. Identify, in plain language and WITHOUT any CSS selectors or code:\n"
+    "- page_summary: one line on what the page is.\n"
+    "- relevant: the part(s) of the page whose changes the user actually cares about, "
+    "given their instruction (or, if no instruction, the page's primary content).\n"
+    "- noise: the part(s) that change on their own regardless of the thing being watched "
+    "— rotating job listings, ads, 'people also viewed'/recommendations, carousels, view/"
+    "follower counts, relative timestamps, prices of unrelated items, etc. Be specific to "
+    "THIS page (name the actual widgets/sections you can see), so a later step can tell "
+    "when a change is confined to that churn. Respond ONLY with the JSON."
+)
+
+
+async def profile_page(
+    *, api_key: str, model: str, base_url: str | None = None,
+    url: str, title: str | None, intent: str | None,
+    page_text: str | None, timeout: float = 40.0,
+) -> str | None:
+    """Study a page and return a short, plain-language understanding of its regions —
+    which matter for the user's intent and which are incidental churn — to feed later
+    triage. Returns an assembled guidance string, or None on failure."""
+    if not api_key or not (page_text or "").strip():
+        return None
+    text = page_text.strip()
+    if len(text) > 9000:
+        text = text[:9000] + "\n…(truncated)…"
+    lines = [f"URL: {url}"]
+    if title:
+        lines.append(f"Page title: {title}")
+    lines.append(f'User watch instruction: "{intent}"' if intent else "No specific watch instruction.")
+    lines.append("\nVisible text of the page:\n" + text)
+    body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _PROFILE_SYSTEM},
+            {"role": "user", "content": "\n".join(lines)},
+        ],
+        "temperature": 0.2,
+        "max_tokens": 400,
+        "response_format": {"type": "json_schema", "json_schema": _PROFILE_SCHEMA},
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(base_url or OPENROUTER_URL, json=body, headers=headers)
+        if resp.status_code != 200:
+            return None
+        data = json.loads(resp.json()["choices"][0]["message"]["content"])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("OpenRouter page-profile error: %s", exc)
+        return None
+    summ = (data.get("page_summary") or "").strip()
+    rel = (data.get("relevant") or "").strip()
+    noise = (data.get("noise") or "").strip()
+    if not (summ or rel or noise):
+        return None
+    parts = []
+    if summ:
+        parts.append(summ)
+    if rel:
+        parts.append("Changes that matter: " + rel)
+    if noise:
+        parts.append("Treat as incidental churn / out of scope: " + noise)
+    return "  ".join(parts)
 
 
 _SUGGEST_SCHEMA = {

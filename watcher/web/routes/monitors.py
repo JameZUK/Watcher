@@ -504,6 +504,40 @@ async def ai_summary(
     return JSONResponse({"ok": True, "summary": text})
 
 
+@router.post("/monitors/{monitor_id}/analyze-page")
+async def analyze_page(
+    monitor_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """(Re)derive the AI's understanding of this page — which regions matter vs which
+    are incidental churn — from the latest capture, and store it for triage."""
+    if not _ai_quota_ok(user):
+        return JSONResponse({"ok": False, "error": "Too many AI requests — wait a moment."}, status_code=429)
+    monitor = await _owned_monitor(session, user, monitor_id)
+    app = await get_app_settings(session)
+    key = get_openrouter_key(app)
+    if not key:
+        return JSONResponse({"ok": False, "error": "AI isn’t configured."}, status_code=400)
+    snap = (await session.execute(
+        select(Snapshot).where(Snapshot.monitor_id == monitor.id, Snapshot.html_blob.is_not(None))
+        .order_by(Snapshot.taken_at.desc()).limit(1))).scalar_one_or_none()
+    text = None
+    if snap is not None:
+        text = snap.rendered_text or (blobs.get_text(snap.html_blob) if snap.html_blob else None)
+    if not (text or "").strip():
+        return JSONResponse({"ok": False, "error": "No captured page text yet — run a check first."}, status_code=400)
+    from ...ai import profile_page
+    profile = await profile_page(
+        api_key=key, model=app.ai_model, base_url=app.ai_base_url,
+        url=monitor.url, title=monitor.name, intent=monitor.ai_watch_intent, page_text=text)
+    if not profile:
+        return JSONResponse({"ok": False, "error": "Analysis failed — try again."}, status_code=502)
+    monitor.ai_page_profile = profile
+    await session.commit()
+    return JSONResponse({"ok": True, "profile": profile})
+
+
 @router.get("/monitors/export")
 async def export_monitors(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     import json as _json

@@ -11,7 +11,7 @@ from datetime import timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from .ai import ai_login_action, extract_value, triage_change
+from .ai import ai_login_action, extract_value, profile_page, triage_change
 from .app_settings import get_app_settings, get_openrouter_key
 from .auth.login_flows import (
     build_secret_map,
@@ -254,6 +254,55 @@ def _combine_intent(group_intent: str | None, mon_intent: str | None) -> str | N
     return "  ".join(parts) or None
 
 
+# Monitors whose page profile is being generated right now (dedup across checks).
+_profile_inflight: set[int] = set()
+_profile_tasks: set = set()
+
+
+async def _run_profile_page(monitor_id: int, model, base_url, key, url, title, intent, text) -> None:
+    """Background: derive the page's understanding (what matters vs churn) and store it
+    on the monitor, so later triage judges this page's scope correctly. Own session;
+    never raises into the caller."""
+    try:
+        profile = await profile_page(api_key=key, model=model, base_url=base_url,
+                                     url=url, title=title, intent=intent, page_text=text)
+        if profile:
+            async with SessionLocal() as s:
+                m = await s.get(Monitor, monitor_id)
+                if m is not None:
+                    m.ai_page_profile = profile
+                    await s.commit()
+    except Exception:  # noqa: BLE001
+        logging.getLogger("watcher").warning("page profile generation failed for monitor %s", monitor_id)
+    finally:
+        _profile_inflight.discard(monitor_id)
+
+
+async def _maybe_profile_page(app, monitor, result) -> None:
+    """Kick off a one-off page-profile generation in the background when a monitor has
+    a watch intent, AI is configured, and no profile exists yet. Never blocks the check;
+    respects the per-user AI budget."""
+    if (monitor.ai_page_profile or not monitor.ai_watch_intent
+            or not (monitor.ai_enabled and app.ai_enabled)
+            or monitor.id in _profile_inflight):
+        return
+    text = (result.rendered_text or "").strip()
+    if len(text) < 200:          # don't profile a block page / empty render
+        return
+    key = get_openrouter_key(app)
+    if not key:
+        return
+    from .web.ratelimit import allow
+    if not allow(f"ai:{monitor.user_id}", limit=settings.ai_max_calls, window=settings.ai_window_seconds):
+        return
+    _profile_inflight.add(monitor.id)
+    task = asyncio.create_task(_run_profile_page(
+        monitor.id, app.ai_model, app.ai_base_url, key, monitor.url, result.title,
+        monitor.ai_watch_intent, text))
+    _profile_tasks.add(task)
+    task.add_done_callback(_profile_tasks.discard)
+
+
 async def _maybe_triage(app, monitor, change_result, result, intent=None):
     """Best-effort AI triage of a detected change. Returns a Triage or None."""
     if not (monitor.ai_enabled and app.ai_enabled):
@@ -267,6 +316,7 @@ async def _maybe_triage(app, monitor, change_result, result, intent=None):
         api_key=key, model=app.ai_model, base_url=app.ai_base_url, url=monitor.url, title=result.title,
         intent=intent if intent is not None else monitor.ai_watch_intent,
         diff_text=change_result.diff_text, image_png=image,
+        page_profile=monitor.ai_page_profile,
     )
 
 
@@ -698,6 +748,11 @@ async def check_monitor(monitor_id: int) -> None:
             # Self-healing: if a consent banner survived the automatic handler,
             # learn dismiss selectors via AI (once) so the next render is clean.
             await _maybe_learn_consent(app, monitor, result)
+
+            # First good capture of an intent-watched page → derive (in the background)
+            # an understanding of which regions matter vs which are churn, so triage
+            # judges this page's scope correctly. Non-blocking; runs once.
+            await _maybe_profile_page(app, monitor, result)
 
             # Value tracking: capture a numeric value each check for trends and
             # threshold alerts (e.g. price drops below a target).

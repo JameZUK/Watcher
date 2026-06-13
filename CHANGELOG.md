@@ -2,6 +2,32 @@
 
 All notable changes to Watcher are documented here. Dates are ISO-8601.
 
+## 2026-06-13 — Smarter, page-aware change triage (no per-site rules)
+
+A monitor watching Glassdoor "only for new reviews" kept alerting on *new analyst
+reviews* that didn't exist — the page's rotating **jobs widget** churned every check
+and the AI latched onto "Sr. Analyst" in a job title. Fixed generally, with zero
+per-site code (the tool stays fully universal).
+
+### Added
+- **AI page profiler.** For a monitored page, Watcher now derives a short, plain-
+  language understanding of its regions — *what's a real change* vs *what's incidental
+  churn* (rotating jobs/ads/recommendations, counts, timestamps, pagination) — entirely
+  from the page itself and the user's watch instruction. It's stored per-monitor and
+  fed into every triage so the model judges *this* page's scope correctly. Generated
+  automatically on the first good capture of an intent-watched page, and re-runnable
+  on demand from a "Page understanding" card on the monitor.
+
+### Changed
+- **Triage prompt hardened.** It must ground every claim in the actual diff lines (a
+  keyword in unrelated content — a job title, nav item, ad — is not that thing), treat
+  the watch instruction as defining scope (an excluded/unrelated change is *noise* no
+  matter how large), never manufacture a match, and never infer a specific content
+  change (reviews/prices/stock) from a screenshot-only diff.
+- **Out-of-scope churn is dropped.** When a watch instruction is set, a change the AI
+  rates pure *noise* is dropped outright (not just muted), so unrelated page churn never
+  reaches the timeline.
+
 ## 2026-06-13 — Whole-page section captures, smarter dashboard summary & capture fixes
 
 ### Added

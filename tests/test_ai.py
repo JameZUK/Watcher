@@ -15,7 +15,7 @@ from watcher.ai import triage as T
 AI_FNS = [
     T.triage_change, T.suggest_watch_items, T.extract_value,
     T.configure_monitor, T.summarize_history, T.suggest_consent_selectors,
-    T.ai_login_action, T.solve_captcha_grid,
+    T.ai_login_action, T.solve_captcha_grid, T.profile_page,
 ]
 
 
@@ -49,6 +49,7 @@ class _FakeClient:
         '"ai_watch_intent":"x","track_value":true,"value_threshold":0,'
         '"value_threshold_dir":"none","selectors":["#accept-all","#accept-all","button.agree","<bad>"],'
         '"action":"type","index":0,"secret":"username","text":"",'
+        '"page_summary":"P","relevant":"R","noise":"N",'
         '"cells":[1,3,9,99]}'
     )
 
@@ -83,6 +84,34 @@ def test_triage_change_threads_base_url(fake_http):
     assert r is not None and r.headline == "H" and r.category == "price"
     assert fake_http.last["url"] == "http://x/v1"
     assert fake_http.last["json"]["model"] == "m"
+
+
+def test_profile_page_assembles_understanding(fake_http):
+    """profile_page returns a plain-language understanding (summary + what matters +
+    what's churn) assembled from the model's structured fields."""
+    out = _run(T.profile_page(api_key="k", model="m", base_url="http://x/v1",
+                              url="u", title="t", intent="only reviews",
+                              page_text="lots of page text here " * 20))
+    assert out is not None
+    assert "P" in out and "Changes that matter: R" in out
+    assert "churn" in out.lower() and "N" in out
+    assert fake_http.last["url"] == "http://x/v1"
+
+
+def test_profile_page_skips_without_text():
+    """No captured text → no profile (don't burn an AI call on an empty/blocked page)."""
+    assert _run(T.profile_page(api_key="k", model="m", url="u", title="t",
+                               intent="x", page_text="")) is None
+
+
+def test_triage_includes_page_profile(fake_http):
+    """A page profile, when present, is forwarded to the model so it can judge scope."""
+    _run(T.triage_change(api_key="k", model="m", url="u", title="t", intent="only reviews",
+                         diff_text="- a\n+ b",
+                         page_profile="This page: reviews. Churn: a rotating jobs widget."))
+    user = fake_http.last["json"]["messages"][1]["content"]
+    user_text = user if isinstance(user, str) else " ".join(p.get("text", "") for p in user)
+    assert "rotating jobs widget" in user_text
 
 
 def test_triage_prompt_enforces_scope_and_grounding(fake_http):

@@ -853,6 +853,31 @@ def test_monitor_detail_renders_with_legacy_null_sections():
     assert _run(_t)
 
 
+def test_analyze_page_endpoint_wired():
+    """The page-profiler endpoint is reachable on an owned monitor and returns JSON
+    (AI isn't configured in tests, so it reports that rather than crashing)."""
+    async def _t():
+        from watcher.config import settings
+        from watcher.main import create_app
+        from watcher.models import Monitor, User
+        settings.registration_open = True
+        transport = httpx.ASGITransport(app=create_app())
+        email = _email()
+        async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                     headers={"Origin": "http://t"}, follow_redirects=True) as c:
+            await c.post("/register", data={"email": email, "password": "password123"})
+            async with SessionLocal() as s:
+                u = (await s.execute(select(User).where(User.email == email))).scalar_one()
+                m = Monitor(user_id=u.id, url="https://a.test", name="P"); s.add(m); await s.commit()
+                mid = m.id
+            r = await c.post(f"/monitors/{mid}/analyze-page")
+            assert r.headers["content-type"].startswith("application/json")
+            assert r.json()["ok"] is False        # no AI key configured in tests
+        return True
+
+    assert _run(_t)
+
+
 def test_status_page():
     """The /status page renders per-monitor success rate + summary for the user."""
     async def _t():

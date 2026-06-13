@@ -70,6 +70,7 @@ _ADDED_COLUMNS = {
         "group_id": "INTEGER", "block_annoyances": "BOOLEAN DEFAULT 1",
         "consent_clicks": "JSON", "consent_ai_tried": "BOOLEAN DEFAULT 0",
         "auto_relogin_enabled": "BOOLEAN DEFAULT 0", "use_proxy_pool": "BOOLEAN DEFAULT 0",
+        "ai_page_profile": "TEXT",
     },
     "login_flows": {
         "relogin_cooldown_until": "TIMESTAMP",

@@ -194,6 +194,9 @@ class Monitor(Base):
     ai_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     ai_watch_intent: Mapped[str | None] = mapped_column(Text, default=None)   # "what to watch for"
     ai_policy: Mapped[str | None] = mapped_column(String(16), default=None)   # silent|label|drop; null = inherit global
+    # AI's plain-language understanding of this page's regions (what matters vs churn),
+    # fed into triage so it judges scope correctly. Generated lazily / on demand.
+    ai_page_profile: Mapped[str | None] = mapped_column(Text, default=None)
 
     # Value tracking (price/number trends + threshold alerts)
     track_value: Mapped[bool] = mapped_column(Boolean, default=False)
