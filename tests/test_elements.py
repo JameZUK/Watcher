@@ -1,5 +1,12 @@
 """Content-anchored element-map diff / classification (Option B core)."""
-from watcher.detection.elements import classify_block, diff_maps, summarize_diff
+from watcher.detection.elements import (
+    build_overlays,
+    classify_block,
+    diff_maps,
+    diff_maps_matched,
+    summarize_diff,
+    word_diff,
+)
 
 
 def test_diff_maps_added_removed_by_key():
@@ -37,3 +44,41 @@ def test_summarize_diff_reports_counts_types_examples():
 
 def test_summarize_diff_empty():
     assert summarize_diff({"added": [], "removed": []}) == ""
+
+
+def test_diff_maps_matched_pairs_in_place_edits():
+    before = {"blocks": [{"k": "a", "s": "Review by Bob rating 4 stars great place to work"},
+                         {"k": "old", "s": "Totally unrelated block that was removed"}]}
+    after = {"blocks": [{"k": "a2", "s": "Review by Bob rating 5 stars great place to work"},
+                        {"k": "new", "s": "A brand new and unrelated added block xyz"}]}
+    m = diff_maps_matched(before, after)
+    assert len(m["changed"]) == 1                       # the Bob review (4->5) is one change
+    assert m["changed"][0]["before"]["k"] == "a" and m["changed"][0]["after"]["k"] == "a2"
+    assert [b["k"] for b in m["added"]] == ["new"]      # genuine add
+    assert [b["k"] for b in m["removed"]] == ["old"]    # genuine remove
+
+
+def test_word_diff_segments():
+    ops = [(s["op"], s["t"]) for s in word_diff("rating 4 stars great", "rating 5 stars great")]
+    assert ("same", "rating") in ops
+    assert ("del", "4") in ops and ("add", "5") in ops
+    assert ("same", "stars great") in ops
+
+
+def test_build_overlays_categorizes_and_carries_diff():
+    before = {"pw": 1000, "ph": 2000, "blocks": [{"k": "r", "x": 1, "y": 2, "w": 3, "h": 4,
+                                                   "s": "row alpha one two three"}]}
+    after = {"pw": 1000, "ph": 2000, "blocks": [{"k": "r2", "x": 1, "y": 2, "w": 3, "h": 4,
+                                                 "s": "row alpha one two THREE"},
+                                                {"k": "n", "s": "a new added row of content here"}]}
+    ov = build_overlays(before, after)
+    assert ov["counts"]["added"] == 1 and ov["counts"]["changed"] == 1
+    kinds = {b["kind"] for b in ov["after"]["blocks"]}
+    assert kinds == {"added", "changed"}
+    ch = next(b for b in ov["after"]["blocks"] if b["kind"] == "changed")
+    assert any(s["op"] == "add" for s in ch["diff"])    # word diff present
+    assert ov["after"]["pw"] == 1000 and ov["after"]["ph"] == 2000
+
+
+def test_build_overlays_none_without_maps():
+    assert build_overlays(None, None) is None

@@ -1221,6 +1221,7 @@ async def monitor_detail(
         selected = changes[0]
 
     diff_payload = _diff_payload(selected) if selected else None
+    overlays = await _overlays_payload(session, monitor, selected) if selected else None
     latest = snapshots[0] if snapshots else None
 
     # Tracked-value time series (chronological) for the history chart.
@@ -1237,10 +1238,49 @@ async def monitor_detail(
         {
             "user": user, "monitor": monitor, "changes": changes,
             "snapshots": snapshots, "selected": selected, "diff": diff_payload,
+            "overlays": overlays,
             "latest": latest, "value_series": value_series, "value_current": value_current,
             "checking": is_checking(monitor.id),
         },
     )
+
+
+async def _overlays_payload(session, monitor, change) -> dict | None:
+    """Interactive 'What changed' overlay data for a change: the slot-matched element
+    diff (added/removed/changed blocks + bboxes + word diffs) for desktop & mobile,
+    plus the snapshot ids and section counts so the template can stack the screenshot
+    and position highlight boxes by percentage. None when neither snapshot has a map
+    (e.g. changes from before the element-map feature) → the view falls back to text."""
+    if change is None or not (change.from_snapshot_id or change.to_snapshot_id):
+        return None
+    from ...detection.elements import build_overlays
+    ids = [i for i in (change.from_snapshot_id, change.to_snapshot_id) if i]
+    rows = (await session.execute(
+        select(Snapshot).where(Snapshot.id.in_(ids)).options(defer(Snapshot.rendered_text))
+    )).scalars().all()
+    by = {s.id: s for s in rows}
+    before, after = by.get(change.from_snapshot_id), by.get(change.to_snapshot_id)
+    desktop = build_overlays(getattr(before, "element_map", None), getattr(after, "element_map", None))
+    mobile = build_overlays(getattr(before, "element_map_mobile", None),
+                            getattr(after, "element_map_mobile", None))
+    if not desktop and not mobile:
+        return None
+
+    def _secs(s, mobile=False) -> int:
+        if s is None:
+            return 0
+        lst = (s.screenshot_mobile_sections if mobile else s.screenshot_sections) or []
+        if lst:
+            return len(lst)
+        return 1 if (s.screenshot_mobile_blob if mobile else s.screenshot_blob) else 0
+
+    return {
+        "monitor_id": monitor.id,
+        "after_id": change.to_snapshot_id, "before_id": change.from_snapshot_id,
+        "desktop": desktop, "mobile": mobile,
+        "sec": {"after_d": _secs(after), "before_d": _secs(before),
+                "after_m": _secs(after, True), "before_m": _secs(before, True)},
+    }
 
 
 def _diff_payload(change: Change) -> dict:

@@ -15,6 +15,7 @@ unreliable on reflowing pages.
 """
 from __future__ import annotations
 
+import difflib
 import io
 import re
 from collections import Counter
@@ -93,6 +94,93 @@ def diff_maps(before: dict | None, after: dict | None) -> dict:
     added = [b for b in a_blocks if b.get("k") not in bkeys]
     removed = [b for b in b_blocks if b.get("k") not in akeys]
     return {"added": added, "removed": removed}
+
+
+def diff_maps_matched(before: dict | None, after: dict | None,
+                      *, match_threshold: float = 0.6) -> dict:
+    """Like ``diff_maps`` but also pairs a removed block with an added block that is
+    the SAME slot edited in place (high text similarity) into a 'changed' entry.
+
+    Returns ``{'added': [block], 'removed': [block], 'changed': [{'before','after'}]}``.
+    Greedy best-match by snippet similarity, so a review/listing whose text mostly
+    stayed the same (e.g. a rating ticked 4→5) reads as ONE change, not add+remove.
+    """
+    d = diff_maps(before, after)
+    added = list(d["added"])
+    removed = list(d["removed"])
+    changed: list[dict] = []
+    used: set[int] = set()
+    pure_removed: list[dict] = []
+    for rb in removed:
+        rs = rb.get("s") or ""
+        best_i, best_ratio = -1, match_threshold
+        for i, ab in enumerate(added):
+            if i in used:
+                continue
+            ratio = difflib.SequenceMatcher(None, rs, ab.get("s") or "").ratio()
+            if ratio > best_ratio:
+                best_ratio, best_i = ratio, i
+        if best_i >= 0:
+            used.add(best_i)
+            changed.append({"before": rb, "after": added[best_i]})
+        else:
+            pure_removed.append(rb)
+    pure_added = [ab for i, ab in enumerate(added) if i not in used]
+    return {"added": pure_added, "removed": pure_removed, "changed": changed}
+
+
+def word_diff(before_text: str, after_text: str) -> list[dict]:
+    """Word-level inline diff → list of ``{'op': 'same'|'add'|'del', 't': text}``
+    segments, for rendering a changed block's before→after edit."""
+    bw, aw = (before_text or "").split(), (after_text or "").split()
+    out: list[dict] = []
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, bw, aw).get_opcodes():
+        if op == "equal":
+            out.append({"op": "same", "t": " ".join(bw[i1:i2])})
+        elif op == "delete":
+            out.append({"op": "del", "t": " ".join(bw[i1:i2])})
+        elif op == "insert":
+            out.append({"op": "add", "t": " ".join(aw[j1:j2])})
+        elif op == "replace":
+            out.append({"op": "del", "t": " ".join(bw[i1:i2])})
+            out.append({"op": "add", "t": " ".join(aw[j1:j2])})
+    return [seg for seg in out if seg["t"]]
+
+
+def _box(b: dict) -> dict:
+    return {"x": b.get("x"), "y": b.get("y"), "w": b.get("w"), "h": b.get("h")}
+
+
+def build_overlays(before_map: dict | None, after_map: dict | None) -> dict | None:
+    """Build the interactive 'What changed' overlay payload for one viewport:
+    page dims + the changed content blocks categorised (added / removed / changed)
+    with their bounding boxes, types, snippets, and — for a changed block — the
+    before→after word diff. Added/changed-after boxes draw on the AFTER screenshot;
+    removed/changed-before boxes draw on the BEFORE screenshot. None if no maps."""
+    if not (before_map and before_map.get("blocks")) and not (after_map and after_map.get("blocks")):
+        return None
+    m = diff_maps_matched(before_map, after_map)
+    after_blocks, before_blocks = [], []
+    for b in m["added"]:
+        after_blocks.append({**_box(b), "kind": "added", "type": classify_block(b.get("s")),
+                             "snippet": b.get("s")})
+    for b in m["removed"]:
+        before_blocks.append({**_box(b), "kind": "removed", "type": classify_block(b.get("s")),
+                              "snippet": b.get("s")})
+    for c in m["changed"]:
+        bb, ab = c["before"], c["after"]
+        wd = word_diff(bb.get("s") or "", ab.get("s") or "")
+        after_blocks.append({**_box(ab), "kind": "changed", "type": classify_block(ab.get("s")),
+                             "snippet": ab.get("s"), "diff": wd})
+        before_blocks.append({**_box(bb), "kind": "changed", "type": classify_block(bb.get("s")),
+                              "snippet": bb.get("s"), "diff": wd})
+    return {
+        "before": {"pw": (before_map or {}).get("pw"), "ph": (before_map or {}).get("ph"),
+                   "blocks": before_blocks},
+        "after": {"pw": (after_map or {}).get("pw"), "ph": (after_map or {}).get("ph"),
+                  "blocks": after_blocks},
+        "counts": {"added": len(m["added"]), "removed": len(m["removed"]), "changed": len(m["changed"])},
+    }
 
 
 def crop_block(section_blobs: list | None, element_map: dict | None, block: dict,

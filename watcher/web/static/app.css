@@ -266,3 +266,26 @@ html.perf-lite .popover { background: #14121e; backdrop-filter: none; -webkit-ba
     -webkit-column-break-inside: avoid;
   }
 }
+
+/* Interactive "What changed" overlay — highlight boxes drawn over the screenshot,
+   colour-coded by kind (added/removed/changed). Hand-written so they don't depend
+   on Tailwind colour utilities being present in the prebuilt CSS. */
+.ov-box { position: absolute; border: 2px solid; border-radius: 3px; cursor: pointer;
+          transition: background .12s ease, box-shadow .12s ease; }
+.ov-added   { border-color: #34d399; background: rgba(52,211,153,.10); }
+.ov-removed { border-color: #f87171; background: rgba(248,113,113,.10); }
+.ov-changed { border-color: #fbbf24; background: rgba(251,191,36,.10); }
+.ov-box.on, .ov-box:hover { box-shadow: 0 0 0 2px rgba(255,255,255,.25); }
+.ov-added.on,   .ov-added:hover   { background: rgba(52,211,153,.30); }
+.ov-removed.on, .ov-removed:hover { background: rgba(248,113,113,.30); }
+.ov-changed.on, .ov-changed:hover { background: rgba(251,191,36,.30); }
+.ov-added-t   { color: #6ee7b7; }
+.ov-removed-t { color: #fca5a5; }
+.ov-changed-t { color: #fcd34d; }
+.clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* Interactive "What changed" layout (hand-written: arbitrary Tailwind grid/height
+   utilities aren't in the prebuilt CSS). Screenshot hero + a fixed side list. */
+.ov-grid { display: grid; grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 1024px) { .ov-grid { grid-template-columns: minmax(0, 1fr) 17rem; } }
+.ov-stage { max-height: 70vh; }
