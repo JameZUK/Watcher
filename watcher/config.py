@@ -65,6 +65,11 @@ class Settings(BaseSettings):
     max_render_concurrency: int = Field(default=3)
     max_camoufox_concurrency: int = Field(default=2)    # tighter nested cap (Camoufox is RAM-heavy)
     render_timeout_seconds: int = Field(default=45)
+    # Adaptive "smart settle" after the DOM loads (replaces strict networkidle): proceed
+    # once the network has been quiet (≤2 in-flight, no new request) for quiet_ms, capped
+    # at cap_ms so a permanently-chatty ad/tracker page can't stall the render.
+    smart_settle_cap_ms: int = Field(default=8000)
+    smart_settle_quiet_ms: int = Field(default=700)
 
     # --- Reliability ---
     render_retries: int = Field(default=1)              # extra render attempts on transient failure

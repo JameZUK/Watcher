@@ -582,33 +582,58 @@ def test_summarize_fleet_includes_user_instruction():
     assert out == [{"text": "ok", "monitor_id": 0}]
 
 
-def test_navigate_falls_back_when_wait_never_settles():
-    """A strict wait (networkidle) that never settles must not fail the check —
-    navigate() retries with domcontentloaded and returns the page that loaded."""
+def test_settle_network_adaptive_quiet_and_cap():
+    """The adaptive settle returns 'quiet' as soon as the network calms (≤2 in-flight,
+    no new request for quiet_ms) and 'cap' when a permanently-chatty page never calms —
+    the strict-zero-connection networkidle replacement."""
+    import asyncio
+    from watcher.engines._common import settle_network
+
+    class QuietPage:           # no traffic at all → calms immediately
+        def on(self, ev, fn): pass
+        def remove_listener(self, ev, fn): pass
+
+    assert asyncio.run(settle_network(QuietPage(), cap_ms=3000, quiet_ms=120)) == "quiet"
+
+    class BusyPage:            # 5 requests in flight at registration, none ever finish
+        def on(self, ev, fn):
+            if ev == "request":
+                for _ in range(5):
+                    fn(None)
+        def remove_listener(self, ev, fn): pass
+
+    assert asyncio.run(settle_network(BusyPage(), cap_ms=300, quiet_ms=100)) == "cap"
+
+
+def test_navigate_loads_dom_first():
+    """navigate() establishes the DOM with domcontentloaded (never blocking on the
+    strict wait); 'domcontentloaded' opts out of the settle entirely; a DOM that never
+    loads is the only genuine failure (None)."""
     import asyncio
     from playwright.async_api import TimeoutError as PWTimeout
     from watcher.engines._common import navigate
 
     class Page:
-        def __init__(self, ok_on): self.ok_on, self.calls = ok_on, []
+        def __init__(self, goto_ok=True):
+            self.goto_ok, self.gotos, self.settled = goto_ok, [], False
         async def goto(self, url, wait_until, timeout):
-            self.calls.append(wait_until)
-            if wait_until in self.ok_on:
+            self.gotos.append(wait_until)
+            if self.goto_ok:
                 return N(status=200)
-            raise PWTimeout("never idle")
+            raise PWTimeout("dom never loaded")
+        def on(self, ev, fn): self.settled = True       # settle_network would register here
+        def remove_listener(self, ev, fn): pass
 
-    # networkidle times out → falls back to domcontentloaded, succeeds
-    p = Page(ok_on={"domcontentloaded"})
-    mon = N(url="https://x.test", wait_until="networkidle", wait_timeout_ms=15000)
-    resp = asyncio.run(navigate(p, mon))
-    assert resp.status == 200 and p.calls == ["networkidle", "domcontentloaded"]
+    # Fast path: the goto uses domcontentloaded and no adaptive settle runs.
+    p = Page()
+    mon = N(url="https://x.test", wait_until="domcontentloaded", wait_timeout_ms=15000)
+    assert asyncio.run(navigate(p, mon)).status == 200
+    assert p.gotos == ["domcontentloaded"] and p.settled is False
 
-    # already the most lenient wait and it still times out → a genuine failure
-    p2 = Page(ok_on=set())
-    mon2 = N(url="https://x.test", wait_until="domcontentloaded", wait_timeout_ms=15000)
-    with pytest.raises(PWTimeout):
-        asyncio.run(navigate(p2, mon2))
-    assert p2.calls == ["domcontentloaded"]   # no pointless second attempt
+    # DOM never loads → genuine navigation failure → None.
+    p2 = Page(goto_ok=False)
+    mon2 = N(url="https://x.test", wait_until="networkidle", wait_timeout_ms=15000)
+    assert asyncio.run(navigate(p2, mon2)) is None
 
 
 def test_looks_blocked_detects_antibot_walls():

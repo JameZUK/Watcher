@@ -10,6 +10,7 @@ best-effort: if it fails or is blocked, the desktop capture is unaffected.
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 from ..auth.login_flows import mark_session, session_is_valid
@@ -103,11 +104,15 @@ class CamoufoxRenderer:
             # --- Mobile pass: separate instance at a mobile window size ---
             # Skip it when the desktop pass was an anti-bot wall (401/403/429):
             # a second full Camoufox launch would just re-run the anti-bot gauntlet
-            # to screenshot a block page — wasted time and extra block risk.
+            # to screenshot a block page — wasted time and extra block risk. Bound it to
+            # the remaining render budget so a slow second pass can't blow the hard
+            # timeout and discard the good desktop capture.
+            remaining = settings.render_timeout_seconds - (time.monotonic() - start)
             if (result is not None and result.ok
-                    and result.http_status not in (401, 403, 429)):
+                    and result.http_status not in (401, 403, 429) and remaining >= 6):
                 try:
-                    mobile_secs, mmap = await self._capture_mobile(monitor, launch_kwargs, desktop_state)
+                    mobile_secs, mmap = await asyncio.wait_for(
+                        self._capture_mobile(monitor, launch_kwargs, desktop_state), timeout=remaining)
                     if mobile_secs:
                         result.screenshot_mobile_sections = mobile_secs
                         result.screenshot_mobile_png = mobile_secs[0]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 from ..auth.login_flows import mark_session, session_is_valid
@@ -113,10 +114,16 @@ class PlaywrightRenderer:
                     except Exception:
                         pass
 
-                    # Mobile preview in a phone-emulated context (best-effort).
-                    if result is not None and result.ok and result.screenshot_png:
+                    # Mobile preview in a phone-emulated context (best-effort), BOUNDED to
+                    # the time left in the render budget. A slow second pass can then never
+                    # blow the hard timeout and take the already-good desktop capture down
+                    # with it — the desktop result is always kept, and the hard timeout
+                    # stays a true safety net rather than the normal failure path.
+                    remaining = settings.render_timeout_seconds - (time.monotonic() - start)
+                    if result is not None and result.ok and result.screenshot_png and remaining >= 6:
                         try:
-                            msecs, mmap = await self._capture_mobile(browser, monitor, mobile_state)
+                            msecs, mmap = await asyncio.wait_for(
+                                self._capture_mobile(browser, monitor, mobile_state), timeout=remaining)
                             if msecs:
                                 result.screenshot_mobile_sections = msecs
                                 result.screenshot_mobile_png = msecs[0]

@@ -622,7 +622,13 @@ _ELEMENT_MAP_JS = r"""() => {
     const r = el.getBoundingClientRect();
     return r.width >= 40 && r.height >= 18; };
   const sx = window.scrollX || 0, sy = window.scrollY || 0;
-  const out = []; const seen = new WeakSet(); let cand = 0;
+  const out = []; const seen = new WeakSet(); let cand = 0; let probes = 0;
+  // Hard cap on layout-forcing probes (vis()/getBoundingClientRect/innerText each
+  // flush style+layout). On a huge DOM (e.g. an Amazon product page) an uncapped scan
+  // took ~minutes, blowing the render timeout; the main content is early in the DOM,
+  // so a bounded scan keeps it fast without losing it.
+  const PROBE_CAP = 4000;
+  outer:
   for (const parent of document.querySelectorAll('div,ul,ol,section,main,table,tbody,article')) {
     const kids = parent.children;
     if (kids.length < 3) continue;
@@ -632,6 +638,7 @@ _ELEMENT_MAP_JS = r"""() => {
       if (g.length < 3) continue;
       cand++;                       // a repeated-sibling group exists (latent content)
       for (const item of g) {
+        if (++probes > PROBE_CAP || out.length >= 400) break outer;
         if (seen.has(item) || !vis(item)) continue;
         seen.add(item);
         const text = norm(item.innerText || item.textContent || '');
@@ -640,11 +647,8 @@ _ELEMENT_MAP_JS = r"""() => {
         out.push({ t: text.slice(0, 600),
                    x: Math.round(r.left + sx), y: Math.round(r.top + sy),
                    w: Math.round(r.width), h: Math.round(r.height) });
-        if (out.length >= 400) break;
       }
-      if (out.length >= 400) break;
     }
-    if (out.length >= 400) break;
   }
   return { pw: Math.round(document.documentElement.scrollWidth),
            ph: Math.round(document.documentElement.scrollHeight),
@@ -709,28 +713,87 @@ async def capture_element_map(page) -> dict | None:
     return {"pw": data.get("pw"), "ph": data.get("ph"), "dpr": data.get("dpr"), "blocks": blocks}
 
 
-async def navigate(page, monitor: Monitor):
-    """Navigate to the monitor URL, tolerating a wait condition that never settles.
+async def settle_network(page, *, cap_ms: int, quiet_ms: int = 700,
+                         max_inflight: int = 2, poll_ms: int = 100) -> str:
+    """Adaptive 'page has settled' wait — a smart replacement for the strict
+    ``networkidle`` (500ms of ZERO connections) that ad/tracker-heavy pages never
+    reach. Proceed as soon as the network has quieted to at most ``max_inflight``
+    in-flight requests with no NEW request for ``quiet_ms`` — i.e. the initial load
+    burst is done even though background beacons keep trickling. Hard-capped at
+    ``cap_ms`` so a permanently-chatty page can't stall the render (the cap is the
+    safety net, hit only when the page genuinely never quiets).
 
-    `networkidle` (a very common setting) frequently never fires on ad/tracker-
-    heavy sites — analytics, ads and long-poll connections keep the network busy —
-    so a strict goto times out at `wait_timeout_ms` even though the page loaded
-    fine in a fraction of a second. Rather than failing the whole check, fall back
-    to `domcontentloaded` and capture what loaded. `do_wait`/`_settle_for_content`
-    downstream still wait for real content. Returns the navigation response (or
-    None if even the fallback couldn't produce one)."""
+    Returns 'quiet' if it settled, 'cap' if it hit the ceiling.
+    """
+    import time as _time
+
+    state = {"inflight": 0, "last_start": _time.monotonic()}
+
+    def _on_request(_):
+        state["inflight"] += 1
+        state["last_start"] = _time.monotonic()
+
+    def _on_done(_):
+        state["inflight"] = max(0, state["inflight"] - 1)
+
+    page.on("request", _on_request)
+    page.on("requestfinished", _on_done)
+    page.on("requestfailed", _on_done)
+    try:
+        deadline = _time.monotonic() + cap_ms / 1000.0
+        quiet_s = quiet_ms / 1000.0
+        while _time.monotonic() < deadline:
+            quiet_for = _time.monotonic() - state["last_start"]
+            if state["inflight"] <= max_inflight and quiet_for >= quiet_s:
+                return "quiet"
+            await asyncio.sleep(poll_ms / 1000.0)
+        return "cap"
+    finally:
+        for ev, fn in (("request", _on_request), ("requestfinished", _on_done),
+                       ("requestfailed", _on_done)):
+            try:
+                page.remove_listener(ev, fn)
+            except Exception:
+                pass
+
+
+async def navigate(page, monitor: Monitor):
+    """Navigate to the monitor URL with an ADAPTIVE readiness wait.
+
+    Strict ``networkidle`` (the historical default) is a poor signal: it waits for 500ms
+    of ZERO network activity, which ad/tracker-heavy sites never reach, so it always
+    burns the full ``wait_timeout_ms`` on a page that actually painted in a couple of
+    seconds — doubled across the desktop + mobile passes, that wasted wait is what blew
+    the whole check's hard timeout.
+
+    Instead: establish the DOM with the cheap, reliable ``domcontentloaded``, then run an
+    adaptive ``settle_network`` that returns as soon as the page genuinely quiets (most
+    pages, in ~1-3s) and otherwise caps out fast — so the hard render timeout becomes a
+    true safety net rather than the normal path. ``wait_until='domcontentloaded'`` opts
+    out (fastest); ``'load'`` also waits the load event. ``_settle_for_content``
+    downstream still gates on real content. Returns the response, or None if the DOM
+    never loaded."""
     from playwright.async_api import TimeoutError as PWTimeout
     try:
-        return await page.goto(monitor.url, wait_until=monitor.wait_until,
+        resp = await page.goto(monitor.url, wait_until="domcontentloaded",
                                timeout=monitor.wait_timeout_ms)
     except PWTimeout:
-        if monitor.wait_until == "domcontentloaded":
-            raise  # already the most lenient wait — a genuine navigation failure
+        return None  # the DOM never loaded — a genuine navigation failure
+    want = monitor.wait_until or "networkidle"
+    if want == "domcontentloaded":
+        return resp                      # user opted for the fastest path
+    if want == "load":
         try:
-            return await page.goto(monitor.url, wait_until="domcontentloaded",
-                                   timeout=monitor.wait_timeout_ms)
-        except PWTimeout:
-            return None  # last resort: proceed with whatever the page already has
+            await page.wait_for_load_state("load", timeout=min(monitor.wait_timeout_ms, 8000))
+        except Exception:
+            pass
+    # Smart adaptive settle for 'networkidle'/'load'/default — bounded by wait_timeout_ms.
+    try:
+        await settle_network(page, cap_ms=min(monitor.wait_timeout_ms, settings.smart_settle_cap_ms),
+                             quiet_ms=settings.smart_settle_quiet_ms)
+    except Exception:
+        pass
+    return resp
 
 
 async def do_wait(page, monitor: Monitor) -> None:
@@ -834,8 +897,11 @@ def _whiteness(webp_bytes: bytes) -> float:
         return 0.0
 
 
-def _stitch_strips(strips: dict, dpr: float) -> bytes:
-    """Stitch viewport strips ({scrollY_css: png_bytes}) into one full-page PNG."""
+def _stitch_strips(strips: dict, scale: float) -> bytes:
+    """Stitch viewport strips ({scrollY_css: png_bytes}) into one full-page PNG.
+
+    ``scale`` is the device-pixel scale the strips were captured at (1.0 for CSS-scale
+    tall captures), used to map each strip's CSS scrollY to its pixel offset."""
     from io import BytesIO
 
     from PIL import Image
@@ -844,16 +910,16 @@ def _stitch_strips(strips: dict, dpr: float) -> bytes:
     if not items:
         return b""
     w = items[0][1].width
-    h = max(int(round(y * dpr)) + im.height for y, im in items)
+    h = max(int(round(y * scale)) + im.height for y, im in items)
     # Clamp the canvas to the same hard height cap _slice_sections applies AFTER
     # stitching — otherwise a pathological tall page allocates the full (e.g.
     # ~1.8 GB) canvas here before the crop, OOM-ing the box under render concurrency.
-    hard_cap = int((settings.max_screenshot_height_px or 0) * dpr)
+    hard_cap = int((settings.max_screenshot_height_px or 0) * scale)
     if hard_cap and h > hard_cap:
         h = hard_cap
     canvas = Image.new("RGB", (w, h), (255, 255, 255))
     for y, im in items:
-        top = int(round(y * dpr))
+        top = int(round(y * scale))
         if top >= h:
             continue                      # strip starts past the cap — skip
         canvas.paste(im, (0, top))        # PIL clips any overhang at the canvas edge
@@ -867,11 +933,20 @@ def _stitch_strips(strips: dict, dpr: float) -> bytes:
 _TALL_CAPTURE_PX = 10000
 
 
-async def _capture_full_png(page, dpr: float) -> bytes:
-    """Capture the whole page as one PNG. A `full_page` screenshot of a very tall page
-    comes back mostly blank (Chromium raster limit) even though every viewport paints
-    fine, so for tall pages we scroll a (tall, where the engine allows it) viewport down
-    in strips, screenshot each, and stitch. Short pages take the fast full_page path."""
+async def _capture_full_png(page, dpr: float) -> tuple[bytes, float]:
+    """Capture the whole page as one PNG, returning ``(png, capture_scale)``.
+
+    A `full_page` screenshot of a very tall page comes back mostly blank (Chromium raster
+    limit) even though every viewport paints fine, so for tall pages we scroll a (tall,
+    where the engine allows it) viewport down in strips, screenshot each, and stitch.
+    Short pages take the fast full_page path.
+
+    `capture_scale` is the device-pixel scale actually used: the full `dpr` for short
+    pages (kept retina-crisp), or 1.0 for tall pages — those are captured at CSS
+    resolution (`scale="css"`), which rasterises ~dpr² fewer pixels (a 12k-px page at
+    dpr 2 was taking ~30s a pass) and is near-lossless anyway because the sections are
+    downscaled to the megapixel budget regardless. `crop_block` recovers the scale from
+    the stored image width, so it stays correct for either."""
     try:
         info = await page.evaluate(
             "() => ({h: Math.ceil(document.documentElement.scrollHeight),"
@@ -883,7 +958,7 @@ async def _capture_full_png(page, dpr: float) -> bytes:
     vw = int(info.get("vw") or 1280)
     vh0 = int(info.get("vh") or 800) or 800
     if H <= 0 or H * dpr <= _TALL_CAPTURE_PX:
-        return await page.screenshot(full_page=True, type="png")   # short → fast path
+        return await page.screenshot(full_page=True, type="png"), dpr   # short → fast, retina
 
     # Use a tall viewport to cut the strip count where the engine allows resizing
     # (Playwright); Camoufox forbids it, so fall back to the current viewport height.
@@ -908,7 +983,9 @@ async def _capture_full_png(page, dpr: float) -> bytes:
             except Exception:
                 ay = y
             if ay not in strips:
-                strips[ay] = await page.screenshot(type="png")
+                # CSS resolution (1×): tall pages are the slow case, and the output is
+                # downscaled to the megapixel budget anyway, so retina here is wasted work.
+                strips[ay] = await page.screenshot(type="png", scale="css")
             if ay + chunk >= H:
                 break
             y = ay + chunk
@@ -923,8 +1000,9 @@ async def _capture_full_png(page, dpr: float) -> bytes:
             except Exception:
                 pass
     if not strips:
-        return await page.screenshot(full_page=True, type="png")
-    return await asyncio.to_thread(_stitch_strips, strips, dpr)
+        return await page.screenshot(full_page=True, type="png"), dpr
+    # Strips were captured at CSS scale → stitch + slice in CSS pixels (scale 1.0).
+    return await asyncio.to_thread(_stitch_strips, strips, 1.0), 1.0
 
 
 async def full_page_sections(page) -> list[bytes]:
@@ -942,8 +1020,8 @@ async def full_page_sections(page) -> list[bytes]:
     still white). We settle for paint first, and if the capture still comes out blank
     while the page clearly has content, we re-capture once after a longer settle."""
     async def _shot(dpr):
-        raw = await _capture_full_png(page, max(dpr, 1.0))
-        return await asyncio.to_thread(_slice_sections, raw, max(dpr, 1.0))
+        raw, cap_scale = await _capture_full_png(page, max(dpr, 1.0))
+        return await asyncio.to_thread(_slice_sections, raw, cap_scale)
 
     try:
         dpr = float(await page.evaluate("() => window.devicePixelRatio || 1"))
@@ -997,9 +1075,10 @@ def _encode_webp(im) -> bytes:
     return out.getvalue()
 
 
-def _slice_sections(png: bytes, dpr: float) -> list[bytes]:
+def _slice_sections(png: bytes, scale: float) -> list[bytes]:
     """Slice a full-page PNG into readable, full-width WebP sections (CPU-bound — run
-    off the event loop). Falls back to [png] on any error."""
+    off the event loop). ``scale`` is the device-pixel scale the PNG was captured at
+    (so bands/caps in CSS px map to the right pixel sizes). Falls back to [png] on error."""
     try:
         from io import BytesIO
 
@@ -1013,10 +1092,10 @@ def _slice_sections(png: bytes, dpr: float) -> list[bytes]:
         return [png]
     try:
         # Overall safety crop (memory bound) before slicing.
-        hard_cap = int((settings.max_screenshot_height_px or 0) * dpr)
+        hard_cap = int((settings.max_screenshot_height_px or 0) * scale)
         if hard_cap and im.height > hard_cap:
             im = im.crop((0, 0, im.width, hard_cap))
-        band = int((settings.screenshot_section_height_px or 0) * dpr)
+        band = int((settings.screenshot_section_height_px or 0) * scale)
         max_n = settings.max_screenshot_sections or 1
         if band <= 0 or im.height <= band:    # short page → one section
             return [_encode_webp(im)]
