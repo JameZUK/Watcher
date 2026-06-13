@@ -938,17 +938,15 @@ _TALL_CAPTURE_PX = 10000
 async def _capture_full_png(page, dpr: float) -> tuple[bytes, float]:
     """Capture the whole page as one PNG, returning ``(png, capture_scale)``.
 
-    A `full_page` screenshot of a very tall page comes back mostly blank (Chromium raster
-    limit) even though every viewport paints fine, so for tall pages we scroll a (tall,
-    where the engine allows it) viewport down in strips, screenshot each, and stitch.
-    Short pages take the fast full_page path.
-
-    `capture_scale` is the device-pixel scale actually used: the full `dpr` for short
-    pages (kept retina-crisp), or 1.0 for tall pages — those are captured at CSS
-    resolution (`scale="css"`), which rasterises ~dpr² fewer pixels (a 12k-px page at
-    dpr 2 was taking ~30s a pass) and is near-lossless anyway because the sections are
-    downscaled to the megapixel budget regardless. `crop_block` recovers the scale from
-    the stored image width, so it stays correct for either."""
+    Short pages: one `full_page` shot at full `dpr` (retina-crisp). TALL pages: one
+    `full_page` shot at CSS resolution (`scale="css"`, 1×). Chromium's full-page
+    blank-out limit is in DEVICE pixels, so 1× stays under it and captures the WHOLE
+    page — any height — in a single fast shot (a ~15k-px page in ~0.5s; the old
+    scroll-a-tall-viewport-in-strips approach took ~60s on a heavy mobile page, which
+    was eating the render budget). The strip path is kept ONLY as a fallback for the
+    rare page so tall that even 1× blanks out. `capture_scale` (dpr for short, 1.0 for
+    tall) lets `crop_block` recover the scale; it also reads it back from the stored
+    image width, so it stays correct either way."""
     try:
         info = await page.evaluate(
             "() => ({h: Math.ceil(document.documentElement.scrollHeight),"
@@ -962,8 +960,19 @@ async def _capture_full_png(page, dpr: float) -> tuple[bytes, float]:
     if H <= 0 or H * dpr <= _TALL_CAPTURE_PX:
         return await page.screenshot(full_page=True, type="png"), dpr   # short → fast, retina
 
-    # Use a tall viewport to cut the strip count where the engine allows resizing
-    # (Playwright); Camoufox forbids it, so fall back to the current viewport height.
+    # Tall page: one full-page shot at CSS scale. Fast, full height, and it doesn't
+    # blank because the raster limit is device-pixel based and 1× halves the pixels.
+    try:
+        png = await page.screenshot(full_page=True, type="png", scale="css")
+        if png and await asyncio.to_thread(_whiteness, png) < 0.99:
+            return png, 1.0
+    except Exception:
+        png = None
+
+    # Fallback (rare): even the 1× full-page shot came back blank → scroll a tall
+    # viewport down in strips and stitch. Use a tall viewport to cut the strip count
+    # where the engine allows resizing (Playwright); Camoufox forbids it, fall back to
+    # the current viewport height.
     chunk = vh0
     resized = False
     try:

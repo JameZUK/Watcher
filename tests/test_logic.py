@@ -451,21 +451,26 @@ def test_slice_sections_tiles_whole_page():
 
 
 def test_full_page_capture_short_vs_tall():
-    """Short page → one full_page=True shot (fast path). Tall page → scrolled viewport
-    strips (no full_page, which blanks in Chromium beyond the raster limit), stitched.
-    Regression: The Register captured blank/white because a single full_page shot of a
-    ~30k px page came back unpainted."""
+    """Short page → one full_page=True shot at DEVICE scale (retina). Tall page → one
+    full_page shot at CSS scale (1×), which doesn't hit Chromium's device-pixel blank-out
+    limit, so the whole page is grabbed in a single fast pass. The scroll-in-strips path
+    is only a FALLBACK for when even the 1× shot blanks out. Either way the full PNG is
+    sliced into ≤8000px WebP sections downstream, so WebP's 16383px dimension cap is never
+    hit (the reason strips existed) — verified by test_compress_screenshot_handles_huge."""
     import asyncio
     from io import BytesIO
 
     from PIL import Image
     from watcher.engines._common import full_page_sections
 
-    def png(w=24, h=24):
-        b = BytesIO(); Image.new("RGB", (w, h), "white").save(b, "PNG"); return b.getvalue()
+    def png(white, w=24, h=24):
+        b = BytesIO(); Image.new("RGB", (w, h), "white" if white else "black").save(b, "PNG")
+        return b.getvalue()
 
     class Page:
-        def __init__(self, scroll_h): self.h = scroll_h; self.y = 0; self.shots = []
+        # blank_css simulates the rare extreme page where even the 1× full_page shot blanks
+        def __init__(self, scroll_h, blank_css=False):
+            self.h = scroll_h; self.y = 0; self.shots = []; self.blank_css = blank_css
         async def evaluate(self, js, *a):
             if "devicePixelRatio" in js: return 2
             if "scrollHeight" in js and "{" in js:
@@ -477,17 +482,29 @@ def test_full_page_capture_short_vs_tall():
             return None
         async def set_viewport_size(self, kw): return None
         async def wait_for_timeout(self, ms): return None
-        async def screenshot(self, **kw): self.shots.append(kw); return png()
+        async def screenshot(self, **kw):
+            self.shots.append(kw)
+            # a full_page=css shot returns content unless we're simulating a blank-out
+            blank = kw.get("full_page") and kw.get("scale") == "css" and self.blank_css
+            return png(white=blank)
 
+    # Short page → device-scale full_page (retina), not css.
     short = Page(scroll_h=500)
     asyncio.run(full_page_sections(short))
-    assert any(s.get("full_page") for s in short.shots)           # fast path
-    assert not any("clip" in s for s in short.shots)
+    assert any(s.get("full_page") and s.get("scale") != "css" for s in short.shots)
 
+    # Tall page → ONE css full_page shot, no strip screenshots.
     tall = Page(scroll_h=40000)
     asyncio.run(full_page_sections(tall))
-    assert tall.shots and not any(s.get("full_page") for s in tall.shots)  # strips, not full_page
-    assert len(tall.shots) >= 3                                    # multiple scrolled strips
+    css_full = [s for s in tall.shots if s.get("full_page") and s.get("scale") == "css"]
+    strips = [s for s in tall.shots if not s.get("full_page")]
+    assert len(css_full) == 1 and len(strips) == 0
+
+    # Tall page whose css full_page blanks → falls back to scrolled strips.
+    blanked = Page(scroll_h=40000, blank_css=True)
+    asyncio.run(full_page_sections(blanked))
+    strips = [s for s in blanked.shots if not s.get("full_page")]
+    assert len(strips) >= 3
 
 
 def test_compress_screenshot_handles_huge_tall_pages():

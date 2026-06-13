@@ -64,10 +64,9 @@ class Settings(BaseSettings):
     schedule_jitter_seconds: int = Field(default=60)
     max_render_concurrency: int = Field(default=3)
     max_camoufox_concurrency: int = Field(default=2)    # tighter nested cap (Camoufox is RAM-heavy)
-    render_timeout_seconds: int = Field(default=90)   # per-pass ceiling; generous so a
-    # full check (desktop + mobile, even a cold Camoufox launch) always completes within
-    # it and within the runner's outer ceiling (render_timeout_seconds + 30). Reliability
-    # over speed — both views should render every time, not be budget-skipped.
+    render_timeout_seconds: int = Field(default=60)   # per-op + per-pass ceiling. Covers a
+    # cold Camoufox launch + desktop + mobile comfortably now that the full-page capture is
+    # a single fast shot (no longer a 60s scroll-and-stitch). Outer ceiling is +30.
     db_pool_size: int = Field(default=10)
     db_max_overflow: int = Field(default=20)
     # Adaptive "smart settle" after the DOM loads (replaces strict networkidle): proceed
