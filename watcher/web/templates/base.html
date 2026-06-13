@@ -115,6 +115,7 @@
   <!-- Fullscreen image lightbox: zoom (buttons / double-tap / pinch) + scroll-to-pan -->
   <div x-data x-cloak x-show="$store.lb.shown" x-transition.opacity
        class="fixed inset-0 z-[60] bg-black/90 backdrop-blur-sm flex flex-col"
+       x-effect="if ($store.lb.shown) { $store.lb.srcs; $nextTick(() => { if ($refs.lbscroll) $refs.lbscroll.scrollTop = 0; }); }"
        @keydown.escape.window="$store.lb.close()">
     <div class="flex items-center justify-between px-4 h-14 shrink-0">
       <span class="text-sm text-slate-300 tabular-nums" x-text="Math.round($store.lb.zoom*100)+'%'"></span>
@@ -125,11 +126,14 @@
         <button @click="$store.lb.close()" class="btn btn-ghost !px-3 !py-1.5" aria-label="Close">✕</button>
       </div>
     </div>
-    <div class="flex-1 overflow-auto scroll-thin overscroll-contain" style="touch-action:pan-x pan-y pinch-zoom;"
+    <div x-ref="lbscroll" class="flex-1 overflow-auto scroll-thin overscroll-contain" style="touch-action:pan-x pan-y pinch-zoom;"
          @click.self="$store.lb.close()">
-      <img :src="$store.lb.src" @dblclick="$store.lb.toggle()"
-           :style="`width:${$store.lb.zoom*100}%;max-width:none`"
-           class="mx-auto block select-none" :class="$store.lb.zoom>1 ? 'cursor-zoom-out' : 'cursor-zoom-in'">
+      <!-- All sections stacked, so a tall multi-section capture scrolls as one page. -->
+      <template x-for="(s, i) in $store.lb.srcs" :key="i + ':' + s">
+        <img :src="s" @dblclick="$store.lb.toggle()"
+             :style="`width:${$store.lb.zoom*100}%;max-width:none`"
+             class="mx-auto block select-none" :class="$store.lb.zoom>1 ? 'cursor-zoom-out' : 'cursor-zoom-in'">
+      </template>
     </div>
     <p class="text-center text-[11px] text-slate-500 py-2 shrink-0 sm:hidden">Double-tap or pinch to zoom · drag to pan</p>
   </div>
@@ -219,8 +223,11 @@
       q(){ return this.mode === 'mobile' ? '?v=mobile' : ''; },
     });
     Alpine.store('lb', {
-      shown: false, src: '', zoom: 1,
-      open(src){ this.src = src; this.zoom = 1; this.shown = true; document.documentElement.style.overflow = 'hidden'; },
+      // srcs is a list so a multi-section capture opens as the WHOLE page (stacked),
+      // not just the one section that was clicked — so you can scroll top-to-bottom.
+      shown: false, srcs: [], zoom: 1,
+      open(src){ this.srcs = (Array.isArray(src) ? src : [src]).filter(Boolean);
+                 this.zoom = 1; this.shown = true; document.documentElement.style.overflow = 'hidden'; },
       close(){ this.shown = false; document.documentElement.style.overflow = ''; },
       reset(){ this.zoom = 1; },
       zoomIn(){ this.zoom = Math.min(this.zoom * 1.5, 8); },
