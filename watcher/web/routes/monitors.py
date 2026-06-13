@@ -540,6 +540,31 @@ async def analyze_page(
     return JSONResponse({"ok": True, "profile": profile})
 
 
+async def _regenerate_profile_bg(session, app, monitor) -> None:
+    """Kick off a background page-profile regeneration from the latest captured text —
+    used when the watch intent changed, so the understanding stays in sync. Falls back
+    to the runner's lazy generation (next check) if there's no capture yet."""
+    key = get_openrouter_key(app)
+    if not (monitor.ai_enabled and app.ai_enabled and key and monitor.ai_watch_intent):
+        return
+    snap = (await session.execute(
+        select(Snapshot).where(Snapshot.monitor_id == monitor.id, Snapshot.html_blob.is_not(None))
+        .order_by(Snapshot.taken_at.desc()).limit(1))).scalar_one_or_none()
+    text = (snap.rendered_text or (blobs.get_text(snap.html_blob) if snap and snap.html_blob else None)) if snap else None
+    if not (text or "").strip():
+        return  # no capture yet → the runner regenerates on the next check
+    from ...detection import churn
+    from ...runner import _profile_inflight, _profile_tasks, _run_profile_page
+    if monitor.id in _profile_inflight:
+        return
+    _profile_inflight.add(monitor.id)
+    task = asyncio.create_task(_run_profile_page(
+        monitor.id, app.ai_model, app.ai_base_url, key, monitor.url, monitor.name,
+        monitor.ai_watch_intent, text, churn.churny_texts(monitor.churn_lines)))
+    _profile_tasks.add(task)
+    task.add_done_callback(_profile_tasks.discard)
+
+
 @router.get("/monitors/export")
 async def export_monitors(user: User = Depends(get_current_user), session: AsyncSession = Depends(get_session)):
     import json as _json
@@ -683,11 +708,17 @@ async def update_monitor(
     monitor = await _owned_monitor(session, user, monitor_id)
     form = await request.form()
     groups = await _user_groups(session, user)
+    old_intent = monitor.ai_watch_intent
     _apply_form(monitor, form)
     _validate_group(monitor, user, groups)
     url_err = await asyncio.to_thread(_validate_targets, monitor)
     if url_err:
         return _form_response(request, user, monitor, error=url_err, status=400, groups=groups)
+    # The page understanding is built from the watch intent — if the intent changed,
+    # the stored profile is stale. Clear it and regenerate (below, after commit).
+    intent_changed = (monitor.ai_watch_intent or None) != (old_intent or None)
+    if intent_changed:
+        monitor.ai_page_profile = None
     try:
         flow = _build_login_flow(monitor, form)
     except ValueError as exc:
@@ -701,6 +732,10 @@ async def update_monitor(
         await session.delete(monitor.login_flow)
     await session.commit()
     await session.refresh(monitor)
+
+    # Intent changed → refresh the page understanding in the background (best-effort).
+    if intent_changed:
+        await _regenerate_profile_bg(session, await get_app_settings(session), monitor)
 
     if monitor.enabled:
         reschedule_monitor(monitor)

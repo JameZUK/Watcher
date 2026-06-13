@@ -976,6 +976,40 @@ def test_auto_relogin_toggle_persists():
     assert _run(_t)
 
 
+def test_intent_change_clears_page_profile():
+    """Editing 'what to watch for' clears the page understanding (it's derived from the
+    intent, so it goes stale); an edit that leaves the intent unchanged keeps it."""
+    async def _t():
+        from watcher.config import settings
+        from watcher.main import create_app
+        from watcher.models import Monitor
+        settings.registration_open = True
+        transport = httpx.ASGITransport(app=create_app())
+        email = _email()
+        async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                     headers={"Origin": "http://t"}, follow_redirects=True) as c:
+            await c.post("/register", data={"email": email, "password": "password123"})
+            base = {"url": "https://example.com", "engine": "chromium", "detection_mode": "text",
+                    "interval_minutes": "60", "wait_until": "load", "notify_channels": "inbox",
+                    "name": "Profiled"}
+            await c.post("/monitors", data={**base, "ai_watch_intent": "only reviews"})
+            async with SessionLocal() as s:
+                m = (await s.execute(select(Monitor).where(Monitor.name == "Profiled"))).scalar_one()
+                m.ai_page_profile = "Understanding: reviews matter, jobs are churn"
+                await s.commit(); mid = m.id
+            # Same intent → profile preserved.
+            await c.post(f"/monitors/{mid}", data={**base, "ai_watch_intent": "only reviews"})
+            async with SessionLocal() as s:
+                assert (await s.get(Monitor, mid)).ai_page_profile is not None
+            # Changed intent → profile cleared (will regenerate).
+            await c.post(f"/monitors/{mid}", data={**base, "ai_watch_intent": "only the price"})
+            async with SessionLocal() as s:
+                assert (await s.get(Monitor, mid)).ai_page_profile is None
+        return True
+
+    assert _run(_t)
+
+
 def test_auto_relogin_recovery_flow():
     """_run_relogin refreshes the session + re-checks on a successful agent run, and
     on a fail-fast (captcha/OTP) sets a cooldown and does NOT re-check. The agent and

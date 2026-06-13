@@ -16,7 +16,9 @@ per-site code (the tool stays fully universal).
   from the page itself and the user's watch instruction. It's stored per-monitor and
   fed into every triage so the model judges *this* page's scope correctly. Generated
   automatically on the first good capture of an intent-watched page, and re-runnable
-  on demand from a "Page understanding" card on the monitor.
+  on demand from a "Page understanding" card on the monitor. Editing "what to watch
+  for" auto-refreshes the understanding (it's derived from the intent), so the two
+  never drift out of sync.
 - **Structural churn learning.** Watcher now tracks which *lines* of a page change on
   nearly every check (digit-masked, so incrementing counters / timestamps / view-counts
   count as the same churning line) and feeds that observed signal into triage and the
