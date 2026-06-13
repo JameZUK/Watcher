@@ -199,6 +199,13 @@ def test_triage_prompt_enforces_scope_and_grounding(fake_http):
     assert "keyword" in system                  # anti-conflation rule
     # don't parrot the instruction's qualifier (e.g. label a non-analyst review "analyst")
     assert "does not describe what changed" in system and "parroting" in system
+    # Explicitly-excluded kinds (a non-analyst review, a job listing) must be DROPPED as
+    # 'noise', never softened to 'low'/'high', and a general-theme-only match isn't high.
+    # Regression: 2026-06-13 Glassdoor false HIGH on a support-engineer review (chg 166)
+    # and false low on a job listing (chg 167).
+    assert "explicit exclusions are absolute" in system
+    assert "out of scope" in system
+    assert "not merely the general topic" in system
     user = msgs[1]["content"]
     user_text = user if isinstance(user, str) else " ".join(p.get("text", "") for p in user)
     assert "only reviews, ignore job listings" in user_text
