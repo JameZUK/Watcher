@@ -102,14 +102,16 @@ class CamoufoxRenderer:
                     pass
 
             # --- Mobile pass: separate instance at a mobile window size ---
-            # Skip it when the desktop pass was an anti-bot wall (401/403/429):
-            # a second full Camoufox launch would just re-run the anti-bot gauntlet
-            # to screenshot a block page — wasted time and extra block risk. Bound it to
-            # the remaining render budget so a slow second pass can't blow the hard
-            # timeout and discard the good desktop capture.
+            # Run it every check (so the mobile view is captured), EXCEPT when the desktop
+            # pass was an anti-bot wall (401/403/429) — a second Camoufox launch would just
+            # re-run the gauntlet to screenshot a block page. Bounded to the time left in
+            # the budget purely as a hung-pass guard so it can't blow the outer ceiling and
+            # discard the good desktop capture. With the generous render_timeout, that
+            # budget is ample (desktop ~20-45s leaves ~45-70s), so it's not a skip in
+            # practice — it only bites if a pass genuinely hangs.
             remaining = settings.render_timeout_seconds - (time.monotonic() - start)
             if (settings.capture_mobile_preview and result is not None and result.ok
-                    and result.http_status not in (401, 403, 429) and remaining >= 6):
+                    and result.http_status not in (401, 403, 429) and remaining >= 8):
                 try:
                     mobile_secs, mmap = await asyncio.wait_for(
                         self._capture_mobile(monitor, launch_kwargs, desktop_state), timeout=remaining)
