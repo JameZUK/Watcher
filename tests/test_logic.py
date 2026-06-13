@@ -450,22 +450,44 @@ def test_slice_sections_tiles_whole_page():
     assert len(capped) == settings.max_screenshot_sections
 
 
-def test_full_page_png_uses_full_page_capture():
-    """The capture must always use full_page=True — a clip without it is constrained
-    to the viewport and silently truncates any page taller than the cap to one screen
-    (the bug that left The Register's mobile preview a single viewport tall)."""
+def test_full_page_capture_short_vs_tall():
+    """Short page → one full_page=True shot (fast path). Tall page → scrolled viewport
+    strips (no full_page, which blanks in Chromium beyond the raster limit), stitched.
+    Regression: The Register captured blank/white because a single full_page shot of a
+    ~30k px page came back unpainted."""
     import asyncio
-    from watcher.engines._common import full_page_png
-    calls = []
+    from io import BytesIO
+
+    from PIL import Image
+    from watcher.engines._common import full_page_sections
+
+    def png(w=24, h=24):
+        b = BytesIO(); Image.new("RGB", (w, h), "white").save(b, "PNG"); return b.getvalue()
 
     class Page:
-        async def evaluate(self, js):
-            return 2          # devicePixelRatio
-        async def screenshot(self, **kw):
-            calls.append(kw); return b"png"
+        def __init__(self, scroll_h): self.h = scroll_h; self.y = 0; self.shots = []
+        async def evaluate(self, js, *a):
+            if "devicePixelRatio" in js: return 2
+            if "scrollHeight" in js and "{" in js:
+                return {"h": self.h, "w": 1280, "vw": 1280, "vh": 800}
+            if "scrollHeight" in js: return self.h
+            if "scrollTo" in js: self.y = a[0] if a else 0; return None
+            if "scrollY" in js: return self.y
+            if "innerText" in js: return 100      # < 500 → no blank-retry
+            return None
+        async def set_viewport_size(self, kw): return None
+        async def wait_for_timeout(self, ms): return None
+        async def screenshot(self, **kw): self.shots.append(kw); return png()
 
-    asyncio.run(full_page_png(Page()))
-    assert calls[-1].get("full_page") is True and "clip" not in calls[-1]
+    short = Page(scroll_h=500)
+    asyncio.run(full_page_sections(short))
+    assert any(s.get("full_page") for s in short.shots)           # fast path
+    assert not any("clip" in s for s in short.shots)
+
+    tall = Page(scroll_h=40000)
+    asyncio.run(full_page_sections(tall))
+    assert tall.shots and not any(s.get("full_page") for s in tall.shots)  # strips, not full_page
+    assert len(tall.shots) >= 3                                    # multiple scrolled strips
 
 
 def test_compress_screenshot_handles_huge_tall_pages():

@@ -624,6 +624,121 @@ async def warm_up_if_blocked(page, response, monitor: Monitor):
 _WEBP_MAX_DIM = 16383
 
 
+async def _settle_for_paint(page) -> None:
+    """Nudge the page to a painted state before capture: top of page, fonts loaded, a
+    couple of animation frames committed. (Tall pages are captured by scrolling strips
+    in `_capture_full_png`, which forces per-region paint on its own.)"""
+    try:
+        await page.evaluate(
+            """async () => {
+              window.scrollTo(0, 0);
+              if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch (e) {} }
+              await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+            }""")
+        await page.wait_for_timeout(150)
+    except Exception:
+        pass
+
+
+def _whiteness(webp_bytes: bytes) -> float:
+    """Fraction of a capture that is ~white (cheap blank-detector). 0.0 on error."""
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+        Image.MAX_IMAGE_PIXELS = None
+        im = Image.open(BytesIO(webp_bytes)).convert("RGB")
+        im.thumbnail((48, 48))
+        px = list(im.getdata())
+        return sum(1 for q in px if min(q) > 245) / max(1, len(px))
+    except Exception:
+        return 0.0
+
+
+def _stitch_strips(strips: dict, dpr: float) -> bytes:
+    """Stitch viewport strips ({scrollY_css: png_bytes}) into one full-page PNG."""
+    from io import BytesIO
+
+    from PIL import Image
+    Image.MAX_IMAGE_PIXELS = None
+    items = sorted((int(y), Image.open(BytesIO(b)).convert("RGB")) for y, b in strips.items())
+    if not items:
+        return b""
+    w = items[0][1].width
+    h = max(int(round(y * dpr)) + im.height for y, im in items)
+    canvas = Image.new("RGB", (w, h), (255, 255, 255))
+    for y, im in items:
+        canvas.paste(im, (0, int(round(y * dpr))))
+    out = BytesIO()
+    canvas.save(out, format="PNG")
+    return out.getvalue()
+
+
+# Above this device-pixel height a single full_page screenshot blanks out in Chromium
+# (the rasteriser can't paint the whole tall page at once), so we scroll + stitch.
+_TALL_CAPTURE_PX = 10000
+
+
+async def _capture_full_png(page, dpr: float) -> bytes:
+    """Capture the whole page as one PNG. A `full_page` screenshot of a very tall page
+    comes back mostly blank (Chromium raster limit) even though every viewport paints
+    fine, so for tall pages we scroll a (tall, where the engine allows it) viewport down
+    in strips, screenshot each, and stitch. Short pages take the fast full_page path."""
+    try:
+        info = await page.evaluate(
+            "() => ({h: Math.ceil(document.documentElement.scrollHeight),"
+            " w: Math.ceil(document.documentElement.scrollWidth),"
+            " vw: window.innerWidth, vh: window.innerHeight})")
+    except Exception:
+        info = {}
+    H = int(info.get("h") or 0)
+    vw = int(info.get("vw") or 1280)
+    vh0 = int(info.get("vh") or 800) or 800
+    if H <= 0 or H * dpr <= _TALL_CAPTURE_PX:
+        return await page.screenshot(full_page=True, type="png")   # short → fast path
+
+    # Use a tall viewport to cut the strip count where the engine allows resizing
+    # (Playwright); Camoufox forbids it, so fall back to the current viewport height.
+    chunk = vh0
+    resized = False
+    try:
+        await page.set_viewport_size({"width": vw, "height": 8000})
+        await page.wait_for_timeout(150)
+        chunk = 8000
+        resized = True
+    except Exception:
+        chunk = vh0
+    strips: dict = {}
+    try:
+        H = int(await page.evaluate("() => Math.ceil(document.documentElement.scrollHeight)")) or H
+        y = 0
+        while y < H and len(strips) < 60:
+            try:
+                await page.evaluate("(v) => window.scrollTo(0, v)", y)
+                await page.wait_for_timeout(110)
+                ay = int(await page.evaluate("() => Math.round(window.scrollY)"))
+            except Exception:
+                ay = y
+            if ay not in strips:
+                strips[ay] = await page.screenshot(type="png")
+            if ay + chunk >= H:
+                break
+            y = ay + chunk
+        try:
+            await page.evaluate("() => window.scrollTo(0, 0)")
+        except Exception:
+            pass
+    finally:
+        if resized:
+            try:
+                await page.set_viewport_size({"width": vw, "height": vh0})
+            except Exception:
+                pass
+    if not strips:
+        return await page.screenshot(full_page=True, type="png")
+    return await asyncio.to_thread(_stitch_strips, strips, dpr)
+
+
 async def full_page_sections(page) -> list[bytes]:
     """Capture the WHOLE page as an ordered list of readable, full-width sections.
 
@@ -633,13 +748,36 @@ async def full_page_sections(page) -> list[bytes]:
     into bands of `screenshot_section_height_px` CSS px. Each band is downscaled to the
     megapixel budget + WebP's dimension limit and encoded — so the full page is kept,
     each piece stays sharp at full width, and nothing is cut off. Stacking the sections
-    reconstructs the whole page. Bytes may be WebP (Pillow reads either)."""
-    raw = await page.screenshot(full_page=True, type="png")
+    reconstructs the whole page. Bytes may be WebP (Pillow reads either).
+
+    Heavy pages occasionally capture before they paint (all text in the DOM, screen
+    still white). We settle for paint first, and if the capture still comes out blank
+    while the page clearly has content, we re-capture once after a longer settle."""
+    async def _shot(dpr):
+        raw = await _capture_full_png(page, max(dpr, 1.0))
+        return await asyncio.to_thread(_slice_sections, raw, max(dpr, 1.0))
+
     try:
         dpr = float(await page.evaluate("() => window.devicePixelRatio || 1"))
     except Exception:
         dpr = 1.0
-    return await asyncio.to_thread(_slice_sections, raw, max(dpr, 1.0))
+    await _settle_for_paint(page)
+    secs = await _shot(dpr)
+    # Paint-race guard: near-blank capture but the page has real text → re-shoot once.
+    try:
+        chars = await page.evaluate(
+            "() => ((document.body && document.body.innerText) || '').trim().length")
+    except Exception:
+        chars = 0
+    if secs and chars >= 500:
+        white = await asyncio.to_thread(_whiteness, secs[0])
+        if white >= 0.92:
+            await page.wait_for_timeout(900)
+            await _settle_for_paint(page)
+            retry = await _shot(dpr)
+            if retry and (await asyncio.to_thread(_whiteness, retry[0])) < white:
+                secs = retry
+    return secs
 
 
 async def full_page_png(page) -> bytes:

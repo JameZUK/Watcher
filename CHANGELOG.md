@@ -2,7 +2,16 @@
 
 All notable changes to Watcher are documented here. Dates are ISO-8601.
 
-## 2026-06-13 — Dashboard summary only reports what's unreviewed
+## 2026-06-13 — Fix blank/white screenshots on very tall pages
+
+### Fixed
+- **Very tall pages captured mostly blank/white** (e.g. The Register's ~30k-px
+  homepage). A single `full_page` screenshot of a page beyond Chromium's rasteriser
+  limit comes back unpainted even though every individual viewport paints fine. Tall
+  pages are now captured by scrolling the viewport down in strips, screenshotting each
+  (which always paints), and stitching them into the full page before slicing into
+  sections — short pages keep the fast single-shot path. Added a paint-settle before
+  capture and a blank-detect re-capture as a safety net.
 
 ### Changed
 - **The home summary is review-aware.** It now summarises only **unacknowledged**
