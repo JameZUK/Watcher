@@ -206,6 +206,11 @@ def test_triage_prompt_enforces_scope_and_grounding(fake_http):
     assert "explicit exclusions are absolute" in system
     assert "out of scope" in system
     assert "not merely the general topic" in system
+    # Item-type grounding: a jobs-widget rotation must not be called "reviews".
+    # Regression: 2026-06-13 chg 180 (Glassdoor jobs widget mislabeled "New reviews").
+    assert "identify each item by its structure" in system
+    assert "jobs widget" in system or "jobs-widget" in system
+    assert "view job" in system
     user = msgs[1]["content"]
     user_text = user if isinstance(user, str) else " ".join(p.get("text", "") for p in user)
     assert "only reviews, ignore job listings" in user_text
