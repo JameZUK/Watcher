@@ -157,14 +157,15 @@ def test_triage_user_content_includes_site_domain(fake_http):
     assert "amazon.co.uk" in text
 
 
-def test_fleet_summary_includes_site_domain(fake_http):
-    """The fleet summary is given each change's site domain so it names the real site."""
+def test_fleet_summary_includes_site_domain_and_title(fake_http):
+    """The fleet summary is given each change's site domain AND page title so it can
+    name the real site and understand the page (not just the saved label)."""
     _run(T.summarize_fleet(api_key="k", model="m", changes=[
         {"monitor_id": 3, "monitor": "JBL", "domain": "uk.jbl.com",
-         "importance": "high", "headline": "Price drop"}]))
+         "title": "JBL Boombox 3 Wi-Fi | JBL UK", "importance": "high", "headline": "Price drop"}]))
     msgs = " ".join(m["content"] for m in fake_http.last["json"]["messages"]
                     if isinstance(m["content"], str))
-    assert "uk.jbl.com" in msgs
+    assert "uk.jbl.com" in msgs and "JBL Boombox 3 Wi-Fi | JBL UK" in msgs
 
 
 def test_triage_prompt_enforces_scope_and_grounding(fake_http):

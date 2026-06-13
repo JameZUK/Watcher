@@ -2,7 +2,19 @@
 
 All notable changes to Watcher are documented here. Dates are ISO-8601.
 
-## 2026-06-13 — Site-aware headlines & summaries
+## 2026-06-13 — Title-aware headlines + a collapsible home summary
+
+### Changed
+- **Headlines read the page title, not just the URL.** Triage and the dashboard summary
+  now use the page title to understand *what* a page is and to name the site by its
+  human name (e.g. "The Register", "John Lewis", "Stock Analysis"), falling back to the
+  diff/domain when a title is generic (a shop's homepage title on a product page). The
+  fleet summary receives each change's page title alongside its domain.
+- **The home summary is a TLDR by default.** The AI paragraph is collapsed to two lines
+  with a "Show more" toggle to expand the full detail (links preserved), so it doesn't
+  dominate the dashboard.
+- Re-triaged the existing text-diff change headlines through the improved prompt so the
+  history is site/title-aware too (value/visual-only changes were left as-is).
 
 ### Changed
 - **Headlines name the real site, not just your saved label.** Change headlines (on

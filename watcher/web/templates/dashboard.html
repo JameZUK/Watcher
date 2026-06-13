@@ -51,13 +51,18 @@
         {% endfor %}
       </div>
       {% endmacro %}
+      {# The paragraph is collapsed to a short TLDR by default; "Show more" expands it. #}
       {% if summary_segments %}
-      <p class="mt-2 text-sm text-slate-300 leading-relaxed">{% for seg in summary_segments %}{% if seg.monitor_id %}<a href="/monitors/{{ seg.monitor_id }}" class="text-brand-300 hover:underline">{{ seg.text }}</a>{% else %}{{ seg.text }}{% endif %}{% endfor %}</p>
+      <div x-data="fleetSummary(false)" x-init="$nextTick(() => check())">
+        <p x-ref="para" class="mt-2 text-sm text-slate-300 leading-relaxed" :style="expanded ? '' : clamp">{% for seg in summary_segments %}{% if seg.monitor_id %}<a href="/monitors/{{ seg.monitor_id }}" class="text-brand-300 hover:underline">{{ seg.text }}</a>{% else %}{{ seg.text }}{% endif %}{% endfor %}</p>
+        <button x-show="overflowing" x-cloak @click="expanded = !expanded" class="mt-1 text-xs text-brand-300/90 hover:text-brand-200" x-text="expanded ? 'Show less ▴' : 'Show more ▾'"></button>
+      </div>
       {% elif summary_pending %}
       {# Not ready yet but generating — show the headline list now and poll for the
-         paragraph, swapping it in (no manual reload). #}
-      <div x-data="fleetSummary()" x-init="poll()">
-        <p x-ref="para" x-show="ready" x-cloak class="mt-2 text-sm text-slate-300 leading-relaxed"></p>
+         paragraph, swapping the (collapsible) TLDR in without a reload. #}
+      <div x-data="fleetSummary(true)" x-init="poll()">
+        <p x-ref="para" x-show="ready" x-cloak class="mt-2 text-sm text-slate-300 leading-relaxed" :style="expanded ? '' : clamp"></p>
+        <button x-show="ready && overflowing" x-cloak @click="expanded = !expanded" class="mt-1 text-xs text-brand-300/90 hover:text-brand-200" x-text="expanded ? 'Show less ▴' : 'Show more ▾'"></button>
         <div x-show="!ready">{% if summary.top %}{{ headline_list() }}{% else %}<p class="mt-2 text-xs text-slate-500">Summarising recent changes…</p>{% endif %}</div>
       </div>
       {% elif summary.top %}
@@ -231,17 +236,22 @@ function groupForm(){return {
     this.aiError = '';
   },
 }}
-// Poll for the AI fleet-summary paragraph and swap it in when ready, so it appears
-// without a manual reload. Builds the DOM with textContent (XSS-safe) and only links
-// to /monitors/<id> for the server-validated monitor ids the API returns.
-function fleetSummary(){return {
-  ready: false,
+// The fleet-summary paragraph: a short TLDR (2-line clamp) by default with a "Show
+// more" toggle, and — when it's still generating — polls /dashboard/summary and swaps
+// it in without a reload. DOM is built with textContent (XSS-safe); links only point
+// at /monitors/<id> for the server-validated monitor ids the API returns.
+function fleetSummary(pending){return {
+  ready: !pending, expanded: false, overflowing: false,
+  clamp: 'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;',
+  check(){ const p = this.$refs.para; if (p) this.overflowing = p.scrollHeight > p.clientHeight + 2; },
   async poll(){
     for (let i = 0; i < 15 && !this.ready; i++){
       await new Promise(r => setTimeout(r, 2500));
       try {
         const d = await (await fetch('/dashboard/summary', {headers:{'Accept':'application/json'}})).json();
-        if (d.ready && Array.isArray(d.segments) && d.segments.length){ this.render(d.segments); this.ready = true; }
+        if (d.ready && Array.isArray(d.segments) && d.segments.length){
+          this.render(d.segments); this.ready = true; this.$nextTick(() => this.check());
+        }
       } catch (e) {}
     }
   },

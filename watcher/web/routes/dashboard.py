@@ -103,14 +103,15 @@ async def _generate_fleet_paragraph(user_id, fp, model, base_url, key, days, ins
         since = utcnow() - timedelta(days=days)
         async with SessionLocal() as s:
             rows = (await s.execute(
-                select(Change, Monitor.name, Monitor.id, Monitor.url)
+                select(Change, Monitor.name, Monitor.id, Monitor.url, Snapshot.title)
                 .join(Monitor, Monitor.id == Change.monitor_id)
+                .outerjoin(Snapshot, Snapshot.id == Change.to_snapshot_id)
                 .where(Monitor.user_id == user_id, Change.detected_at >= since)
                 .order_by(Change.detected_at.desc()).limit(40))).all()
         changes = [{"monitor_id": mid, "monitor": mname or "", "domain": _domain(murl),
-                    "importance": ch.ai_importance,
+                    "title": stitle or "", "importance": ch.ai_importance,
                     "headline": ch.ai_headline or ch.summary or "Change detected"}
-                   for ch, mname, mid, murl in rows]
+                   for ch, mname, mid, murl, stitle in rows]
         segs = await summarize_fleet(api_key=key, model=model, base_url=base_url,
                                      changes=changes, instruction=instruction)
         if segs:
