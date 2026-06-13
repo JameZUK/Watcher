@@ -1353,6 +1353,38 @@ async def snapshot_image(
     return _serve_blob_image(request, key)
 
 
+@router.get("/monitors/{monitor_id}/snapshots/{snapshot_id}/crop")
+async def snapshot_crop(
+    request: Request,
+    monitor_id: int,
+    snapshot_id: int,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    v: str | None = None,    # "mobile" for the mobile-viewport capture
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Crop one changed content block out of a snapshot's screenshot, for the
+    'zoom into the change' lightbox. The bbox is the element's full-page CSS box from
+    its element map; crop_block maps it through the capture's dpr + section slicing
+    (so it works at any engine/render width). Generated on the fly; cached by URL."""
+    await _owned_monitor(session, user, monitor_id)
+    snap = await session.get(Snapshot, snapshot_id)
+    if not snap or snap.monitor_id != monitor_id:
+        raise HTTPException(404)
+    mobile = v == "mobile"
+    element_map = snap.element_map_mobile if mobile else snap.element_map
+    sections = (snap.screenshot_mobile_sections if mobile else snap.screenshot_sections) or []
+    from ...detection.elements import crop_block
+    data = await asyncio.to_thread(
+        crop_block, sections, element_map, {"x": x, "y": y, "w": w, "h": h}, pad=24)
+    if not data:
+        raise HTTPException(404)
+    return Response(content=data, media_type="image/webp", headers={"Cache-Control": _IMG_CACHE})
+
+
 @router.get("/monitors/{monitor_id}/changes/{change_id}/overlay")
 async def change_overlay(
     request: Request,
