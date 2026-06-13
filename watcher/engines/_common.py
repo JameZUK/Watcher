@@ -674,14 +674,27 @@ async def capture_element_map(page) -> dict | None:
     """
     import hashlib
     import re
-    try:
-        await page.evaluate("() => window.scrollTo(0, 0)")
-    except Exception:
-        pass
-    try:
-        data = await page.evaluate(_ELEMENT_MAP_JS)
-    except Exception:
-        return None
+
+    async def _extract():
+        try:
+            await page.evaluate("() => window.scrollTo(0, 0)")
+        except Exception:
+            pass
+        try:
+            return await page.evaluate(_ELEMENT_MAP_JS)
+        except Exception:
+            return None
+
+    # Retry once after a short beat if the first pass finds nothing — the repeated
+    # content (reviews/listings/cards) may still be hydrating, especially on the
+    # separately-rendered mobile pass. Cheap: only the empty case pays the wait.
+    data = await _extract()
+    if not (isinstance(data, dict) and data.get("blocks")):
+        try:
+            await page.wait_for_timeout(800)
+        except Exception:
+            pass
+        data = await _extract()
     if not isinstance(data, dict) or not data.get("blocks"):
         return None
     blocks = []

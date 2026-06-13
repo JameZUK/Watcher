@@ -153,7 +153,14 @@ class CamoufoxRenderer:
             context.set_default_timeout(settings.render_timeout_seconds * 1000)
             page = await context.new_page()
             await setup_blocking(context, monitor)
-            await navigate(page, monitor)
+            # Warm up past an anti-bot wall the same way the desktop pass does — the
+            # mobile pass is a fresh navigation, so a cold deep-link can be turned
+            # away (Glassdoor/Cloudflare) even though desktop cleared it. Without this
+            # the mobile render is a gate page → no content blocks → no element map.
+            resp = await navigate(page, monitor)
+            warmed = await warm_up_if_blocked(page, resp, monitor)
+            if warmed is not None:
+                resp = warmed
             await do_wait(page, monitor)
             await _settle_for_render(page)
             await click_consent(page, monitor)

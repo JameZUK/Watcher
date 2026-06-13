@@ -116,7 +116,9 @@
   <div x-data="{ moved: false,
                  pos(){ if (this.moved) return; const el = $refs.lbscroll; if (!el) return;
                    const max = Math.max(0, el.scrollHeight - el.clientHeight);
-                   el.scrollTop = Math.min(max, Math.max(0, $store.lb.atFrac * el.scrollHeight - el.clientHeight / 2)); } }"
+                   el.scrollTop = Math.min(max, Math.max(0, $store.lb.atFrac * el.scrollHeight - el.clientHeight / 2)); },
+                 lbBoxStyle(b){ const d = $store.lb.dims || {}; const pw = d.pw || 1, ph = d.ph || 1;
+                   return `left:${100*(b.x||0)/pw}%;top:${100*(b.y||0)/ph}%;width:${100*(b.w||0)/pw}%;height:${100*(b.h||0)/ph}%`; } }"
        x-cloak x-show="$store.lb.shown" x-transition.opacity
        class="fixed inset-0 z-[60] bg-black/90 backdrop-blur-sm flex flex-col"
        x-effect="if ($store.lb.shown) { $store.lb.srcs; moved = false; $nextTick(() => pos()); }"
@@ -132,12 +134,21 @@
     </div>
     <div x-ref="lbscroll" class="flex-1 overflow-auto scroll-thin overscroll-contain" style="touch-action:pan-x pan-y pinch-zoom;"
          @wheel="moved = true" @touchstart="moved = true" @click.self="$store.lb.close()">
-      <!-- All sections stacked, so a tall multi-section capture scrolls as one page. -->
-      <template x-for="(s, i) in $store.lb.srcs" :key="i + ':' + s">
-        <img :src="s" @dblclick="$store.lb.toggle()" @load="pos()"
-             :style="`width:${$store.lb.zoom*100}%;max-width:none`"
-             class="mx-auto block select-none" :class="$store.lb.zoom>1 ? 'cursor-zoom-out' : 'cursor-zoom-in'">
-      </template>
+      <!-- All sections stacked (so a tall multi-section capture scrolls as one page),
+           wrapped with an optional change-highlight overlay that scales with the zoom. -->
+      <div class="mx-auto relative" :style="`width:${$store.lb.zoom*100}%;max-width:none`">
+        <template x-for="(s, i) in $store.lb.srcs" :key="i + ':' + s">
+          <img :src="s" @dblclick="$store.lb.toggle()" @load="pos()"
+               class="block w-full select-none" :class="$store.lb.zoom>1 ? 'cursor-zoom-out' : 'cursor-zoom-in'">
+        </template>
+        <template x-if="$store.lb.boxes.length && $store.lb.dims">
+          <div class="absolute inset-0 pointer-events-none">
+            <template x-for="(b, bi) in $store.lb.boxes" :key="bi">
+              <div class="ov-box on" :class="'ov-'+b.kind" :style="lbBoxStyle(b)"></div>
+            </template>
+          </div>
+        </template>
+      </div>
     </div>
     <p class="text-center text-[11px] text-slate-500 py-2 shrink-0 sm:hidden">Double-tap or pinch to zoom · drag to pan</p>
   </div>
@@ -234,11 +245,15 @@
       // srcs is a list so a multi-section capture opens as the WHOLE page (stacked),
       // not just the one section that was clicked — so you can scroll top-to-bottom.
       // atFrac is where to open: the 0..1 position of the page the caller was viewing.
-      shown: false, srcs: [], zoom: 1, atFrac: 0,
-      open(src, frac){ this.srcs = (Array.isArray(src) ? src : [src]).filter(Boolean);
+      // boxes/dims (optional) overlay change-highlight rectangles on the zoomed page:
+      // boxes are page-coord {x,y,w,h,kind}; dims is {pw,ph}. Positioned by percentage
+      // so they scale with the zoom transform.
+      shown: false, srcs: [], zoom: 1, atFrac: 0, boxes: [], dims: null,
+      open(src, frac, opts){ this.srcs = (Array.isArray(src) ? src : [src]).filter(Boolean);
                  this.atFrac = Math.min(1, Math.max(0, frac || 0));
+                 const o = opts || {}; this.boxes = o.boxes || []; this.dims = o.dims || null;
                  this.zoom = 1; this.shown = true; document.documentElement.style.overflow = 'hidden'; },
-      close(){ this.shown = false; document.documentElement.style.overflow = ''; },
+      close(){ this.shown = false; this.boxes = []; this.dims = null; document.documentElement.style.overflow = ''; },
       reset(){ this.zoom = 1; },
       zoomIn(){ this.zoom = Math.min(this.zoom * 1.5, 8); },
       zoomOut(){ this.zoom = Math.max(this.zoom / 1.5, 1); },

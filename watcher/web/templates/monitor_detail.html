@@ -197,7 +197,7 @@
             <!-- Scrollable preview stage (caps to ~65vh); change-points layer on the
                  element-diff highlight boxes. Mobile captures render framed at ~380px. -->
             <div class="relative bg-black/40" :class="hi() ? 'border-b lg:border-b-0 lg:border-r border-white/5' : ''">
-              <div x-ref="stage" class="overflow-y-auto overscroll-contain max-h-[65vh] flex justify-center scroll-thin">
+              <div x-ref="stage" class="overflow-y-auto overscroll-contain max-h-[65vh] flex justify-center items-start scroll-thin">
                 <div :class="onMobile() ? 'w-[380px] max-w-full my-5 rounded-2xl overflow-hidden border border-white/12 shadow-xl' : 'w-full'">
                   <div x-ref="canvas" class="relative w-full">
                     <template x-for="k in count()" :key="dispId() + (onMobile() ? '-m-' : '-d-') + k">
@@ -525,19 +525,23 @@ function timeMachine(frames, mid, initialId){return {
   pick(b){ this.sel = (this.sel === b ? null : b); this.scrollToBox(b); },
   scrollToBox(b){ const d = this.dims(), st = this.$refs.stage, cv = this.$refs.canvas;
     if (st && cv && b){ st.scrollTo({ top: (b.y/(d.ph||1))*cv.clientHeight - 100, behavior: 'smooth' }); } },
-  // Zoom = the full-screen lightbox (zoom in/out/fit), same as the history view.
-  // For a specific changed block, open it scrolled to that block's position so you
-  // can zoom in and read it; the highlight boxes themselves live in the in-page stage.
+  // Overlay payload for the lightbox: the change-highlight boxes + page dims for the
+  // CURRENT side/variant, so the zoomed page shows the same highlights as the stage
+  // (and they scale with zoom). Empty when there are no highlights to draw.
+  lbOverlay(){ return this.hi() ? { boxes: this.boxes(), dims: this.dims() } : {}; },
+  // Zoom = the full-screen lightbox (zoom in/out/fit), same as the history view —
+  // now carrying the change highlights when viewing a change. For a specific block,
+  // open scrolled to it so you can zoom in and read it.
   zoom(b){ let frac = 0;
     if (b){ const d = this.dims(); frac = Math.max(0, Math.min(1, (b.y || 0) / (d.ph || 1))); this.sel = b; }
-    this.$store.lb.open(this.allUrls(), frac); },
+    this.$store.lb.open(this.allUrls(), frac, this.lbOverlay()); },
   // Zoom at the spot being viewed (click point, or centre when the button is used).
   openZoom(ev){
     const el = this.$refs.stage; let frac = 0;
     if (el && el.scrollHeight > 0){ const r = el.getBoundingClientRect();
       const y = (ev && ev.clientY != null) ? (ev.clientY - r.top) : (el.clientHeight / 2);
       frac = (el.scrollTop + y) / el.scrollHeight; }
-    this.$store.lb.open(this.allUrls(), frac); },
+    this.$store.lb.open(this.allUrls(), frac, this.lbOverlay()); },
   onSectionLoad(k){ if (k === 1 && this.$refs.stage) this.$refs.stage.scrollTop = 0;
     this.$nextTick(() => this.scrollable = this.$refs.stage && this.$refs.stage.scrollHeight > this.$refs.stage.clientHeight + 4); },
   get label(){ return this.frames.length ? this.frames[this.i].ago : '—'; },

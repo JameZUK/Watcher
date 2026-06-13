@@ -179,7 +179,13 @@ class PlaywrightRenderer:
             context.set_default_timeout(settings.render_timeout_seconds * 1000)
             page = await context.new_page()
             await setup_blocking(context, monitor)
-            await navigate(page, monitor)
+            # Warm up past an anti-bot wall like the desktop pass — this is a fresh
+            # navigation, so a cold deep-link can be gated even though desktop cleared
+            # it, leaving the mobile render contentless (and its element map empty).
+            resp = await navigate(page, monitor)
+            warmed = await warm_up_if_blocked(page, resp, monitor)
+            if warmed is not None:
+                resp = warmed
             await do_wait(page, monitor)
             await _settle_for_render(page)
             await click_consent(page, monitor)
