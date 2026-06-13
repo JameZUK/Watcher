@@ -289,3 +289,12 @@ html.perf-lite .popover { background: #14121e; backdrop-filter: none; -webkit-ba
 .ov-grid { display: grid; grid-template-columns: minmax(0, 1fr); }
 @media (min-width: 1024px) { .ov-grid { grid-template-columns: minmax(0, 1fr) 17rem; } }
 .ov-stage { max-height: 70vh; }
+
+/* Full-page "zoom" overlay popover — details shown on hover of a changed region. */
+.ov-pop { position: absolute; top: 0; width: 17rem; max-width: 70vw; z-index: 6;
+  background: rgba(15,13,28,.97); border: 1px solid rgba(255,255,255,.14);
+  border-radius: .6rem; padding: .6rem .7rem; box-shadow: 0 10px 34px rgba(0,0,0,.55);
+  pointer-events: none; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+.ov-pop.right { left: calc(100% + 10px); }
+.ov-pop.left  { right: calc(100% + 10px); }
+html.perf-lite .ov-pop { background: #14121e; backdrop-filter: none; -webkit-backdrop-filter: none; }

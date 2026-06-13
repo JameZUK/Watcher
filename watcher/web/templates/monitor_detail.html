@@ -270,6 +270,9 @@
               <button type="button" @click="side='after'" :class="side==='after' ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-3 py-1.5 rounded-md transition">After</button>
               <button type="button" @click="side='before'" :class="side==='before' ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-3 py-1.5 rounded-md transition">Before</button>
             </div>
+            <button type="button" @click="zoom(null)" class="btn btn-ghost text-xs" title="Open the full page with the changes highlighted">
+              <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>Full page
+            </button>
             {% if not selected.acknowledged %}
             <form method="post" action="/changes/{{ selected.id }}/ack"><button class="btn btn-ghost text-xs">Mark reviewed</button></form>
             {% endif %}
@@ -293,7 +296,7 @@
             </div>
             <p x-show="!blocks().length" x-cloak class="absolute inset-x-0 top-3 text-center text-xs text-slate-500"
                x-text="side==='before' ? 'Nothing was removed in this change.' : 'Nothing was added in this change.'"></p>
-            <div class="px-3 py-1.5 text-[11px] text-slate-500 border-t border-white/5">Hover to highlight · click a box to zoom in · use the list for details · toggle Before/After</div>
+            <div class="px-3 py-1.5 text-[11px] text-slate-500 border-t border-white/5">Hover to highlight · click a highlight to open the full page · use the list for details</div>
           </div>
           <!-- list of changed blocks -->
           <div class="p-3 overflow-y-auto scroll-thin space-y-1.5 ov-stage">
@@ -342,6 +345,62 @@
           </div>
         </div>
         {% endif %}
+
+        <!-- Full-page zoom: the whole capture with the changed regions highlighted;
+             hover a highlight for its details. -->
+        <template x-if="expanded">
+          <div @keydown.escape.window="expanded=false" class="fixed inset-0 z-[60] bg-black/90 flex flex-col">
+            <div class="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-white/10 shrink-0">
+              <div class="flex items-center gap-2 min-w-0 flex-wrap">
+                <span class="font-semibold text-white text-sm">What changed</span>
+                <span class="text-xs text-slate-400 hidden sm:inline">— full page · hover a highlight for details</span>
+                <span class="pill ov-added-t" x-show="counts.added" x-cloak><span x-text="counts.added"></span> added</span>
+                <span class="pill ov-changed-t" x-show="counts.changed" x-cloak><span x-text="counts.changed"></span> changed</span>
+                <span class="pill ov-removed-t" x-show="counts.removed" x-cloak><span x-text="counts.removed"></span> removed</span>
+              </div>
+              <div class="flex items-center gap-2 shrink-0">
+                <div class="flex p-0.5 rounded-lg bg-white/5 border border-white/10" x-show="hasMobile" x-cloak>
+                  <button type="button" @click="$store.device.set('desktop')" title="Desktop view"
+                          :class="!mobile ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-2.5 py-1 rounded-md transition">
+                    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+                  </button>
+                  <button type="button" @click="$store.device.set('mobile')" title="Mobile view"
+                          :class="mobile ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-2.5 py-1 rounded-md transition">
+                    <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>
+                  </button>
+                </div>
+                <div class="flex p-0.5 rounded-lg bg-white/5 border border-white/10 text-xs">
+                  <button type="button" @click="side='after'" :class="side==='after' ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-3 py-1.5 rounded-md transition">After</button>
+                  <button type="button" @click="side='before'" :class="side==='before' ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-3 py-1.5 rounded-md transition">Before</button>
+                </div>
+                <button type="button" @click="expanded=false" class="btn btn-ghost !px-2.5 !py-1" aria-label="Close (Esc)">✕</button>
+              </div>
+            </div>
+            <div x-ref="zstage" class="flex-1 overflow-auto scroll-thin py-4">
+              <div x-ref="zcanvas" class="relative mx-auto" style="max-width:60rem;width:100%;">
+                <template x-for="k in sectionCount()" :key="'z-'+side+(mobile?'m':'d')+'-'+k">
+                  <img :src="imgUrl(k-1)" class="block w-full" draggable="false">
+                </template>
+                <template x-for="(b, i) in blocks()" :key="'zbox-'+side+'-'+i">
+                  <div class="ov-box" :class="boxClass(b)" :style="boxStyle(b)" @mouseenter="hover=b" @mouseleave="hover=null">
+                    <div x-show="hover===b" x-cloak class="ov-pop" :class="popSide(b)">
+                      <div class="flex items-center gap-1.5 mb-1">
+                        <span class="text-[10px] uppercase tracking-wide font-semibold" :class="kindText(b)" x-text="b.kind"></span>
+                        <span class="text-[10px] text-slate-500" x-text="b.type"></span>
+                      </div>
+                      <template x-if="b.diff && b.diff.length">
+                        <p class="text-xs leading-snug break-words"><template x-for="(s, j) in b.diff" :key="j"><span :class="segClass(s)" x-text="s.t + ' '"></span></template></p>
+                      </template>
+                      <template x-if="!(b.diff && b.diff.length)">
+                        <p class="text-xs text-slate-300 break-words" x-text="b.snippet"></p>
+                      </template>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+        </template>
       </section>
       {% else %}
       <!-- Diff viewer -->
@@ -541,7 +600,7 @@
 // boxes over the screenshot (positioned by % of the page, so render width/dpr don't
 // matter), with a synced list, a before/after toggle, and a per-block detail panel.
 function changeOverlay(data){return {
-  data, side: 'after', hover: null, sel: null, showText: false,
+  data, side: 'after', hover: null, sel: null, showText: false, expanded: false,
   get mobile(){ return !!(this.$store.device && this.$store.device.isMobile && this.data.mobile); },
   get hasMobile(){ return !!this.data.mobile; },
   vp(){ return this.mobile ? this.data.mobile : this.data.desktop; },
@@ -560,11 +619,16 @@ function changeOverlay(data){return {
   kindText(b){ return b ? 'ov-' + b.kind + '-t' : ''; },
   segClass(s){ return s.op === 'add' ? 'diff-add' : s.op === 'del' ? 'diff-del' : 'text-slate-400'; },
   pick(b){ this.sel = (this.sel === b ? null : b); },
-  zoom(b){ if (!b) return;
-    const q = this.mobile ? '&v=mobile' : '';
-    const u = `/monitors/${this.data.monitor_id}/snapshots/${this.snapId()}/crop`
-      + `?x=${Math.round(b.x||0)}&y=${Math.round(b.y||0)}&w=${Math.round(b.w||0)}&h=${Math.round(b.h||0)}${q}`;
-    this.$store.lb.open(u); },
+  // Open the FULL PAGE with the changed regions highlighted; hover a region for
+  // details. Optionally scroll to a specific block (e.g. the one clicked).
+  zoom(b){ this.expanded = true; if (b) this.sel = b;
+    this.$nextTick(() => { if (b) this.scrollExpandedTo(b); }); },
+  scrollExpandedTo(b){ const d = this.dims(), st = this.$refs.zstage, cv = this.$refs.zcanvas;
+    if (!st || !cv || !b) return;
+    const go = () => st.scrollTo({ top: Math.max(0, (b.y/(d.ph||1))*cv.scrollHeight - 90), behavior: 'auto' });
+    go(); setTimeout(go, 250);   // re-run once images have sized the canvas
+  },
+  popSide(b){ const d = this.dims(); return ((b.x||0)/(d.pw||1) < 0.55) ? 'right' : 'left'; },
   scrollToBox(b){ const d = this.dims(), st = this.$refs.stage, cv = this.$refs.canvas;
     if (st && cv && b){ st.scrollTo({ top: (b.y/(d.ph||1))*cv.clientHeight - 100, behavior: 'smooth' }); } },
 }}
