@@ -132,6 +132,22 @@ def test_profile_includes_churn_samples(fake_http):
     assert "Jobs: 37" in user_text and "change repeatedly" in user_text
 
 
+def test_visual_only_triage_forbids_content_claims(fake_http):
+    """A visual-only change (no text diff) means the page TEXT is unchanged, so the
+    prompt must forbid claiming new textual content. Regression: Glassdoor's rotating
+    images triaged as 'New analyst reviews are visible'."""
+    from io import BytesIO
+
+    from PIL import Image
+    buf = BytesIO(); Image.new("RGB", (12, 12), "white").save(buf, format="PNG")
+    _run(T.triage_change(api_key="k", model="m", url="u", title="t", intent="only reviews",
+                         diff_text=None, image_png=buf.getvalue()))
+    content = fake_http.last["json"]["messages"][1]["content"]
+    text = " ".join(p.get("text", "") for p in content) if isinstance(content, list) else content
+    assert "VISUAL-ONLY" in text
+    assert "no new reviews" in text.lower()        # explicitly rules out content claims
+
+
 def test_triage_prompt_enforces_scope_and_grounding(fake_http):
     """The triage prompt must keep its grounding + scope guardrails, and forward the
     user's watch intent, so out-of-scope churn (e.g. a rotating jobs widget) can't be

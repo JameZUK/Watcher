@@ -134,11 +134,17 @@ def _user_content(url, title, intent, diff_text, image_png, page_profile=None, c
     data_url = _compact_image(image_png) if image_png else None
     if data_url:
         lines.append(
-            "\nNo text diff is available — only a small fraction of pixels changed. "
-            "The image is the CURRENT page (you do NOT have the previous version, so "
-            "you cannot know exact before/after values). Describe only what is plainly "
-            "different; if you cannot tell, treat it as cosmetic/noise. Do NOT state a "
-            "specific price or stock change you cannot verify from a single image."
+            "\nIMPORTANT — this is a VISUAL-ONLY change: the page's visible TEXT is "
+            "unchanged since the last check (there is no text diff). It therefore "
+            "follows that NO textual content was added, posted or changed — there are "
+            "NO new reviews, posts, listings, comments, prices or articles, regardless "
+            "of what the image shows (existing text being 'visible' is not a change). "
+            "Only a non-text aspect differs — an image/photo/logo, chart, colour or "
+            "layout (often a rotating ad/jobs/recommendation widget). The attached "
+            "image is only the CURRENT page; you have no 'before'. Report ONLY a "
+            "specific, meaningful non-text change you can actually identify; otherwise "
+            "rate it 'noise'. Never describe any text/content as new/added/updated, and "
+            "never state a price/stock/rating you cannot verify."
         )
         return [
             {"type": "text", "text": "\n".join(lines)},
