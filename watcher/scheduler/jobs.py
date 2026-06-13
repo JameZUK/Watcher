@@ -24,6 +24,7 @@ scheduler = AsyncIOScheduler(timezone="UTC")
 _PRUNE_JOB = "retention-prune"
 _DIGEST_JOB = "notification-digest"
 _PROXY_JOB = "proxy-health"
+_RESUME_JOB = "auto-resume"
 
 
 async def _run_digests() -> None:
@@ -68,14 +69,21 @@ def is_checking(monitor_id: int) -> bool:
     return monitor_id in _inflight
 
 
-async def _run_check(monitor_id: int) -> None:
+async def _run_check(monitor_id: int, manual: bool = False) -> None:
     _inflight.add(monitor_id)
     try:
-        await check_monitor(monitor_id)
+        await check_monitor(monitor_id, manual=manual)
     except Exception:  # noqa: BLE001
         log.exception("check failed for monitor %s", monitor_id)
     finally:
         _inflight.discard(monitor_id)
+
+
+def _spread_jitter(interval: int) -> int:
+    """Jitter sized to the interval so monitors sharing an interval DEPHASE across the
+    whole period instead of all firing on the same boundary (a thundering herd that
+    starves the small render pool). A fixed ±60s on a 900s interval barely spread them."""
+    return max(60, min(interval // 2, 1800))
 
 
 def reschedule_monitor(monitor: Monitor) -> None:
@@ -87,13 +95,14 @@ def reschedule_monitor(monitor: Monitor) -> None:
         except JobLookupError:
             pass
         return
+    interval = _effective_interval(monitor)
     # add_job(replace_existing=True) handles both the add and update cases.
     scheduler.add_job(
         _run_check,
-        trigger=IntervalTrigger(seconds=_effective_interval(monitor)),
+        trigger=IntervalTrigger(seconds=interval),
         args=[monitor.id],
         id=jid,
-        jitter=settings.schedule_jitter_seconds,
+        jitter=_spread_jitter(interval),
         max_instances=1,
         coalesce=True,
         replace_existing=True,
@@ -114,17 +123,46 @@ def retune_interval(monitor_id: int, interval_seconds: int) -> None:
         scheduler.reschedule_job(
             _job_id(monitor_id),
             trigger=IntervalTrigger(seconds=interval_seconds,
-                                    jitter=settings.schedule_jitter_seconds),
+                                    jitter=_spread_jitter(interval_seconds)),
         )
     except JobLookupError:
         pass
 
 
-def trigger_now(monitor_id: int) -> None:
-    """Fire a one-off immediate check (does not disturb the recurring job)."""
+def trigger_now(monitor_id: int, manual: bool = False) -> None:
+    """Fire a one-off immediate check (does not disturb the recurring job). `manual`
+    marks a user-initiated check, which runs even on a paused monitor and, on success,
+    resumes it."""
     _inflight.add(monitor_id)   # reflect "checking" immediately, before the job starts
-    scheduler.add_job(_run_check, args=[monitor_id], id=f"now-{monitor_id}",
+    scheduler.add_job(_run_check, args=[monitor_id, manual], id=f"now-{monitor_id}",
                       replace_existing=True, max_instances=1)
+
+
+async def _run_auto_resume() -> None:
+    """Re-enable monitors that were AUTO-paused long enough ago, with a fresh failure
+    count, so a transient outage (a site down for a while, a since-fixed bug) doesn't
+    leave them disabled forever. If still broken they simply auto-pause again after a
+    new failure streak — no human babysitting required."""
+    from datetime import timedelta
+    hours = settings.auto_resume_after_hours
+    if not hours:
+        return
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    async with SessionLocal() as session:
+        rows = (await session.execute(
+            select(Monitor).where(Monitor.enabled.is_(False),
+                                  Monitor.auto_paused_at.is_not(None),
+                                  Monitor.auto_paused_at < cutoff))).scalars().all()
+        for m in rows:
+            m.enabled = True
+            m.consecutive_failures = 0
+            m.auto_paused_at = None
+        if rows:
+            await session.commit()
+    for m in rows:
+        reschedule_monitor(m)
+    if rows:
+        log.info("auto-resumed %d auto-paused monitor(s)", len(rows))
 
 
 async def schedule_all() -> None:
@@ -156,6 +194,11 @@ def start_scheduler() -> None:
             _run_proxy_health, trigger=IntervalTrigger(minutes=10), id=_PROXY_JOB,
             replace_existing=True, max_instances=1, coalesce=True,
             next_run_time=datetime.now(timezone.utc),
+        )
+        # Hourly: auto-resume monitors that were auto-paused long enough ago.
+        scheduler.add_job(
+            _run_auto_resume, trigger=IntervalTrigger(hours=1), id=_RESUME_JOB,
+            replace_existing=True, max_instances=1, coalesce=True,
         )
         scheduler.start()
 

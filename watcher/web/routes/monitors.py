@@ -853,6 +853,11 @@ async def toggle_monitor(
 ):
     monitor = await _owned_monitor(session, user, monitor_id)
     monitor.enabled = not monitor.enabled
+    if monitor.enabled:
+        # Re-enabling = a fresh start: clear the failure streak and the auto-pause mark
+        # so a single subsequent blip doesn't immediately re-pause it (n was at the cap).
+        monitor.consecutive_failures = 0
+        monitor.auto_paused_at = None
     await session.commit()
     await session.refresh(monitor)
     if monitor.enabled:
@@ -891,7 +896,7 @@ async def check_monitor_now(
         age = (utcnow() - lc).total_seconds()
         if 0 <= age < cooldown:
             return JSONResponse({"ok": False, "cooldown": int(cooldown - age) + 1})
-    trigger_now(monitor.id)
+    trigger_now(monitor.id, manual=True)   # runs even if paused; resumes it on success
     return JSONResponse({"ok": True, "queued": True, "baseline_id": baseline})
 
 

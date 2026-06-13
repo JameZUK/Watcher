@@ -66,7 +66,7 @@ _ADDED_COLUMNS = {
     "monitors": {
         "ai_enabled": "BOOLEAN DEFAULT 1", "ai_watch_intent": "TEXT", "ai_policy": "VARCHAR(16)",
         "track_value": "BOOLEAN DEFAULT 0", "value_threshold": "FLOAT", "value_threshold_dir": "VARCHAR(8)",
-        "consecutive_failures": "INTEGER DEFAULT 0",
+        "consecutive_failures": "INTEGER DEFAULT 0", "auto_paused_at": "DATETIME",
         "tags": "JSON", "adaptive_interval": "BOOLEAN DEFAULT 0",
         "group_id": "INTEGER", "block_annoyances": "BOOLEAN DEFAULT 1",
         "consent_clicks": "JSON", "consent_ai_tried": "BOOLEAN DEFAULT 0",

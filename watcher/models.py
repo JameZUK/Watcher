@@ -208,6 +208,9 @@ class Monitor(Base):
 
     # Reliability
     consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
+    # Set when the monitor was AUTO-paused (too many failures), so we can tell it apart
+    # from a user pause and auto-resume it after a backoff. NULL = not auto-paused.
+    auto_paused_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     # Opt-in: when a scheduled check fails because the stored login session expired,
     # run the AI agent headlessly to re-login (credential logins only — no captcha/OTP).
     auto_relogin_enabled: Mapped[bool] = mapped_column(Boolean, default=False)

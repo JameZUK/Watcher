@@ -427,7 +427,7 @@ async def _render(monitor, engine=None) -> RenderResult:
             result = await asyncio.wait_for(render_monitor(monitor, engine=engine),
                                             timeout=settings.render_timeout_seconds + 30)
     except asyncio.TimeoutError:
-        return RenderResult(ok=False, error="Render timed out", http_status=None)
+        return RenderResult(ok=False, error="Render timed out", http_status=None, timed_out=True)
     except Exception as exc:  # noqa: BLE001
         return RenderResult(ok=False, http_status=None,
                             error=engine_error_message(exc) or f"Render failed: {type(exc).__name__}: {exc}")
@@ -439,7 +439,12 @@ async def _render(monitor, engine=None) -> RenderResult:
 
 
 def _is_transient(result) -> bool:
-    """A render failure worth retrying — driver/network/5xx, not a clean block."""
+    """A render failure worth retrying — driver/network/5xx, not a clean block and not a
+    timeout. A timeout (http_status None too) just means the page is genuinely slow/hung:
+    re-rendering at the same ceiling only times out again while pinning a render slot for
+    another full ceiling, so it's explicitly excluded."""
+    if getattr(result, "timed_out", False):
+        return False
     return result.http_status is None or result.http_status >= 500
 
 
@@ -482,6 +487,7 @@ async def _fail(session, monitor, snap, *, error, http_status, title=None, resul
     threshold = settings.auto_pause_after_failures
     if threshold and n >= threshold and monitor.enabled:
         monitor.enabled = False
+        monitor.auto_paused_at = utcnow()      # marks an AUTO pause → eligible for auto-resume
         await session.commit()
         try:  # lazy import to avoid a scheduler<->runner import cycle
             from .scheduler import unschedule_monitor
@@ -626,21 +632,21 @@ def _help_hint(reason: str | None) -> str:
 _check_inflight: set[int] = set()
 
 
-async def check_monitor(monitor_id: int) -> None:
+async def check_monitor(monitor_id: int, *, manual: bool = False) -> None:
     """Run one full check cycle for a monitor, de-duplicated per monitor so a manual
     trigger can't race the scheduled tick. Safe to call concurrently for DIFFERENT
-    monitors."""
+    monitors. `manual` = a user-initiated check, which runs even on a paused monitor."""
     if monitor_id in _check_inflight:
         log.debug("check_monitor(%s) skipped — a check is already in flight", monitor_id)
         return
     _check_inflight.add(monitor_id)          # atomic w.r.t. the loop (no await above)
     try:
-        await _check_monitor_inner(monitor_id)
+        await _check_monitor_inner(monitor_id, manual=manual)
     finally:
         _check_inflight.discard(monitor_id)
 
 
-async def _check_monitor_inner(monitor_id: int) -> None:
+async def _check_monitor_inner(monitor_id: int, *, manual: bool = False) -> None:
     async with _semaphore:
         async with SessionLocal() as session:
             monitor = (
@@ -650,7 +656,9 @@ async def _check_monitor_inner(monitor_id: int) -> None:
                     .options(selectinload(Monitor.login_flow))
                 )
             ).scalar_one_or_none()
-            if monitor is None or not monitor.enabled:
+            # A scheduled tick skips a disabled monitor; a MANUAL check runs anyway —
+            # it's the user's "I fixed it, try again" action and, on success, resumes it.
+            if monitor is None or (not monitor.enabled and not manual):
                 return
 
             prev = (
@@ -755,12 +763,26 @@ async def _check_monitor_inner(monitor_id: int) -> None:
                             http_status=result.http_status, title=result.title, result=result)
                 return
 
-            # Success — clear any failure streak (and announce a recovery).
+            # Success — clear any failure streak (and announce a recovery). Only a MANUAL
+            # check can reach success on a disabled monitor (a scheduled tick returns
+            # early), so a clean render here means "the user checked it and it works" →
+            # bring it back to life: re-enable, clear the auto-pause mark, reschedule.
+            if not monitor.enabled:
+                monitor.enabled = True
+                monitor.auto_paused_at = None
+                try:
+                    from .scheduler import reschedule_monitor
+                    reschedule_monitor(monitor)
+                except Exception:
+                    pass
+                await notify_monitor_alert(session, monitor,
+                                           f"Resumed: {monitor.name}", "Working again — monitoring resumed.")
             if monitor.consecutive_failures:
                 if monitor.consecutive_failures >= 2:
                     await notify_monitor_alert(session, monitor,
                                                f"Recovered: {monitor.name}", "The monitor is working again.")
                 monitor.consecutive_failures = 0
+            monitor.auto_paused_at = None
 
             # Persist artifacts to the content-addressed blob store.
             snap.status = SnapshotStatus.ok

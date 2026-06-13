@@ -41,6 +41,7 @@ VISIBLE_TEXT_JS = r"""
 class RenderResult:
     ok: bool = True
     http_status: int | None = None
+    timed_out: bool = False          # render hit the hard ceiling (don't retry — it'll just time out again)
     error: str | None = None
     title: str | None = None
     html: str | None = None
