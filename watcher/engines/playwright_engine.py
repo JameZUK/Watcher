@@ -120,7 +120,8 @@ class PlaywrightRenderer:
                     # with it — the desktop result is always kept, and the hard timeout
                     # stays a true safety net rather than the normal failure path.
                     remaining = settings.render_timeout_seconds - (time.monotonic() - start)
-                    if result is not None and result.ok and result.screenshot_png and remaining >= 6:
+                    if (settings.capture_mobile_preview and result is not None and result.ok
+                            and result.screenshot_png and remaining >= 6):
                         try:
                             msecs, mmap = await asyncio.wait_for(
                                 self._capture_mobile(browser, monitor, mobile_state), timeout=remaining)

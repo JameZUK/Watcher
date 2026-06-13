@@ -116,6 +116,11 @@ class Settings(BaseSettings):
 
     # Screenshot quality / device emulation.
     screenshot_scale: int = Field(default=2)        # device pixel ratio (retina-crisp)
+    # The mobile preview is a SECOND full navigation (phone UA, so UA-sensitive sites —
+    # Amazon etc. — serve their real mobile markup), which roughly doubles render time.
+    # Set false to skip it (desktop-only) and halve render time where mobile previews
+    # aren't needed.
+    capture_mobile_preview: bool = Field(default=True)
     mobile_viewport_width: int = Field(default=390)   # iPhone-class logical width
     mobile_viewport_height: int = Field(default=844)
     # The whole page is captured, then sliced into readable, full-width SECTIONS

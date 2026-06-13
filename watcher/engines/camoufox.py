@@ -108,7 +108,7 @@ class CamoufoxRenderer:
             # the remaining render budget so a slow second pass can't blow the hard
             # timeout and discard the good desktop capture.
             remaining = settings.render_timeout_seconds - (time.monotonic() - start)
-            if (result is not None and result.ok
+            if (settings.capture_mobile_preview and result is not None and result.ok
                     and result.http_status not in (401, 403, 429) and remaining >= 6):
                 try:
                     mobile_secs, mmap = await asyncio.wait_for(

@@ -18,11 +18,14 @@ from .config import settings
 # scheduler jobs need connections concurrently. connect_args timeout is a driver-level
 # backstop alongside the per-connection busy_timeout PRAGMA below.
 _is_sqlite = settings.database_url.startswith("sqlite")
-engine = create_async_engine(
-    settings.database_url, echo=False, future=True,
-    pool_size=settings.db_pool_size, max_overflow=settings.db_max_overflow,
-    connect_args={"timeout": 15} if _is_sqlite else {},
-)
+# SQLite/aiosqlite uses NullPool (a fresh connection per checkout, returned on session
+# close) — so there's no cross-render connection hoarding to size a pool against, and
+# pool_size/max_overflow aren't valid here. The WAL-pin fix is the commit() before the
+# render in the runner. connect_args.timeout is a driver-level busy backstop.
+_engine_kwargs: dict = {"connect_args": {"timeout": 15}} if _is_sqlite else {
+    "pool_size": settings.db_pool_size, "max_overflow": settings.db_max_overflow,
+}
+engine = create_async_engine(settings.database_url, echo=False, future=True, **_engine_kwargs)
 
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
 

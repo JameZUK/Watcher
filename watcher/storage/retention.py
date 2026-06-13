@@ -15,7 +15,7 @@ from sqlalchemy import delete, func, or_, select, union
 
 from ..config import settings
 from ..db import SessionLocal
-from ..models import Change, Monitor, Snapshot, utcnow
+from ..models import Change, Snapshot, utcnow
 from . import blobs  # noqa: F401  (kept for callers/back-compat)
 
 # Don't GC a blob written in the last hour — guards against deleting a blob a
@@ -29,19 +29,18 @@ async def prune() -> int:
     cutoff = utcnow() - timedelta(days=settings.retention_max_days)
 
     async with SessionLocal() as session:
-        monitor_ids = (await session.execute(select(Monitor.id))).scalars().all()
-
         # Cap retained Changes per monitor FIRST, so the snapshots they pinned
         # can then be pruned below (bounds disk for always-changing pages).
         cap = settings.max_changes_per_monitor
         if cap:
-            for mid in monitor_ids:
-                stale = (await session.execute(
-                    select(Change.id).where(Change.monitor_id == mid)
-                    .order_by(Change.detected_at.desc()).offset(cap)
-                )).scalars().all()
-                for i in range(0, len(stale), 500):
-                    await session.execute(delete(Change).where(Change.id.in_(stale[i:i + 500])))
+            # One statement (like the snapshot prune below): rank each monitor's changes
+            # newest-first and delete those beyond the cap — no per-monitor query loop.
+            crn = func.row_number().over(
+                partition_by=Change.monitor_id, order_by=Change.detected_at.desc()).label("crn")
+            cranked = select(Change.id, crn).subquery()
+            await session.execute(
+                delete(Change).where(Change.id.in_(
+                    select(cranked.c.id).where(cranked.c.crn > cap))))
             await session.commit()
 
         # Prune snapshots in ONE statement: rank each monitor's snapshots newest-

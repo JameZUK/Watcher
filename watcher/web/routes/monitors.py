@@ -1213,8 +1213,11 @@ async def monitor_detail(
     snapshots = (
         await session.execute(
             select(Snapshot).where(Snapshot.monitor_id == monitor.id)
-            # rendered_text is large and unused by the detail template — don't load it.
-            .options(defer(Snapshot.rendered_text))
+            # Defer the large columns the detail template doesn't read for all 50 rows:
+            # rendered_text, the element maps and the section arrays. The overlays endpoint
+            # re-fetches the maps on demand when a change-point is scrubbed to.
+            .options(defer(Snapshot.rendered_text), defer(Snapshot.element_map),
+                     defer(Snapshot.element_map_mobile))
             .order_by(Snapshot.taken_at.desc()).limit(50)
         )
     ).scalars().all()
