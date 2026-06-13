@@ -237,7 +237,7 @@
         {% if m %}
         <!-- AI-assisted login -->
         <div class="rounded-xl border border-brand-500/30 bg-brand-500/[.07] p-3.5" x-data="aiLogin({{ m.id }})">
-          <div class="flex items-start justify-between gap-3">
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div class="min-w-0">
               <p class="text-sm font-medium text-white">Log in automatically with AI</p>
               <p class="text-xs text-slate-400 mt-0.5">Fill the login URL, username and password above, then let the assistant drive the login in a real browser — it pauses for a one-time code if the site sends one, and saves the session. If it gets stuck (captcha / bot check) it hands control to you: click &amp; type on the live page yourself, then press <b>Capture session &amp; finish</b>. {% if lf and lf.session_state %}<span class="text-emerald-300">A session is currently saved.</span>{% endif %}</p>

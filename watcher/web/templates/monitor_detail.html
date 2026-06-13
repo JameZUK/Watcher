@@ -38,7 +38,7 @@
       <!-- Out of flow (below the button) so the status text never widens the column /
            shifts the button. Inline top:100% — the Tailwind top-full class isn't in the
            prebuilt CSS, which left it overlapping the button. -->
-      <span x-show="msg" x-cloak x-transition.opacity x-text="msg" :class="tone" class="absolute right-0 text-xs whitespace-nowrap" style="top:100%;margin-top:.3rem"></span>
+      <span x-show="msg" x-cloak x-transition.opacity x-text="msg" :class="tone" class="absolute right-0 text-xs text-right leading-snug" style="top:100%;margin-top:.3rem;max-width:min(70vw,18rem)"></span>
     </div>
     <div x-data="{open:false}" class="relative">
       <button @click="open=!open" class="btn btn-ghost text-sm">···</button>
