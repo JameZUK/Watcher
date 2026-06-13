@@ -50,7 +50,7 @@ class _FakeClient:
         '"value_threshold_dir":"none","selectors":["#accept-all","#accept-all","button.agree","<bad>"],'
         '"action":"type","index":0,"secret":"username","text":"",'
         '"page_summary":"P","relevant":"R","noise":"N",'
-        '"refined":"Alert only on analyst-role reviews","note":"Resolved the contradiction",'
+        '"refined":"Alert only on 5-star reviews","note":"Resolved the contradiction",'
         '"cells":[1,3,9,99]}'
     )
 
@@ -103,11 +103,11 @@ def test_refine_intent_returns_clear_rewrite(fake_http):
     """refine_intent rewrites a rough draft into a clear instruction (+ a note), and
     forwards the draft and page context to the model."""
     out = _run(T.refine_intent(api_key="k", model="m", base_url="http://x/v1",
-                               url="u", title="t", draft="only analyst reviews but all new reviews",
-                               page_profile="reviews have a role field"))
-    assert out == {"refined": "Alert only on analyst-role reviews", "note": "Resolved the contradiction"}
+                               url="u", title="t", draft="only 5-star reviews but flag all new reviews",
+                               page_profile="reviews show a star rating"))
+    assert out == {"refined": "Alert only on 5-star reviews", "note": "Resolved the contradiction"}
     sent = fake_http.last["json"]["messages"][1]["content"]
-    assert "only analyst reviews but all new reviews" in sent and "role field" in sent
+    assert "only 5-star reviews but flag all new reviews" in sent and "star rating" in sent
 
 
 def test_refine_intent_skips_without_draft():
@@ -151,8 +151,8 @@ def test_profile_includes_churn_samples(fake_http):
 
 def test_visual_only_triage_forbids_content_claims(fake_http):
     """A visual-only change (no text diff) means the page TEXT is unchanged, so the
-    prompt must forbid claiming new textual content. Regression: Glassdoor's rotating
-    images triaged as 'New analyst reviews are visible'."""
+    prompt must forbid claiming new textual content. Regression: a rotating image
+    widget being triaged as new textual content ('New reviews are visible')."""
     from io import BytesIO
 
     from PIL import Image
@@ -167,28 +167,29 @@ def test_visual_only_triage_forbids_content_claims(fake_http):
 
 def test_triage_user_content_includes_site_domain(fake_http):
     """Triage is told the page's domain so the headline can name the real site."""
-    _run(T.triage_change(api_key="k", model="m", url="https://www.amazon.co.uk/dp/X",
+    _run(T.triage_change(api_key="k", model="m", url="https://www.shop.example/dp/X",
                          title="Some product", intent=None, diff_text="- a\n+ b"))
     user = fake_http.last["json"]["messages"][1]["content"]
     text = user if isinstance(user, str) else " ".join(p.get("text", "") for p in user)
-    assert "amazon.co.uk" in text
+    assert "shop.example" in text
 
 
 def test_fleet_summary_includes_site_domain_and_title(fake_http):
     """The fleet summary is given each change's site domain AND page title so it can
     name the real site and understand the page (not just the saved label)."""
     _run(T.summarize_fleet(api_key="k", model="m", changes=[
-        {"monitor_id": 3, "monitor": "JBL", "domain": "uk.jbl.com",
-         "title": "JBL Boombox 3 Wi-Fi | JBL UK", "importance": "high", "headline": "Price drop"}]))
+        {"monitor_id": 3, "monitor": "Speaker", "domain": "uk.store.example",
+         "title": "Wireless Speaker | Example Store", "importance": "high", "headline": "Price drop"}]))
     msgs = " ".join(m["content"] for m in fake_http.last["json"]["messages"]
                     if isinstance(m["content"], str))
-    assert "uk.jbl.com" in msgs and "JBL Boombox 3 Wi-Fi | JBL UK" in msgs
+    assert "uk.store.example" in msgs and "Wireless Speaker | Example Store" in msgs
 
 
 def test_triage_prompt_enforces_scope_and_grounding(fake_http):
     """The triage prompt must keep its grounding + scope guardrails, and forward the
     user's watch intent, so out-of-scope churn (e.g. a rotating jobs widget) can't be
-    mis-reported as the watched thing. Regression: Glassdoor 'new analyst reviews'."""
+    mis-reported as the watched thing. Regression class: out-of-scope churn surfaced
+    as the watched item."""
     _run(T.triage_change(api_key="k", model="m", url="u", title="t",
                          intent="only reviews, ignore job listings",
                          diff_text="- old\n+ new"))
@@ -197,17 +198,18 @@ def test_triage_prompt_enforces_scope_and_grounding(fake_http):
     assert "ground every word" in system        # don't claim what the diff doesn't show
     assert "scope" in system and "noise" in system   # out-of-scope → noise
     assert "keyword" in system                  # anti-conflation rule
-    # don't parrot the instruction's qualifier (e.g. label a non-analyst review "analyst")
+    # don't parrot the instruction's qualifier (e.g. label an item with a role/kind it
+    # doesn't actually have)
     assert "does not describe what changed" in system and "parroting" in system
-    # Explicitly-excluded kinds (a non-analyst review, a job listing) must be DROPPED as
-    # 'noise', never softened to 'low'/'high', and a general-theme-only match isn't high.
-    # Regression: 2026-06-13 Glassdoor false HIGH on a support-engineer review (chg 166)
-    # and false low on a job listing (chg 167).
+    # An item not matching the named qualifier, and any explicitly-excluded kind, must be
+    # DROPPED as 'noise' — never softened to 'low'/'high' — and a general-theme-only match
+    # isn't high. (Regression class: a non-matching review / an excluded job listing rated
+    # high/low instead of dropped.)
     assert "explicit exclusions are absolute" in system
     assert "out of scope" in system
     assert "not merely the general topic" in system
     # Item-type grounding: a jobs-widget rotation must not be called "reviews".
-    # Regression: 2026-06-13 chg 180 (Glassdoor jobs widget mislabeled "New reviews").
+    # (Regression class: a jobs widget mislabeled "new reviews".)
     assert "identify each item by its structure" in system
     assert "jobs widget" in system or "jobs-widget" in system
     assert "view job" in system
@@ -225,7 +227,7 @@ def test_triage_user_content_includes_element_summary(fake_http):
     authoritative grounding for WHAT changed (Option B)."""
     _run(T.triage_change(api_key="k", model="m", url="u", title="t", intent="x",
                          diff_text="- a\n+ b",
-                         element_summary="ADDED 2 content block(s) — 2× job. e.g.: Sr. Analyst View job"))
+                         element_summary="ADDED 2 content block(s) — 2× job. e.g.: Senior Engineer (Remote) View job"))
     msgs = fake_http.last["json"]["messages"]
     user = msgs[1]["content"]
     text = user if isinstance(user, str) else " ".join(p.get("text", "") for p in user)

@@ -22,11 +22,11 @@ def test_parse_number():
 def test_cookie_editor_conversion():
     from watcher.auth.login_flows import cookie_editor_to_storage_state
     ss = cookie_editor_to_storage_state(
-        '[{"name":"datadome","value":"v","domain":".a.com","secure":true,'
+        '[{"name":"session","value":"v","domain":".example.com","secure":true,'
         '"sameSite":"no_restriction","expirationDate":111.5}]'
     )
     c = ss["cookies"][0]
-    assert c["name"] == "datadome" and c["sameSite"] == "None" and c["expires"] == 111.5
+    assert c["name"] == "session" and c["sameSite"] == "None" and c["expires"] == 111.5
     # accepts a full storage_state too
     assert cookie_editor_to_storage_state('{"cookies":[{"name":"x","value":"1","domain":"a"}],"origins":[]}')
 
@@ -41,48 +41,48 @@ def test_cookie_editor_errors():
 
 
 def test_cookie_editor_cross_domain_scope():
-    """Host-scoping keeps only the monitor's domain (Glassdoor); the all-domains
-    path (allowed_host=None) also keeps federated auth cookies (Indeed)."""
+    """Host-scoping keeps only the monitored app's domain; the all-domains path
+    (allowed_host=None) also keeps a federated auth provider's cookies (SSO)."""
     from watcher.auth.login_flows import cookie_editor_to_storage_state
-    raw = ('[{"name":"gdId","value":"g","domain":".glassdoor.co.uk","path":"/"},'
-           '{"name":"PPID","value":"i","domain":".indeed.com","path":"/"}]')
-    scoped = cookie_editor_to_storage_state(raw, allowed_host="www.glassdoor.co.uk")
-    assert [c["name"] for c in scoped["cookies"]] == ["gdId"]          # indeed dropped
+    raw = ('[{"name":"app_sess","value":"g","domain":".app.example","path":"/"},'
+           '{"name":"sso_tok","value":"i","domain":".sso.example","path":"/"}]')
+    scoped = cookie_editor_to_storage_state(raw, allowed_host="www.app.example")
+    assert [c["name"] for c in scoped["cookies"]] == ["app_sess"]      # sso provider dropped
     alld = cookie_editor_to_storage_state(raw, allowed_host=None)
-    assert {c["name"] for c in alld["cookies"]} == {"gdId", "PPID"}    # both kept
+    assert {c["name"] for c in alld["cookies"]} == {"app_sess", "sso_tok"}   # both kept
 
 
 def test_cookie_editor_multiple_blocks():
     """Several JSON exports pasted in one box (any separator) all parse."""
     from watcher.auth.login_flows import cookie_editor_to_storage_state
-    two = ('[{"name":"gdId","value":"g","domain":".glassdoor.co.uk"}]\n'
-           '[{"name":"PPID","value":"i","domain":".indeed.com"}]')
+    two = ('[{"name":"app_sess","value":"g","domain":".app.example"}]\n'
+           '[{"name":"sso_tok","value":"i","domain":".sso.example"}]')
     ss = cookie_editor_to_storage_state(two, allowed_host=None)
-    assert {c["name"] for c in ss["cookies"]} == {"gdId", "PPID"}
+    assert {c["name"] for c in ss["cookies"]} == {"app_sess", "sso_tok"}
     # comma-separated and a bare single object also work
     assert len(cookie_editor_to_storage_state(
-        '[{"name":"a","value":"1","domain":".x.com"}],'
-        '{"name":"b","value":"2","domain":".x.com"}', allowed_host=None)["cookies"]) == 2
+        '[{"name":"a","value":"1","domain":".x.example"}],'
+        '{"name":"b","value":"2","domain":".x.example"}', allowed_host=None)["cookies"]) == 2
 
 
 def test_merge_storage_state():
     from watcher.auth.login_flows import merge_storage_state
-    existing = {"cookies": [{"name": "gdId", "value": "old", "domain": ".glassdoor.co.uk", "path": "/"},
-                            {"name": "keep", "value": "k", "domain": ".glassdoor.co.uk", "path": "/"}], "origins": []}
-    new = {"cookies": [{"name": "gdId", "value": "new", "domain": ".glassdoor.co.uk", "path": "/"},
-                       {"name": "PPID", "value": "i", "domain": ".indeed.com", "path": "/"}], "origins": []}
+    existing = {"cookies": [{"name": "app_sess", "value": "old", "domain": ".app.example", "path": "/"},
+                            {"name": "keep", "value": "k", "domain": ".app.example", "path": "/"}], "origins": []}
+    new = {"cookies": [{"name": "app_sess", "value": "new", "domain": ".app.example", "path": "/"},
+                       {"name": "sso_tok", "value": "i", "domain": ".sso.example", "path": "/"}], "origins": []}
     merged = merge_storage_state(existing, new)
     by = {c["name"]: c["value"] for c in merged["cookies"]}
-    assert by == {"gdId": "new", "keep": "k", "PPID": "i"}     # added + updated, none lost
+    assert by == {"app_sess": "new", "keep": "k", "sso_tok": "i"}   # added + updated, none lost
     assert merge_storage_state(None, None) is None
 
 
 def test_cookie_domain_scoping():
     from watcher.auth.login_flows import cookie_editor_to_storage_state as conv
-    raw = ('[{"name":"a","value":"1","domain":".jbl.com"},'
-           '{"name":"b","value":"1","domain":"uk.jbl.com"},'
-           '{"name":"c","value":"1","domain":".evil.com"}]')
-    kept = sorted(c["name"] for c in conv(raw, allowed_host="uk.jbl.com")["cookies"])
+    raw = ('[{"name":"a","value":"1","domain":".brand.example"},'
+           '{"name":"b","value":"1","domain":"uk.brand.example"},'
+           '{"name":"c","value":"1","domain":".evil.example"}]')
+    kept = sorted(c["name"] for c in conv(raw, allowed_host="uk.brand.example")["cookies"])
     assert kept == ["a", "b"]                       # parent + exact host kept, unrelated dropped
     # no host → unrestricted (back-compat)
     assert len(conv(raw)["cookies"]) == 3
@@ -381,11 +381,11 @@ def test_churn_learns_recurring_lines_and_ignores_one_offs():
 
 def test_domain_helper_for_site_aware_summaries():
     """The fleet summary's site label uses the bare host, stripping a 'www.' prefix
-    correctly (not str.lstrip, which would also eat a leading 'w' — 'walmart.com')."""
+    correctly (not str.lstrip, which would also eat a leading 'w' — e.g. 'wares.example')."""
     from watcher.web.routes.dashboard import _domain
-    assert _domain("https://www.amazon.co.uk/dp/X") == "amazon.co.uk"
-    assert _domain("https://walmart.com/ip/Y") == "walmart.com"      # not 'almart.com'
-    assert _domain("https://uk.jbl.com/x.html") == "uk.jbl.com"
+    assert _domain("https://www.shop.example/dp/X") == "shop.example"
+    assert _domain("https://wares.example/ip/Y") == "wares.example"   # not 'ares.example'
+    assert _domain("https://uk.store.example/x.html") == "uk.store.example"
     assert _domain("") == "" and _domain(None) == ""
 
 
@@ -519,8 +519,8 @@ def test_mobile_screenshot_keeps_low_text_pages():
     """The mobile pass must NOT discard a page just because its visible text is
     low — SPA / shadow-DOM pages (modern e-commerce) read as near-empty even when
     fully rendered, and the desktop pass already proved the site isn't blocking us.
-    Only a recognised challenge interstitial is rejected. Regression: JBL's mobile
-    preview kept falling back to the desktop image because innerText was ~0."""
+    Only a recognised challenge interstitial is rejected. Regression: a product page's
+    mobile preview kept falling back to the desktop image because innerText was ~0."""
     import asyncio
     from watcher.engines import _common
 
@@ -619,7 +619,7 @@ def test_looks_blocked_detects_antibot_walls():
     assert _looks_blocked(N(status=403), "")
     assert _looks_blocked(N(status=401), "anything")
     assert _looks_blocked(N(status=429), "")
-    # short challenge interstitial at HTTP 200 (Glassdoor "Humans only")
+    # short challenge interstitial at HTTP 200 (a "Humans only" anti-bot wall)
     assert _looks_blocked(N(status=200), "Humans only\nWe use advanced security systems")
     assert _looks_blocked(None, "Just a moment...")
     # real content is NOT blocked
@@ -669,7 +669,7 @@ def test_rate_limiter_window():
 
 def test_visual_noise_floor(monkeypatch):
     """Sub-floor pixel churn (anti-aliasing, lazy images, carousels) must NOT
-    register as a change — the root cause of the JBL phantom-change bug."""
+    register as a change — the root cause of an early phantom-change bug."""
     from types import SimpleNamespace as N
     from watcher.detection import detector, visual
     from watcher.models import DetectionMode
@@ -820,20 +820,20 @@ def test_login_session_code_event():
 def test_cookie_summary_and_rows():
     from watcher.auth.login_flows import cookie_rows, cookie_summary
     state = {"cookies": [
-        {"name": "sess", "value": "secret1", "domain": ".glassdoor.com", "path": "/", "expires": 1800000000},
-        {"name": "gdId", "value": "secret2", "domain": ".glassdoor.com", "path": "/", "expires": -1},
-        {"name": "PPID", "value": "secret3", "domain": ".indeed.com", "path": "/"},
+        {"name": "sess", "value": "secret1", "domain": ".app.example", "path": "/", "expires": 1800000000},
+        {"name": "app_id", "value": "secret2", "domain": ".app.example", "path": "/", "expires": -1},
+        {"name": "sso_tok", "value": "secret3", "domain": ".sso.example", "path": "/"},
     ], "origins": [{"origin": "https://x"}]}
     s = cookie_summary(state)
     assert s["count"] == 3
     doms = {d["domain"]: d["names"] for d in s["domains"]}
-    assert doms[".glassdoor.com"] == ["gdId", "sess"] and doms[".indeed.com"] == ["PPID"]
+    assert doms[".app.example"] == ["app_id", "sess"] and doms[".sso.example"] == ["sso_tok"]
     # rows hide values unless asked; scope reflects expiry
     rows = cookie_rows(state)
     assert all("value" not in r for r in rows)
     by = {r["name"]: r for r in rows}
-    assert by["sess"]["session"] is False and by["gdId"]["session"] is True
-    assert by["PPID"]["session"] is True   # no expiry → session
+    assert by["sess"]["session"] is False and by["app_id"]["session"] is True
+    assert by["sso_tok"]["session"] is True   # no expiry → session
     assert "value" in cookie_rows(state, with_values=True)[0]
 
 
@@ -898,7 +898,7 @@ def test_is_code_field():
 
 def test_is_social_login():
     """SSO buttons are recognised so the agent never goes down a Google/Apple
-    path — but Glassdoor's email gateway ('Continue with Apple or email') is not
+    path — but a combined email gateway ('Continue with Apple or email') is not
     treated as social."""
     from watcher.auth.ai_login import _is_social_login
     assert _is_social_login({"label": "Continue with Google"})

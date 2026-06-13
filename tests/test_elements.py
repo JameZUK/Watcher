@@ -17,22 +17,22 @@ def test_diff_maps_none_safe():
 
 def test_classify_block_by_shape():
     assert classify_block("Great place to work. Pros: good pay. Cons: long hours.") == "review"
-    assert classify_block("Sr. Analyst, Falcon Complete (Remote, GBR) Remote View job") == "job"
+    assert classify_block("Senior Engineer, Platform Team (Remote) View job") == "job"
     assert classify_block("Apply now for this position") == "job"
     assert classify_block("Some unrelated paragraph of text") == "item"
 
 
 def test_summarize_diff_reports_counts_types_examples():
     diff = {
-        "added": [{"k": "1", "s": "Sr. Analyst, Falcon Complete View job"},
-                  {"k": "2", "s": "Engineer II View job"}],
-        "removed": [{"k": "3", "s": "Old Role View job"}],
+        "added": [{"k": "1", "s": "Senior Engineer, Platform Team View job"},
+                  {"k": "2", "s": "Data Engineer II View job"}],
+        "removed": [{"k": "3", "s": "Former Role View job"}],
     }
     s = summarize_diff(diff).lower()
     assert "added 2 content block" in s
     assert "removed 1 content block" in s
     assert "job" in s
-    assert "sr. analyst" in s   # example snippet included
+    assert "senior engineer" in s   # example snippet included
 
 
 def test_summarize_diff_empty():

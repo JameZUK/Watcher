@@ -255,7 +255,7 @@ def test_group_price_alert_fires_once():
         from watcher.runner import _maybe_group_alert
         async with SessionLocal() as s:
             u = User(email=_email(), password_hash=hash_password("x")); s.add(u); await s.flush()
-            g = Group(user_id=u.id, name="JBL", kind="price", target_value=300.0, target_dir="below")
+            g = Group(user_id=u.id, name="Speakers", kind="price", target_value=300.0, target_dir="below")
             s.add(g); await s.flush()
             m1 = Monitor(user_id=u.id, url="https://a.test", name="A", group_id=g.id,
                          track_value=True, notify_channels=["inbox"])
@@ -1381,13 +1381,13 @@ def test_blocked_render_persists_block_page():
             await c.post("/login", data={"email": email, "password": "password123"})
             async with SessionLocal() as s:
                 u = (await s.execute(select(User).where(User.email == email))).scalar_one()
-                m = Monitor(user_id=u.id, url="https://uk.jbl.test/p", name="JBL", engine=Engine.camoufox,
+                m = Monitor(user_id=u.id, url="https://uk.store.example/p", name="Store", engine=Engine.camoufox,
                             detection_mode=DetectionMode.text, interval_seconds=3600)
                 s.add(m); await s.flush(); mid = m.id; await s.commit()
 
             png = b"\x89PNG\r\n block-interstitial-pixels"
             fake = SimpleNamespace(screenshot_png=png, screenshot_mobile_png=None,
-                                   html="<title>jbl.com</title>Access is temporarily restricted", title="jbl.com")
+                                   html="<title>store.example</title>Access is temporarily restricted", title="store.example")
             async with SessionLocal() as s:
                 # selectinload login_flow so _fail's session-expiry check works
                 m = (await s.execute(select(Monitor).where(Monitor.id == mid)
@@ -1395,7 +1395,7 @@ def test_blocked_render_persists_block_page():
                 snap = Snapshot(monitor_id=mid)
                 await runner._fail(s, m, snap,
                                    error="Blocked — HTTP 403 · DataDome anti-bot protection",
-                                   http_status=403, title="jbl.com", result=fake)
+                                   http_status=403, title="store.example", result=fake)
                 sid = snap.id
 
             async with SessionLocal() as s:
@@ -1477,15 +1477,15 @@ def test_cookie_viewer_and_editor():
                                      headers={"Origin": "http://t"}, follow_redirects=True) as c:
             await c.post("/register", data={"email": email, "password": "password123"})
             await c.post("/monitors", data={
-                "url": "https://glassdoor.com", "engine": "camoufox", "detection_mode": "auto",
-                "interval_minutes": "60", "wait_until": "load", "notify_channels": "inbox", "name": "GD"})
+                "url": "https://example.com", "engine": "camoufox", "detection_mode": "auto",
+                "interval_minutes": "60", "wait_until": "load", "notify_channels": "inbox", "name": "App"})
             async with SessionLocal() as s:
                 u = (await s.execute(select(User).where(User.email == email))).scalar_one()
                 mid = (await s.execute(select(Monitor.id).where(Monitor.user_id == u.id))).scalars().first()
                 s.add(LoginFlow(monitor_id=mid, session_state={"cookies": [
-                    {"name": "sess", "value": "SECRET", "domain": ".glassdoor.com", "path": "/", "expires": 1900000000},
-                    {"name": "gdId", "value": "ID", "domain": ".glassdoor.com", "path": "/", "expires": -1},
-                    {"name": "PPID", "value": "PP", "domain": ".indeed.com", "path": "/"},
+                    {"name": "sess", "value": "SECRET", "domain": ".app.example", "path": "/", "expires": 1900000000},
+                    {"name": "app_id", "value": "ID", "domain": ".app.example", "path": "/", "expires": -1},
+                    {"name": "sso_tok", "value": "PP", "domain": ".sso.example", "path": "/"},
                 ], "origins": []}))
                 await s.commit()
 
@@ -1499,17 +1499,17 @@ def test_cookie_viewer_and_editor():
             r = await c.get(f"/monitors/{mid}/cookies?values=1")
             assert any(c["value"] == "SECRET" for c in r.json()["cookies"])
 
-            # POST: delete PPID, change sess value
+            # POST: delete sso_tok, change sess value
             r = await c.post(f"/monitors/{mid}/cookies", json={"cookies": [
-                {"name": "sess", "domain": ".glassdoor.com", "path": "/", "value": "CHANGED"},
-                {"name": "gdId", "domain": ".glassdoor.com", "path": "/"},
+                {"name": "sess", "domain": ".app.example", "path": "/", "value": "CHANGED"},
+                {"name": "app_id", "domain": ".app.example", "path": "/"},
             ]})
             assert r.status_code == 200 and r.json()["summary"]["count"] == 2
             async with SessionLocal() as s:
                 m = (await s.execute(select(Monitor).where(Monitor.id == mid)
                      .options(selectinload(Monitor.login_flow)))).scalar_one()
                 cks = {c["name"]: c for c in m.login_flow.session_state["cookies"]}
-                assert set(cks) == {"sess", "gdId"} and cks["sess"]["value"] == "CHANGED"
+                assert set(cks) == {"sess", "app_id"} and cks["sess"]["value"] == "CHANGED"
 
             # POST empty → session cleared
             r = await c.post(f"/monitors/{mid}/cookies", json={"cookies": []})
