@@ -379,6 +379,16 @@ def test_churn_learns_recurring_lines_and_ignores_one_offs():
     assert not any("jobs in united kingdom" in t.lower() for t in churn.churny_texts(state))
 
 
+def test_domain_helper_for_site_aware_summaries():
+    """The fleet summary's site label uses the bare host, stripping a 'www.' prefix
+    correctly (not str.lstrip, which would also eat a leading 'w' — 'walmart.com')."""
+    from watcher.web.routes.dashboard import _domain
+    assert _domain("https://www.amazon.co.uk/dp/X") == "amazon.co.uk"
+    assert _domain("https://walmart.com/ip/Y") == "walmart.com"      # not 'almart.com'
+    assert _domain("https://uk.jbl.com/x.html") == "uk.jbl.com"
+    assert _domain("") == "" and _domain(None) == ""
+
+
 def test_churn_changed_lines_skips_headers_and_short():
     """Diff headers and trivially short lines aren't tracked as churn."""
     from watcher.detection import churn

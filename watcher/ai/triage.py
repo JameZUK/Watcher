@@ -16,6 +16,7 @@ import io
 import json
 import logging
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 import httpx
 
@@ -45,8 +46,15 @@ _SCHEMA = {
 _SYSTEM = (
     "You triage a change detected on a monitored web page. You are given what changed "
     "— a unified text diff (- old, + new), or, when there is no text diff, a single "
-    "screenshot of the CURRENT page. Respond ONLY with the requested JSON: a concise, "
-    "human-actionable headline (no preamble), a category, and an importance.\n"
+    "screenshot of the CURRENT page — plus the page's URL and title. Respond ONLY with "
+    "the requested JSON: a concise, human-actionable headline (no preamble), a category, "
+    "and an importance.\n"
+    "\n"
+    "SITUATE THE HEADLINE ON THE ACTUAL SITE. Use the page's domain and title (given "
+    "below) so the reader can tell which real site/retailer this is — e.g. 'on Amazon', "
+    "'at John Lewis', 'on uk.jbl.com'. Do not rely on a generic label; name the site "
+    "from its domain/title. Mention the product/page itself too where the diff makes it "
+    "clear.\n"
     "\n"
     "GROUND EVERY WORD IN THE EVIDENCE. Describe only what the diff's +/- lines (or the "
     "image) actually show. Never claim something was added or changed unless those exact "
@@ -104,7 +112,14 @@ def _compact_image(png: bytes, *, max_side: int = 1280, quality: int = 70) -> st
 
 
 def _user_content(url, title, intent, diff_text, image_png, page_profile=None, churn_hint=None):
+    domain = ""
+    try:
+        domain = urlparse(url).netloc
+    except Exception:
+        domain = ""
     lines = [f"URL: {url}"]
+    if domain:
+        lines.append(f"Site (domain): {domain}")
     if title:
         lines.append(f"Page title: {title}")
     if intent:
@@ -774,6 +789,11 @@ _FLEET_SYSTEM = (
     "those exact words appear in a headline. Never state a price, value, stock state or "
     "status that is not present verbatim in a headline.\n"
     "\n"
+    "NAME THE ACTUAL SITE. Each change includes the site's domain — refer to where each "
+    "thing is by the real site/retailer (e.g. 'on Amazon', 'at John Lewis', 'on "
+    "uk.jbl.com'), derived from that domain, so the reader knows which site it's on — "
+    "not only by the user's saved label.\n"
+    "\n"
     "Return it as 'segments': split the paragraph into a FEW coarse runs (whole clauses, "
     "NOT individual words). For a run that refers to a specific change, set its monitor_id "
     "to that change's id (making it a link); use 0 for ordinary connective text. Each run "
@@ -796,7 +816,9 @@ async def summarize_fleet(
     if not api_key or not changes:
         return None
     valid_ids = {c["monitor_id"] for c in changes}
-    lines = [f"- [monitor {c['monitor_id']}] {c['monitor']} — {c.get('importance') or 'normal'} — {c['headline']}"
+    lines = [f"- [monitor {c['monitor_id']}] {c['monitor']}"
+             + (f" ({c['domain']})" if c.get("domain") else "")
+             + f" — {c.get('importance') or 'normal'} — {c['headline']}"
              for c in changes[:40]]
     messages = [
         {"role": "system", "content": _FLEET_SYSTEM},

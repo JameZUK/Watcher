@@ -2,6 +2,16 @@
 
 All notable changes to Watcher are documented here. Dates are ISO-8601.
 
+## 2026-06-13 — Site-aware headlines & summaries
+
+### Changed
+- **Headlines name the real site, not just your saved label.** Change headlines (on
+  the monitor pages) and the dashboard summary now situate each change on the actual
+  site/retailer from its domain and page title — e.g. "price dropped on JBL UK",
+  "on The Register", "Anthropic.com added…" — instead of referring to a page only by
+  the name it's saved under in Watcher. Triage is given the page domain explicitly, and
+  the fleet summary receives each change's domain.
+
 ## 2026-06-13 — Dashboard summary: grounded prose + no reload needed
 
 ### Fixed

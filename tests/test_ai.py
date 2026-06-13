@@ -148,6 +148,25 @@ def test_visual_only_triage_forbids_content_claims(fake_http):
     assert "no new reviews" in text.lower()        # explicitly rules out content claims
 
 
+def test_triage_user_content_includes_site_domain(fake_http):
+    """Triage is told the page's domain so the headline can name the real site."""
+    _run(T.triage_change(api_key="k", model="m", url="https://www.amazon.co.uk/dp/X",
+                         title="Some product", intent=None, diff_text="- a\n+ b"))
+    user = fake_http.last["json"]["messages"][1]["content"]
+    text = user if isinstance(user, str) else " ".join(p.get("text", "") for p in user)
+    assert "amazon.co.uk" in text
+
+
+def test_fleet_summary_includes_site_domain(fake_http):
+    """The fleet summary is given each change's site domain so it names the real site."""
+    _run(T.summarize_fleet(api_key="k", model="m", changes=[
+        {"monitor_id": 3, "monitor": "JBL", "domain": "uk.jbl.com",
+         "importance": "high", "headline": "Price drop"}]))
+    msgs = " ".join(m["content"] for m in fake_http.last["json"]["messages"]
+                    if isinstance(m["content"], str))
+    assert "uk.jbl.com" in msgs
+
+
 def test_triage_prompt_enforces_scope_and_grounding(fake_http):
     """The triage prompt must keep its grounding + scope guardrails, and forward the
     user's watch intent, so out-of-scope churn (e.g. a rotating jobs widget) can't be

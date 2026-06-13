@@ -85,6 +85,16 @@ async def _fleet_summary(session, user, monitors) -> dict:
     }
 
 
+def _domain(url: str | None) -> str:
+    """The bare host of a URL (e.g. 'amazon.co.uk') for site-aware summaries."""
+    from urllib.parse import urlparse
+    try:
+        host = urlparse(url or "").netloc or ""
+        return host[4:] if host.startswith("www.") else host
+    except Exception:
+        return ""
+
+
 async def _generate_fleet_paragraph(user_id, fp, model, base_url, key, days, instruction) -> None:
     """Background: write the AI summary paragraph for a user's recent changes and
     cache it. Re-queries its own session; never raises into the caller."""
@@ -93,13 +103,14 @@ async def _generate_fleet_paragraph(user_id, fp, model, base_url, key, days, ins
         since = utcnow() - timedelta(days=days)
         async with SessionLocal() as s:
             rows = (await s.execute(
-                select(Change, Monitor.name, Monitor.id)
+                select(Change, Monitor.name, Monitor.id, Monitor.url)
                 .join(Monitor, Monitor.id == Change.monitor_id)
                 .where(Monitor.user_id == user_id, Change.detected_at >= since)
                 .order_by(Change.detected_at.desc()).limit(40))).all()
-        changes = [{"monitor_id": mid, "monitor": mname or "", "importance": ch.ai_importance,
+        changes = [{"monitor_id": mid, "monitor": mname or "", "domain": _domain(murl),
+                    "importance": ch.ai_importance,
                     "headline": ch.ai_headline or ch.summary or "Change detected"}
-                   for ch, mname, mid in rows]
+                   for ch, mname, mid, murl in rows]
         segs = await summarize_fleet(api_key=key, model=model, base_url=base_url,
                                      changes=changes, instruction=instruction)
         if segs:
