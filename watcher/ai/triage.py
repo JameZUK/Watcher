@@ -11,6 +11,7 @@ the capture pipeline; callers fall back to the heuristic summary.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import io
 import json
@@ -23,6 +24,27 @@ import httpx
 logger = logging.getLogger("watcher.ai")
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+
+async def _post_with_retry(url, body, headers, timeout, *, max_retries: int = 2):
+    """POST to the AI endpoint with bounded backoff on provider throttling/overload
+    (HTTP 429/503), honouring a `Retry-After` header when present. A 429 was previously
+    indistinguishable from a hard failure (logged + None), so triage silently degraded to
+    the heuristic for every change under throttling with no recovery. Returns the final
+    response; the caller still handles a non-200 as before."""
+    resp = None
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        for attempt in range(max_retries + 1):
+            resp = await client.post(url, json=body, headers=headers)
+            if resp.status_code not in (429, 503) or attempt == max_retries:
+                return resp
+            ra = resp.headers.get("Retry-After")
+            try:
+                delay = float(ra) if ra else 0.0
+            except ValueError:
+                delay = 0.0
+            await asyncio.sleep(min(delay or (2.0 ** attempt), 30.0))
+    return resp
 
 CATEGORIES = ("price", "stock", "availability", "content", "layout", "cosmetic", "error", "other")
 IMPORTANCES = ("high", "medium", "low", "noise")
@@ -345,8 +367,7 @@ async def triage_change(
         "X-Title": "Watcher",
     }
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(base_url or OPENROUTER_URL, json=body, headers=headers)
+        resp = await _post_with_retry(base_url or OPENROUTER_URL, body, headers, timeout)
         if resp.status_code != 200:
             logger.warning("OpenRouter triage failed: HTTP %s %s", resp.status_code, resp.text[:200])
             return None
@@ -429,8 +450,7 @@ async def profile_page(
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(base_url or OPENROUTER_URL, json=body, headers=headers)
+        resp = await _post_with_retry(base_url or OPENROUTER_URL, body, headers, timeout)
         if resp.status_code != 200:
             return None
         data = json.loads(resp.json()["choices"][0]["message"]["content"])
@@ -517,8 +537,7 @@ async def refine_intent(
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(base_url or OPENROUTER_URL, json=body, headers=headers)
+        resp = await _post_with_retry(base_url or OPENROUTER_URL, body, headers, timeout)
         if resp.status_code != 200:
             return None
         data = json.loads(resp.json()["choices"][0]["message"]["content"])
@@ -588,8 +607,7 @@ async def suggest_watch_items(
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(base_url or OPENROUTER_URL, json=body, headers=headers)
+        resp = await _post_with_retry(base_url or OPENROUTER_URL, body, headers, timeout)
         if resp.status_code != 200:
             logger.warning("OpenRouter suggest failed: HTTP %s %s", resp.status_code, resp.text[:200])
             return None
@@ -660,8 +678,7 @@ async def extract_value(
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(base_url or OPENROUTER_URL, json=body, headers=headers)
+        resp = await _post_with_retry(base_url or OPENROUTER_URL, body, headers, timeout)
         if resp.status_code != 200:
             logger.warning("OpenRouter extract_value failed: HTTP %s %s", resp.status_code, resp.text[:200])
             return None
@@ -742,8 +759,7 @@ async def configure_monitor(
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(base_url or OPENROUTER_URL, json=body, headers=headers)
+        resp = await _post_with_retry(base_url or OPENROUTER_URL, body, headers, timeout)
         if resp.status_code != 200:
             logger.warning("OpenRouter configure failed: HTTP %s %s", resp.status_code, resp.text[:200])
             return None
@@ -809,8 +825,7 @@ async def configure_group(
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(base_url or OPENROUTER_URL, json=body, headers=headers)
+        resp = await _post_with_retry(base_url or OPENROUTER_URL, body, headers, timeout)
         if resp.status_code != 200:
             logger.warning("OpenRouter group config failed: HTTP %s %s", resp.status_code, resp.text[:200])
             return None
@@ -885,8 +900,7 @@ async def suggest_consent_selectors(
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(base_url or OPENROUTER_URL, json=body, headers=headers)
+        resp = await _post_with_retry(base_url or OPENROUTER_URL, body, headers, timeout)
         if resp.status_code != 200:
             logger.warning("OpenRouter consent failed: HTTP %s %s", resp.status_code, resp.text[:200])
             return None
@@ -934,8 +948,7 @@ async def summarize_history(
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(base_url or OPENROUTER_URL, json=body, headers=headers)
+        resp = await _post_with_retry(base_url or OPENROUTER_URL, body, headers, timeout)
         if resp.status_code != 200:
             return None
         return (resp.json()["choices"][0]["message"]["content"] or "").strip() or None
@@ -1039,8 +1052,7 @@ async def summarize_fleet(
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(base_url or OPENROUTER_URL, json=body, headers=headers)
+        resp = await _post_with_retry(base_url or OPENROUTER_URL, body, headers, timeout)
         if resp.status_code != 200:
             return None
         content = resp.json()["choices"][0]["message"]["content"] or ""
@@ -1153,8 +1165,7 @@ async def ai_login_action(
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(base_url or OPENROUTER_URL, json=body, headers=headers)
+        resp = await _post_with_retry(base_url or OPENROUTER_URL, body, headers, timeout)
         if resp.status_code != 200:
             logger.warning("OpenRouter login action failed: HTTP %s %s", resp.status_code, resp.text[:200])
             return None
@@ -1225,8 +1236,7 @@ async def solve_captcha_grid(
     }
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(base_url or OPENROUTER_URL, json=body, headers=headers)
+        resp = await _post_with_retry(base_url or OPENROUTER_URL, body, headers, timeout)
         if resp.status_code != 200:
             logger.warning("OpenRouter captcha solve failed: HTTP %s %s", resp.status_code, resp.text[:200])
             return None
