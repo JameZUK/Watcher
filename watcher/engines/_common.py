@@ -372,19 +372,24 @@ async def hide_banners(page, monitor: Monitor) -> list | None:
 
     walls: list[str] = []
 
-    async def _run(target):
+    # Every per-frame op is timeout-bounded: a third-party embed (ad slot, a
+    # PayPal-credit iframe, etc.) can leave evaluate/add_style_tag hanging
+    # INDEFINITELY in a frame that's mid-navigation, which — run across all frames,
+    # twice — would otherwise stall the whole render past its hard timeout (this is
+    # exactly what hung the Richer Sounds product page). A hung frame is just skipped.
+    async def _bounded(coro, timeout=4):
         try:
-            res = await target.evaluate(_BANNER_HEURISTIC_JS)
-            if isinstance(res, dict) and res.get("walls"):
-                walls.extend(res["walls"])
+            return await asyncio.wait_for(coro, timeout=timeout)
         except Exception:
-            pass
+            return None
+
+    async def _run(target):
+        res = await _bounded(target.evaluate(_BANNER_HEURISTIC_JS))
+        if isinstance(res, dict) and res.get("walls"):
+            walls.extend(res["walls"])
 
     async def _sweep():
-        try:
-            await page.add_style_tag(content=_COOKIE_CSS)
-        except Exception:
-            pass
+        await _bounded(page.add_style_tag(content=_COOKIE_CSS))
         await _run(page)
         # Consent dialogs are frequently rendered inside their own iframe; run the
         # same generic handler + CSS inside every child frame.
@@ -392,10 +397,7 @@ async def hide_banners(page, monitor: Monitor) -> list | None:
             if frame is page.main_frame:
                 continue
             await _run(frame)
-            try:
-                await frame.add_style_tag(content=_COOKIE_CSS)
-            except Exception:
-                pass
+            await _bounded(frame.add_style_tag(content=_COOKIE_CSS))
 
     # Two passes: a second consent layer (or post-accept toast) can appear after
     # the first is dismissed.
