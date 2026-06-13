@@ -758,6 +758,14 @@ async def check_monitor(monitor_id: int) -> None:
                 low_value = importance in _LOW_VALUE
                 policy = monitor.ai_policy or app.ai_low_value_policy  # silent|label|drop
 
+                # When the user named what to watch for, a change the AI rates as pure
+                # out-of-scope churn ('noise') is dropped outright — they asked to hear
+                # only about the thing they described, so unrelated page churn (rotating
+                # jobs/ads/recommendations) shouldn't even reach the timeline.
+                if effective_intent and importance == "noise":
+                    await session.commit()
+                    return
+
                 # "drop": don't even record a low-value change (snapshot is kept).
                 if low_value and policy == "drop":
                     await session.commit()

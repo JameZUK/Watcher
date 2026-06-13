@@ -85,6 +85,23 @@ def test_triage_change_threads_base_url(fake_http):
     assert fake_http.last["json"]["model"] == "m"
 
 
+def test_triage_prompt_enforces_scope_and_grounding(fake_http):
+    """The triage prompt must keep its grounding + scope guardrails, and forward the
+    user's watch intent, so out-of-scope churn (e.g. a rotating jobs widget) can't be
+    mis-reported as the watched thing. Regression: Glassdoor 'new analyst reviews'."""
+    _run(T.triage_change(api_key="k", model="m", url="u", title="t",
+                         intent="only reviews, ignore job listings",
+                         diff_text="- old\n+ new"))
+    msgs = fake_http.last["json"]["messages"]
+    system = msgs[0]["content"].lower()
+    assert "ground every word" in system        # don't claim what the diff doesn't show
+    assert "scope" in system and "noise" in system   # out-of-scope → noise
+    assert "keyword" in system                  # anti-conflation rule
+    user = msgs[1]["content"]
+    user_text = user if isinstance(user, str) else " ".join(p.get("text", "") for p in user)
+    assert "only reviews, ignore job listings" in user_text
+
+
 def test_extract_value_threads_base_url(fake_http):
     r = _run(T.extract_value(api_key="k", model="m", base_url="http://x/v1",
                              url="u", title="t", page_text="Price £1.50"))
