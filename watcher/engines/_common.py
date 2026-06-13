@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json as _json
+import random
 from urllib.parse import urlparse
 
 from ..auth.login_flows import resolve_secrets
@@ -648,6 +649,18 @@ _ELEMENT_MAP_JS = r"""() => {
            ph: Math.round(document.documentElement.scrollHeight),
            dpr: window.devicePixelRatio || 1, blocks: out };
 }"""
+
+
+# Plausible common phone CSS viewport sizes (logical px). Randomising the mobile
+# capture size per check avoids a FIXED mobile fingerprint — a stealth tell for
+# Camoufox, whose desktop window is already randomised. Safe because change
+# detection/localization is content-anchored (DOM), not pixel-aligned, so a varying
+# mobile width doesn't break anything.
+_MOBILE_SIZES = ((360, 800), (375, 812), (390, 844), (393, 852), (412, 915), (414, 896))
+
+
+def random_mobile_size() -> tuple[int, int]:
+    return random.choice(_MOBILE_SIZES)
 
 
 async def capture_element_map(page) -> dict | None:

@@ -11,6 +11,7 @@ from ._common import (
     _settle_for_render,
     apply_actions,
     capture,
+    capture_element_map,
     click_consent,
     do_wait,
     hide_banners,
@@ -115,10 +116,11 @@ class PlaywrightRenderer:
                     # Mobile preview in a phone-emulated context (best-effort).
                     if result is not None and result.ok and result.screenshot_png:
                         try:
-                            msecs = await self._capture_mobile(browser, monitor, mobile_state)
+                            msecs, mmap = await self._capture_mobile(browser, monitor, mobile_state)
                             if msecs:
                                 result.screenshot_mobile_sections = msecs
                                 result.screenshot_mobile_png = msecs[0]
+                                result.element_map_mobile = mmap
                         except Exception:
                             pass
                 finally:
@@ -143,10 +145,12 @@ class PlaywrightRenderer:
                 render_ms=int((time.monotonic() - start) * 1000),
             )
 
-    async def _capture_mobile(self, browser, monitor: Monitor, storage_state: dict | None) -> list[bytes] | None:
-        """Capture a mobile-viewport screenshot (whole page, as sections) in a
-        phone-emulated context (mobile UA + touch where supported), re-navigating so
-        UA-sensitive sites serve their real mobile layout. None if no usable content."""
+    async def _capture_mobile(self, browser, monitor: Monitor,
+                              storage_state: dict | None) -> tuple[list[bytes] | None, dict | None]:
+        """Capture a mobile-viewport screenshot (whole page, as sections) plus a
+        content-anchored element map, in a phone-emulated context (mobile UA + touch
+        where supported), re-navigating so UA-sensitive sites serve their real mobile
+        layout. Returns (sections|None, element_map|None)."""
         base: dict = {
             "viewport": {"width": settings.mobile_viewport_width,
                          "height": settings.mobile_viewport_height},
@@ -169,7 +173,7 @@ class PlaywrightRenderer:
             except Exception:
                 context = None
         if context is None:
-            return None
+            return None, None
 
         try:
             context.set_default_timeout(settings.render_timeout_seconds * 1000)
@@ -184,7 +188,9 @@ class PlaywrightRenderer:
             await reveal_full_content(page, monitor)
             # Capture unless it's a challenge interstitial (not on innerText alone —
             # SPA/shadow-DOM pages read as low-text even when fully rendered).
-            return await mobile_sections_or_none(page)
+            secs = await mobile_sections_or_none(page)
+            mmap = await capture_element_map(page) if secs else None
+            return secs, mmap
         finally:
             try:
                 await context.close()

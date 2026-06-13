@@ -56,7 +56,7 @@ _ADDED_COLUMNS = {
         "title": "VARCHAR(512)", "screenshot_mobile_blob": "VARCHAR(64)",
         "numeric_value": "FLOAT", "value_label": "VARCHAR(64)",
         "screenshot_sections": "JSON", "screenshot_mobile_sections": "JSON",
-        "element_map": "JSON",
+        "element_map": "JSON", "element_map_mobile": "JSON",
     },
     "changes": {
         "visual_blob": "VARCHAR(64)", "visual_mobile_blob": "VARCHAR(64)",

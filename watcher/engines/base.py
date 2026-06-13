@@ -55,6 +55,7 @@ class RenderResult:
     # items, cards) with their full-page bounding boxes — for resolution-independent
     # change localization (diff by content, crop in this render's own coordinates).
     element_map: dict | None = None
+    element_map_mobile: dict | None = None
     content_type: str | None = None
     render_ms: int | None = None
     # Updated browser storage_state if a login flow ran (for session persistence).

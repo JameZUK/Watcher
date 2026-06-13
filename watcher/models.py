@@ -319,6 +319,7 @@ class Snapshot(Base):
     # Content-anchored element map (repeated content blocks + full-page bboxes, in the
     # capture's own coordinates) for resolution-independent change localization.
     element_map: Mapped[dict | None] = mapped_column(JSON, default=None)
+    element_map_mobile: Mapped[dict | None] = mapped_column(JSON, default=None)
     # Whole-page captures as ordered blob-key lists (full-width sections, top→bottom).
     screenshot_sections: Mapped[list] = mapped_column(JSON, default=list)
     screenshot_mobile_sections: Mapped[list] = mapped_column(JSON, default=list)

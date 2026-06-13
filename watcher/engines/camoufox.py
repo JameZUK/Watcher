@@ -19,12 +19,14 @@ from ._common import (
     _settle_for_render,
     apply_actions,
     capture,
+    capture_element_map,
     click_consent,
     do_wait,
     hide_banners,
     install_consent_autodismiss,
     mobile_sections_or_none,
     navigate,
+    random_mobile_size,
     replay_login,
     reveal_full_content,
     setup_blocking,
@@ -105,10 +107,11 @@ class CamoufoxRenderer:
             if (result is not None and result.ok
                     and result.http_status not in (401, 403, 429)):
                 try:
-                    mobile_secs = await self._capture_mobile(monitor, launch_kwargs, desktop_state)
+                    mobile_secs, mmap = await self._capture_mobile(monitor, launch_kwargs, desktop_state)
                     if mobile_secs:
                         result.screenshot_mobile_sections = mobile_secs
                         result.screenshot_mobile_png = mobile_secs[0]
+                        result.element_map_mobile = mmap
                 except Exception:
                     pass
 
@@ -129,16 +132,19 @@ class CamoufoxRenderer:
 
     async def _capture_mobile(
         self, monitor: Monitor, launch_kwargs: dict, storage_state: dict | None
-    ) -> list[bytes] | None:
-        """Capture a mobile-viewport screenshot (whole page, as sections) via a
-        dedicated Camoufox window.
+    ) -> tuple[list[bytes] | None, dict | None]:
+        """Capture a mobile-viewport screenshot (whole page, as sections) plus a
+        content-anchored element map, via a dedicated Camoufox window. Returns
+        (sections|None, element_map|None).
 
         Camoufox honours the render size only when the size is fixed at launch
-        (`window=`) AND the context uses `no_viewport=True`.
+        (`window=`) AND the context uses `no_viewport=True`. The size is RANDOMISED
+        per check (a plausible phone size) so the mobile pass isn't a fixed-size
+        fingerprint — safe because localization is content-anchored, not pixel-aligned.
         """
         from camoufox.async_api import AsyncCamoufox
 
-        w, h = settings.mobile_viewport_width, settings.mobile_viewport_height
+        w, h = random_mobile_size()
         async with AsyncCamoufox(window=(w, h), **launch_kwargs) as browser:
             ctx_kwargs: dict = {"no_viewport": True}
             if storage_state:
@@ -158,9 +164,10 @@ class CamoufoxRenderer:
             # Capture unless it's a challenge interstitial (not on innerText alone —
             # SPA/shadow-DOM pages read as low-text even when fully rendered).
             secs = await mobile_sections_or_none(page)
+            mmap = await capture_element_map(page) if secs else None
 
             try:
                 await context.close()
             except Exception:
                 pass
-            return secs
+            return secs, mmap
