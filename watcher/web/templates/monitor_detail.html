@@ -176,7 +176,7 @@
               <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>
             </button>
           </div>
-          <template x-if="cp() && hasOv()">
+          <template x-if="cp() && hasOvView()">
             <button type="button" @click="showChanges=!showChanges" class="btn btn-ghost text-xs" :class="showChanges ? '!text-amber-200' : ''" title="Toggle change highlights">
               <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
               <span x-text="showChanges ? 'Changes on' : 'Changes off'"></span>
@@ -210,11 +210,12 @@
                   </div>
                 </div>
               </div>
-              <span class="absolute top-3 left-3 pill pill-amber backdrop-blur" x-show="cp() && !hi() && !(frame() && frame().blocked)" x-cloak>change · highlights off</span>
+              <span class="absolute top-3 left-3 pill pill-amber backdrop-blur" x-show="cp() && hasOvView() && !showChanges && !(frame() && frame().blocked)" x-cloak>change · highlights off</span>
               <span class="absolute top-3 left-3 pill backdrop-blur" style="background:rgba(239,68,68,.18);border-color:rgba(239,68,68,.4);color:#fca5a5;" x-show="frame() && frame().blocked" x-cloak>⚠ blocked / challenge page</span>
               <span class="absolute top-3 right-3 pill backdrop-blur" x-show="$store.device.isMobile && frame() && !frame().msections" x-cloak>desktop only · no mobile capture yet</span>
+              <span class="absolute top-3 right-3 pill pill-amber backdrop-blur" x-show="noMobileDiff()" x-cloak>no mobile diff · highlights on desktop</span>
               <div class="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/55 to-transparent" x-show="scrollable" x-cloak></div>
-              <button type="button" @click="openZoom()" class="absolute bottom-3 right-3 btn btn-ghost !px-2.5 !py-1.5 backdrop-blur" :aria-label="hi() ? 'Open full page with highlights' : 'Zoom to full size'">
+              <button type="button" @click="openZoom()" class="absolute bottom-3 right-3 btn btn-ghost !px-2.5 !py-1.5 backdrop-blur" aria-label="Zoom to full size">
                 <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3M11 8v6M8 11h6"/></svg>
               </button>
             </div>
@@ -285,52 +286,6 @@
       </template>
       <template x-if="!frames.length">
         <div class="p-12 text-center text-slate-500 text-sm">No render captured yet. The first check runs shortly.</div>
-      </template>
-
-      <!-- Full-page zoom: the whole capture with the changed regions highlighted; hover for details -->
-      <template x-if="expanded">
-        <div @keydown.escape.window="expanded=false" class="fixed inset-0 z-[60] bg-black/90 flex flex-col">
-          <div class="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-white/10 shrink-0">
-            <div class="flex items-center gap-2 min-w-0 flex-wrap">
-              <span class="font-semibold text-white text-sm">What changed</span>
-              <span class="text-xs text-slate-400 hidden sm:inline">— full page · hover a highlight for details</span>
-              <span class="pill ov-added-t" x-show="counts().added" x-cloak><span x-text="counts().added"></span> added</span>
-              <span class="pill ov-changed-t" x-show="counts().changed" x-cloak><span x-text="counts().changed"></span> changed</span>
-              <span class="pill ov-removed-t" x-show="counts().removed" x-cloak><span x-text="counts().removed"></span> removed</span>
-            </div>
-            <div class="flex items-center gap-2 shrink-0">
-              <div class="flex p-0.5 rounded-lg bg-white/5 border border-white/10" x-show="frame() && frame().msections" x-cloak>
-                <button type="button" @click="$store.device.set('desktop')" title="Desktop view" :class="!onMobile() ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-2.5 py-1 rounded-md transition">
-                  <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-                </button>
-                <button type="button" @click="$store.device.set('mobile')" title="Mobile view" :class="onMobile() ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-2.5 py-1 rounded-md transition">
-                  <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>
-                </button>
-              </div>
-              <div class="flex p-0.5 rounded-lg bg-white/5 border border-white/10 text-xs">
-                <button type="button" @click="side='after'" :class="side==='after' ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-3 py-1.5 rounded-md transition">After</button>
-                <button type="button" @click="side='before'" :class="side==='before' ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-3 py-1.5 rounded-md transition">Before</button>
-              </div>
-              <button type="button" @click="expanded=false" class="btn btn-ghost !px-2.5 !py-1" aria-label="Close (Esc)">✕</button>
-            </div>
-          </div>
-          <div x-ref="zstage" class="flex-1 overflow-auto scroll-thin py-4">
-            <div x-ref="zcanvas" class="relative mx-auto" style="max-width:60rem;width:100%;">
-              <template x-for="k in count()" :key="'z-'+side+(onMobile()?'m':'d')+'-'+k">
-                <img :src="imgUrl(k-1)" class="block w-full" draggable="false">
-              </template>
-              <template x-for="(b, bi) in boxes()" :key="'zbox-'+side+'-'+bi">
-                <div class="ov-box" :class="boxClass(b)" :style="boxStyle(b)" @mouseenter="hover=b" @mouseleave="hover=null">
-                  <div x-show="hover===b" x-cloak class="ov-pop" :class="popSide(b)">
-                    <div class="flex items-center gap-1.5 mb-1"><span class="text-[10px] uppercase tracking-wide font-semibold" :class="kindText(b)" x-text="b.kind"></span><span class="text-[10px] text-slate-500" x-text="b.type"></span></div>
-                    <template x-if="b.diff && b.diff.length"><p class="text-xs leading-snug break-words"><template x-for="(s, sj) in b.diff" :key="sj"><span :class="segClass(s)" x-text="s.t + ' '"></span></template></p></template>
-                    <template x-if="!(b.diff && b.diff.length)"><p class="text-xs text-slate-300 break-words" x-text="b.snippet"></p></template>
-                  </div>
-                </div>
-              </template>
-            </div>
-          </div>
-        </div>
       </template>
     </section>
 
@@ -502,7 +457,7 @@ function timeMachine(frames, mid, initialId){return {
   frames: frames || [], mid,
   i: 0, scrollable: false, confirmPurge: false,
   // change-overlay layer
-  showChanges: true, side: 'after', hover: null, sel: null, expanded: false,
+  showChanges: true, side: 'after', hover: null, sel: null,
   ovCache: {}, ovLoading: false,
   init(){
     let idx = this.frames.length ? this.frames.length - 1 : 0;
@@ -536,9 +491,15 @@ function timeMachine(frames, mid, initialId){return {
   ovData(){ const f = this.frame(); return (f && this.ovCache[f.cid]) || null; },
   ov(){ const d = this.ovData(); return d ? d.overlays : null; },
   hasOv(){ return !!this.ov(); },
-  hi(){ return this.cp() && this.showChanges && this.hasOv(); },   // highlights active
+  // The mobile capture switches whenever the device toggle is mobile AND this frame
+  // actually has a mobile capture — exactly like the history view. Highlights are an
+  // additive layer on top of whichever capture is shown.
   onMobile(){ const f = this.frame(); return !!(this.$store.device.isMobile && f && f.msections); },
   ovView(){ const o = this.ov(); if (!o) return null; return this.onMobile() ? o.mobile : o.desktop; },
+  hasOvView(){ return !!this.ovView(); },                  // current device has an overlay
+  hi(){ return this.cp() && this.showChanges && this.hasOvView(); },   // highlights active
+  // change-point on mobile but only the desktop capture was diffed (no mobile map)
+  noMobileDiff(){ return this.cp() && this.onMobile() && this.hasOv() && !this.hasOvView(); },
   dims(){ const v = this.ovView(); return (v && v[this.side]) || {pw:1, ph:1}; },
   boxes(){ if (!this.hi()) return []; const v = this.ovView(); return (v && v[this.side] && v[this.side].blocks) || []; },
   counts(){ const v = this.ovView(); return (v && v.counts) || {added:0, removed:0, changed:0}; },
@@ -564,14 +525,14 @@ function timeMachine(frames, mid, initialId){return {
   pick(b){ this.sel = (this.sel === b ? null : b); this.scrollToBox(b); },
   scrollToBox(b){ const d = this.dims(), st = this.$refs.stage, cv = this.$refs.canvas;
     if (st && cv && b){ st.scrollTo({ top: (b.y/(d.ph||1))*cv.clientHeight - 100, behavior: 'smooth' }); } },
-  // full-page zoom (whole capture, highlights + hover details when on a change)
-  zoom(b){ this.expanded = true; if (b) this.sel = b; this.$nextTick(() => { if (b) this.scrollExpandedTo(b); }); },
-  scrollExpandedTo(b){ const d = this.dims(), st = this.$refs.zstage, cv = this.$refs.zcanvas;
-    if (!st || !cv || !b) return;
-    const go = () => st.scrollTo({ top: Math.max(0, (b.y/(d.ph||1))*cv.scrollHeight - 90), behavior: 'auto' });
-    go(); setTimeout(go, 250); },
-  // plain lightbox for a non-change render (zoom at the click position)
-  openZoom(ev){ if (this.hi()) return this.zoom();
+  // Zoom = the full-screen lightbox (zoom in/out/fit), same as the history view.
+  // For a specific changed block, open it scrolled to that block's position so you
+  // can zoom in and read it; the highlight boxes themselves live in the in-page stage.
+  zoom(b){ let frac = 0;
+    if (b){ const d = this.dims(); frac = Math.max(0, Math.min(1, (b.y || 0) / (d.ph || 1))); this.sel = b; }
+    this.$store.lb.open(this.allUrls(), frac); },
+  // Zoom at the spot being viewed (click point, or centre when the button is used).
+  openZoom(ev){
     const el = this.$refs.stage; let frac = 0;
     if (el && el.scrollHeight > 0){ const r = el.getBoundingClientRect();
       const y = (ev && ev.clientY != null) ? (ev.clientY - r.top) : (el.clientHeight / 2);
