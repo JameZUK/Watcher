@@ -697,8 +697,40 @@ def test_dashboard_fleet_summary():
             r = (await c.get("/")).text
             assert "1 new change across 1 site" in r   # only the unreviewed one counts
             assert "Price dropped to £199" in r        # top (unreviewed) headline
-            assert "Old reviewed change" not in r      # acknowledged → excluded
-            assert "1 high" in r                        # importance breakdown
+            assert "1 high" in r                        # importance breakdown (unreviewed)
+            # the acknowledged change is NOT summarised but DOES show in the reviewed line
+            assert "1 reviewed" in r and "Old reviewed change" in r
+            assert "· unreviewed ·" not in r           # no contradictory caught-up tag
+        return True
+
+    assert _run(_t)
+
+
+def test_dashboard_summary_caught_up_state():
+    """With everything reviewed: a clean 'all caught up' banner (no contradictory
+    'unreviewed' tag, no redundant site count) plus a recently-reviewed context line."""
+    async def _t():
+        from watcher.config import settings
+        from watcher.main import create_app
+        from watcher.models import (Change, DetectionMode, Monitor, Snapshot,
+                                     SnapshotStatus, User)
+        settings.registration_open = True
+        transport = httpx.ASGITransport(app=create_app())
+        email = _email()
+        async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                     headers={"Origin": "http://t"}, follow_redirects=True) as c:
+            await c.post("/register", data={"email": email, "password": "password123"})
+            async with SessionLocal() as s:
+                u = (await s.execute(select(User).where(User.email == email))).scalar_one()
+                m = Monitor(user_id=u.id, url="https://a.test", name="Alpha"); s.add(m); await s.flush()
+                snap = Snapshot(monitor_id=m.id, status=SnapshotStatus.ok); s.add(snap); await s.flush()
+                s.add(Change(monitor_id=m.id, to_snapshot_id=snap.id, change_type=DetectionMode.auto,
+                             ai_headline="A change I already read", ai_importance="high", acknowledged=True))
+                await s.commit()
+            r = (await c.get("/")).text
+            assert "You're all caught up — no new changes" in r
+            assert "· unreviewed ·" not in r            # the reported contradiction is gone
+            assert "1 reviewed" in r and "A change I already read" in r   # context line
         return True
 
     assert _run(_t)

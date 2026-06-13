@@ -66,6 +66,18 @@ async def _fleet_summary(session, user, monitors) -> dict:
     max_id = (await session.execute(
         select(func.max(Change.id)).join(Monitor, Monitor.id == Change.monitor_id)
         .where(*where))).scalar() or 0
+    # Already-reviewed (acknowledged) changes in the window — shown as a context line,
+    # NOT summarised, so the user can see what they've cleared.
+    rev_where = (Monitor.user_id == user.id, Change.detected_at >= since,
+                 Change.acknowledged.is_(True))
+    reviewed = (await session.execute(
+        select(func.count(Change.id)).join(Monitor, Monitor.id == Change.monitor_id)
+        .where(*rev_where))).scalar_one()
+    rev_rows = (await session.execute(
+        select(Change, Monitor.name, Monitor.id).join(Monitor, Monitor.id == Change.monitor_id)
+        .where(*rev_where).order_by(Change.detected_at.desc()).limit(2))).all()
+    reviewed_top = [{"headline": ch.ai_headline or ch.summary or "Change",
+                     "monitor": mname or "", "monitor_id": mid} for ch, mname, mid in rev_rows]
     # The fingerprint folds in the user's summary settings AND the unreviewed set, so the
     # paragraph regenerates when a new change arrives OR when the user reviews some.
     prompt_sig = hash((user.summary_prompt or "").strip()) & 0xFFFFFFFF
@@ -76,6 +88,8 @@ async def _fleet_summary(session, user, monitors) -> dict:
         "high": imp.get("high", 0),
         "medium": imp.get("medium", 0),
         "top": top,
+        "reviewed": reviewed,
+        "reviewed_top": reviewed_top,
         "total": len(monitors),
         "failing": sum(1 for m in monitors if (m.consecutive_failures or 0) > 0),
         "paused": sum(1 for m in monitors if not m.enabled),

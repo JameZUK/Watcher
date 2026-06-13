@@ -33,10 +33,10 @@
         <p class="font-semibold text-white">{{ summary.changes }} new change{{ 's' if summary.changes != 1 }} across {{ summary.sites }} site{{ 's' if summary.sites != 1 }}</p>
         {% if summary.high %}<span class="pill" style="background:rgba(244,63,94,.18);color:#fda4af;">{{ summary.high }} high</span>{% endif %}
         {% if summary.medium %}<span class="pill pill-amber">{{ summary.medium }} medium</span>{% endif %}
+        <span class="text-xs text-slate-500">· last {{ summary.days }} days</span>
         {% else %}
-        <p class="font-semibold text-white">You're all caught up — nothing new across {{ summary.total }} site{{ 's' if summary.total != 1 }}</p>
+        <p class="font-semibold text-white">You're all caught up — no new changes in the last {{ summary.days }} days</p>
         {% endif %}
-        <span class="text-xs text-slate-500">· unreviewed · last {{ summary.days }} days</span>
       </div>
       {# AI-written paragraph with links embedded to the relevant monitors. Text is
          autoescaped; links only ever point at the user's own validated monitor ids. #}
@@ -67,6 +67,14 @@
       </div>
       {% elif summary.top %}
       {{ headline_list() }}
+      {% endif %}
+      {# Context: what you've already reviewed in the window (acknowledged), with the
+         most recent headline so you know what was cleared. #}
+      {% if summary.reviewed %}
+      <p class="text-xs text-slate-500 mt-2">
+        <svg viewBox="0 0 24 24" class="inline h-3.5 w-3.5 -mt-0.5 text-emerald-400/80" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M20 6 9 17l-5-5"/></svg>
+        <span class="text-slate-400">{{ summary.reviewed }} reviewed</span>{% if summary.reviewed_top %} · {% for t in summary.reviewed_top %}<a href="/monitors/{{ t.monitor_id }}" class="hover:text-slate-300">{{ t.headline|truncate(52) }}</a>{{ ', ' if not loop.last }}{% endfor %}{% endif %} <span class="text-slate-600">· last {{ summary.days }} days</span>
+      </p>
       {% endif %}
       <p class="text-xs text-slate-500 mt-2">
         {{ summary.total }} monitor{{ 's' if summary.total != 1 }}{% if summary.failing %} · <span class="text-rose-300">{{ summary.failing }} failing</span>{% endif %}{% if summary.paused %} · <span class="text-slate-400">{{ summary.paused }} paused</span>{% endif %}{% if not summary.failing and not summary.paused %} · all healthy{% endif %}
