@@ -528,9 +528,11 @@ async def analyze_page(
     if not (text or "").strip():
         return JSONResponse({"ok": False, "error": "No captured page text yet — run a check first."}, status_code=400)
     from ...ai import profile_page
+    from ...detection import churn
     profile = await profile_page(
         api_key=key, model=app.ai_model, base_url=app.ai_base_url,
-        url=monitor.url, title=monitor.name, intent=monitor.ai_watch_intent, page_text=text)
+        url=monitor.url, title=monitor.name, intent=monitor.ai_watch_intent, page_text=text,
+        churn_samples=churn.churny_texts(monitor.churn_lines))
     if not profile:
         return JSONResponse({"ok": False, "error": "Analysis failed — try again."}, status_code=502)
     monitor.ai_page_profile = profile

@@ -356,6 +356,37 @@ def test_image_media_type_detection(tmp_path):
         assert _image_media_type(p) == mt
 
 
+def test_churn_learns_recurring_lines_and_ignores_one_offs():
+    """A line that flips on most checks rises above the churn threshold; a one-off
+    decays away. The leaky bucket bounds and converges."""
+    from watcher.detection import churn
+
+    state: dict = {}
+    uniq = ["alpha", "bravo", "charlie", "delta", "echo"]
+    # A job-count line churns every check (caught via digit-masking); the rest is a
+    # genuinely unique remark each time.
+    for i in range(5):
+        diff = (f"@@\n-{36 + i} jobs in United Kingdom\n+{37 + i} jobs in United Kingdom\n"
+                f"+A unique remark about {uniq[i]} appearing only once")
+        state = churn.update(state, churn.changed_lines(diff))
+    texts = churn.churny_texts(state)
+    assert any("jobs in united kingdom" in t.lower() for t in texts)   # counter → flagged
+    assert not any("unique remark" in t.lower() for t in texts)        # one-offs → not
+
+    # A line that stops churning decays back out below the threshold.
+    for _ in range(6):
+        state = churn.update(state, churn.changed_lines("@@\n-foo bar\n+baz qux"))  # jobs absent
+    assert not any("jobs in united kingdom" in t.lower() for t in churn.churny_texts(state))
+
+
+def test_churn_changed_lines_skips_headers_and_short():
+    """Diff headers and trivially short lines aren't tracked as churn."""
+    from watcher.detection import churn
+    lines = churn.changed_lines("--- a\n+++ b\n@@ -1 +1 @@\n+\n-ab\n+A real changed line")
+    texts = [t for _h, t in lines]
+    assert texts == ["A real changed line"]
+
+
 def test_visual_diff_bounds_mismatched_canvas():
     """Diffing two captures with very different aspect ratios (a tall section vs a
     legacy full-page capture) must stay within the diff megapixel budget — otherwise

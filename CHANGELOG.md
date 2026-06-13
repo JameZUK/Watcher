@@ -17,6 +17,12 @@ per-site code (the tool stays fully universal).
   fed into every triage so the model judges *this* page's scope correctly. Generated
   automatically on the first good capture of an intent-watched page, and re-runnable
   on demand from a "Page understanding" card on the monitor.
+- **Structural churn learning.** Watcher now tracks which *lines* of a page change on
+  nearly every check (digit-masked, so incrementing counters / timestamps / view-counts
+  count as the same churning line) and feeds that observed signal into triage and the
+  page profiler — "these keep flipping, almost certainly incidental." It's an input the
+  intent-aware AI weighs, never a silent veto, so a value the user *is* watching (a price
+  that ticks each check) is still surfaced. No AI and no per-site rules to learn it.
 
 ### Changed
 - **Triage prompt hardened.** It must ground every claim in the actual diff lines (a

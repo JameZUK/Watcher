@@ -197,6 +197,9 @@ class Monitor(Base):
     # AI's plain-language understanding of this page's regions (what matters vs churn),
     # fed into triage so it judges scope correctly. Generated lazily / on demand.
     ai_page_profile: Mapped[str | None] = mapped_column(Text, default=None)
+    # Learned structural churn: {line_hash: [count, sample]} of lines that change on
+    # most checks. Observed signal fed to the AI (never a silent veto). See detection.churn.
+    churn_lines: Mapped[dict] = mapped_column(JSON, default=dict)
 
     # Value tracking (price/number trends + threshold alerts)
     track_value: Mapped[bool] = mapped_column(Boolean, default=False)

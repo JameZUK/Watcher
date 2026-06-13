@@ -103,7 +103,7 @@ def _compact_image(png: bytes, *, max_side: int = 1280, quality: int = 70) -> st
         return None
 
 
-def _user_content(url, title, intent, diff_text, image_png, page_profile=None):
+def _user_content(url, title, intent, diff_text, image_png, page_profile=None, churn_hint=None):
     lines = [f"URL: {url}"]
     if title:
         lines.append(f"Page title: {title}")
@@ -113,6 +113,14 @@ def _user_content(url, title, intent, diff_text, image_png, page_profile=None):
         # A previously-derived understanding of THIS page's regions — use it to judge
         # which part of the diff changed and whether that part is in scope or churn.
         lines.append("\nWhat we know about this page (for judging scope):\n" + page_profile.strip())
+    if churn_hint:
+        # Lines observed to change on most recent checks — strong (but not absolute)
+        # evidence of incidental churn. The watch instruction still wins: if one of
+        # these IS what the user is watching, it's not noise.
+        lines.append(
+            "\nLines that change on most recent checks (likely incidental churn — treat as "
+            "noise UNLESS they clearly match what the user is watching for):\n- "
+            + "\n- ".join(churn_hint[:25]))
 
     if diff_text and diff_text.strip():
         # Cap the diff so a huge change can't blow up cost.
@@ -178,6 +186,7 @@ async def triage_change(
     diff_text: str | None,
     image_png: bytes | None = None,
     page_profile: str | None = None,
+    churn_hint: list | None = None,
     timeout: float = 30.0,
 ) -> Triage | None:
     """Call OpenRouter and return a Triage, or None on any failure."""
@@ -188,7 +197,8 @@ async def triage_change(
         "messages": [
             {"role": "system", "content": _SYSTEM},
             {"role": "user",
-             "content": _user_content(url, title, intent, diff_text, image_png, page_profile)},
+             "content": _user_content(url, title, intent, diff_text, image_png,
+                                      page_profile, churn_hint)},
         ],
         "temperature": 0.1,
         "max_tokens": 400,
@@ -249,7 +259,7 @@ _PROFILE_SYSTEM = (
 async def profile_page(
     *, api_key: str, model: str, base_url: str | None = None,
     url: str, title: str | None, intent: str | None,
-    page_text: str | None, timeout: float = 40.0,
+    page_text: str | None, churn_samples: list | None = None, timeout: float = 40.0,
 ) -> str | None:
     """Study a page and return a short, plain-language understanding of its regions —
     which matter for the user's intent and which are incidental churn — to feed later
@@ -263,6 +273,10 @@ async def profile_page(
     if title:
         lines.append(f"Page title: {title}")
     lines.append(f'User watch instruction: "{intent}"' if intent else "No specific watch instruction.")
+    if churn_samples:
+        lines.append("\nObserved over recent checks, these lines change repeatedly "
+                     "(strong evidence they are incidental churn):\n- "
+                     + "\n- ".join(str(x) for x in churn_samples[:25]))
     lines.append("\nVisible text of the page:\n" + text)
     body = {
         "model": model,

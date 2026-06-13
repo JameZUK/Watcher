@@ -21,7 +21,7 @@ from .auth.login_flows import (
 )
 from .config import settings
 from .db import SessionLocal
-from .detection import detect
+from .detection import churn, detect
 from .detection.value import parse_number
 from .engines import RenderResult, render_monitor
 from .models import (
@@ -259,13 +259,14 @@ _profile_inflight: set[int] = set()
 _profile_tasks: set = set()
 
 
-async def _run_profile_page(monitor_id: int, model, base_url, key, url, title, intent, text) -> None:
+async def _run_profile_page(monitor_id: int, model, base_url, key, url, title, intent, text, churn_samples) -> None:
     """Background: derive the page's understanding (what matters vs churn) and store it
     on the monitor, so later triage judges this page's scope correctly. Own session;
     never raises into the caller."""
     try:
         profile = await profile_page(api_key=key, model=model, base_url=base_url,
-                                     url=url, title=title, intent=intent, page_text=text)
+                                     url=url, title=title, intent=intent, page_text=text,
+                                     churn_samples=churn_samples)
         if profile:
             async with SessionLocal() as s:
                 m = await s.get(Monitor, monitor_id)
@@ -298,7 +299,7 @@ async def _maybe_profile_page(app, monitor, result) -> None:
     _profile_inflight.add(monitor.id)
     task = asyncio.create_task(_run_profile_page(
         monitor.id, app.ai_model, app.ai_base_url, key, monitor.url, result.title,
-        monitor.ai_watch_intent, text))
+        monitor.ai_watch_intent, text, churn.churny_texts(monitor.churn_lines)))
     _profile_tasks.add(task)
     task.add_done_callback(_profile_tasks.discard)
 
@@ -317,6 +318,7 @@ async def _maybe_triage(app, monitor, change_result, result, intent=None):
         intent=intent if intent is not None else monitor.ai_watch_intent,
         diff_text=change_result.diff_text, image_png=image,
         page_profile=monitor.ai_page_profile,
+        churn_hint=churn.churny_texts(monitor.churn_lines),
     )
 
 
@@ -797,6 +799,13 @@ async def check_monitor(monitor_id: int) -> None:
                     "detect() aborted for monitor %s (%s)", monitor.id, type(exc).__name__)
                 await session.commit()
                 return
+            # Learn structural churn from this check's text diff (which lines keep
+            # flipping) — an observed signal fed to triage/profiling. Updated even when
+            # the change is ultimately dropped, so the learning keeps converging.
+            if change_result.changed and (change_result.diff_text or "").strip():
+                monitor.churn_lines = churn.update(
+                    monitor.churn_lines or {}, churn.changed_lines(change_result.diff_text))
+
             if change_result.changed or threshold_msg:
                 # Combine the group's shared watch-intent with the monitor's own
                 # (non-destructive) so members are triaged against the group goal too.

@@ -114,6 +114,24 @@ def test_triage_includes_page_profile(fake_http):
     assert "rotating jobs widget" in user_text
 
 
+def test_triage_includes_churn_hint(fake_http):
+    """Observed churn lines are forwarded to the model as a 'likely incidental' hint."""
+    _run(T.triage_change(api_key="k", model="m", url="u", title="t", intent="only reviews",
+                         diff_text="- a\n+ b", churn_hint=["Jobs: 37", "Followers 1,234"]))
+    user = fake_http.last["json"]["messages"][1]["content"]
+    user_text = user if isinstance(user, str) else " ".join(p.get("text", "") for p in user)
+    assert "Jobs: 37" in user_text and "change on most recent checks" in user_text
+
+
+def test_profile_includes_churn_samples(fake_http):
+    """Observed churn samples are forwarded to the profiler so the page understanding
+    is grounded in real behaviour, not just inference."""
+    _run(T.profile_page(api_key="k", model="m", url="u", title="t", intent="reviews",
+                        page_text="text " * 100, churn_samples=["Jobs: 37"]))
+    user_text = fake_http.last["json"]["messages"][1]["content"]
+    assert "Jobs: 37" in user_text and "change repeatedly" in user_text
+
+
 def test_triage_prompt_enforces_scope_and_grounding(fake_http):
     """The triage prompt must keep its grounding + scope guardrails, and forward the
     user's watch intent, so out-of-scope churn (e.g. a rotating jobs widget) can't be
