@@ -755,6 +755,9 @@ def test_dashboard_fleet_summary_paragraph():
             assert "Across your sites," in r
             assert f'href="/monitors/{mid}"' in r and "Alpha dropped sharply" in r
             assert "&lt;careful&gt;" in r and "<careful>" not in r     # escaped, no injection
+            # collapsed-TLDR markup: a 2-line clamp + a "Show more" toggle
+            assert "fleetSummary(false)" in r
+            assert "line-clamp:2" in r and "Show more" in r
         return True
 
     assert _run(_t)
