@@ -15,10 +15,14 @@ from .. import templates
 router = APIRouter()
 
 
+_INBOX_PAGE = 100
+
+
 @router.get("/inbox")
 async def inbox(
     request: Request,
     show: str = "unacked",
+    before: int | None = None,     # keyset cursor: load changes older than this id
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
@@ -26,15 +30,21 @@ async def inbox(
         select(Change, Monitor.name)
         .join(Monitor, Monitor.id == Change.monitor_id)
         .where(Monitor.user_id == user.id)
-        .order_by(Change.detected_at.desc())
-        .limit(200)
+        .order_by(Change.id.desc())
+        .limit(_INBOX_PAGE + 1)    # fetch one extra to know whether an older page exists
     )
     if show == "unacked":
         stmt = stmt.where(Change.acknowledged.is_(False))
+    if before is not None:
+        stmt = stmt.where(Change.id < before)
     rows = (await session.execute(stmt)).all()
+    has_more = len(rows) > _INBOX_PAGE
+    rows = rows[:_INBOX_PAGE]
     items = [{"change": c, "monitor_name": name} for c, name in rows]
+    next_before = items[-1]["change"].id if (has_more and items) else None
     return templates.TemplateResponse(
-        request, "inbox.html", {"user": user, "items": items, "show": show}
+        request, "inbox.html",
+        {"user": user, "items": items, "show": show, "next_before": next_before},
     )
 
 

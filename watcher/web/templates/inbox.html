@@ -41,5 +41,10 @@
   </div>
   {% endfor %}
 </div>
+{% if next_before %}
+<div class="text-center mt-6">
+  <a href="/inbox?show={{ show }}&before={{ next_before }}" class="btn btn-ghost text-sm">Load older changes</a>
+</div>
+{% endif %}
 {% endif %}
 {% endblock %}
