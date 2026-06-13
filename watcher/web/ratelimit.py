@@ -57,4 +57,19 @@ def reset(key: str) -> None:
 
 
 def client_ip(request) -> str:
-    return getattr(getattr(request, "client", None), "host", None) or "unknown"
+    peer = getattr(getattr(request, "client", None), "host", None) or "unknown"
+    # Behind a trusted single proxy, the socket peer is the proxy (so every client
+    # collapses to one rate-limit bucket → one attacker locks everyone out). When
+    # explicitly enabled, key on the right-most X-Forwarded-For entry instead — the
+    # IP the trusted proxy received from. Right-most (not left-most) because a client
+    # can prepend arbitrary left-most values; the proxy appends the real peer last.
+    from ..config import settings
+    if settings.trust_proxy_headers:
+        try:
+            xff = request.headers.get("x-forwarded-for", "") or ""
+        except Exception:
+            xff = ""
+        parts = [p.strip() for p in xff.split(",") if p.strip()]
+        if parts:
+            return parts[-1]
+    return peer

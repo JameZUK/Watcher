@@ -227,18 +227,94 @@ async def install_consent_autodismiss(page, monitor: Monitor) -> None:
 
 
 async def setup_blocking(context, monitor: Monitor) -> None:
-    """Abort ad/tracker network requests for this render (set up on the context
-    BEFORE navigation). Cookie banners are hidden separately in capture() — after
-    load — via hide_banners(). No-op when the monitor opts out."""
-    if not getattr(monitor, "block_annoyances", True):
+    """Install the per-render network route handler on the CONTEXT before navigation.
+
+    One handler does two jobs (Playwright only runs the *last* registered route
+    matching a URL, so SSRF and ad-blocking must share a single handler):
+
+      1. **Render-time SSRF guard** (always on, unless ``allow_private_targets``):
+         abort any request — including HTTP redirects and JS-initiated navigations —
+         whose host resolves to a private/internal address. This closes the
+         DNS-rebinding / redirect-to-internal residual that the one-shot
+         pre-navigation check in the runner cannot catch (the browser re-resolves
+         DNS itself and follows redirects on its own).
+      2. **Ad/tracker blocking** (when the monitor enables it): abort known ad hosts
+         for cleaner screenshots and fewer false-positive diffs.
+
+    Cookie banners are hidden separately in capture(), after load, via hide_banners().
+    """
+    from ..netsec import host_resolves_internal
+
+    ssrf_on = not settings.allow_private_targets
+    adblock_on = bool(getattr(monitor, "block_annoyances", True))
+    if not ssrf_on and not adblock_on:
         return
+    # Per-host DNS verdict cache: a page makes many requests to a handful of hosts,
+    # so resolve each host at most once per render (off the event loop).
+    dns_internal: dict[str, bool] = {}
 
     async def _route(route):
         try:
             host = (urlparse(route.request.url).hostname or "").lower()
-            if host and any(host == d or host.endswith("." + d) for d in _BLOCK_HOSTS):
+        except Exception:
+            host = ""
+        # 1) SSRF: block internal destinations (redirects/navigations included).
+        if ssrf_on and host:
+            try:
+                verdict = dns_internal.get(host)
+                if verdict is None:
+                    verdict = await asyncio.to_thread(host_resolves_internal, host)
+                    dns_internal[host] = verdict
+                if verdict:
+                    await route.abort()
+                    return
+            except Exception:
+                pass
+        # 2) Ad/tracker block.
+        if adblock_on and host and any(host == d or host.endswith("." + d) for d in _BLOCK_HOSTS):
+            try:
                 await route.abort()
                 return
+            except Exception:
+                pass
+        try:
+            await route.continue_()
+        except Exception:
+            pass
+
+    try:
+        await context.route("**/*", _route)
+    except Exception:
+        pass
+
+
+async def install_ssrf_guard(context) -> None:
+    """Install a context route that aborts any request — redirects and JS/user-
+    initiated navigations included — whose host resolves to a private/internal
+    address. Used by the AI-login browser, which the manual remote-control feature
+    lets an authenticated user DRIVE: without this, a click on an internal link or a
+    typed `http://169.254.169.254` / `http://127.0.0.1` URL would navigate the
+    server-side browser into the internal network and stream it back / harvest its
+    cookies. No-op when allow_private_targets is set (trusted/internal deployments).
+
+    (The render engines fold the same check into setup_blocking; this standalone
+    installer is for contexts that don't run ad-blocking.)"""
+    if settings.allow_private_targets:
+        return
+    from ..netsec import host_resolves_internal
+    dns_internal: dict[str, bool] = {}
+
+    async def _route(route):
+        try:
+            host = (urlparse(route.request.url).hostname or "").lower()
+            if host:
+                verdict = dns_internal.get(host)
+                if verdict is None:
+                    verdict = await asyncio.to_thread(host_resolves_internal, host)
+                    dns_internal[host] = verdict
+                if verdict:
+                    await route.abort()
+                    return
         except Exception:
             pass
         try:
@@ -666,9 +742,18 @@ def _stitch_strips(strips: dict, dpr: float) -> bytes:
         return b""
     w = items[0][1].width
     h = max(int(round(y * dpr)) + im.height for y, im in items)
+    # Clamp the canvas to the same hard height cap _slice_sections applies AFTER
+    # stitching — otherwise a pathological tall page allocates the full (e.g.
+    # ~1.8 GB) canvas here before the crop, OOM-ing the box under render concurrency.
+    hard_cap = int((settings.max_screenshot_height_px or 0) * dpr)
+    if hard_cap and h > hard_cap:
+        h = hard_cap
     canvas = Image.new("RGB", (w, h), (255, 255, 255))
     for y, im in items:
-        canvas.paste(im, (0, int(round(y * dpr))))
+        top = int(round(y * dpr))
+        if top >= h:
+            continue                      # strip starts past the cap — skip
+        canvas.paste(im, (0, top))        # PIL clips any overhang at the canvas edge
     out = BytesIO()
     canvas.save(out, format="PNG")
     return out.getvalue()

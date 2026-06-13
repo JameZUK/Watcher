@@ -55,76 +55,80 @@ class PlaywrightRenderer:
             async with async_playwright() as pw:
                 browser_type = getattr(pw, self.browser)
                 browser = await browser_type.launch(headless=True)
-                context_kwargs: dict = {
-                    "viewport": {
-                        "width": monitor.viewport_width,
-                        "height": monitor.viewport_height,
-                    },
-                }
-                if proxy:
-                    context_kwargs["proxy"] = proxy
-                if reuse_session and flow.session_state:
-                    context_kwargs["storage_state"] = flow.session_state
-
-                # Retina-crisp captures; fall back if the engine rejects it.
-                context_kwargs["device_scale_factor"] = settings.screenshot_scale
                 try:
-                    context = await browser.new_context(**context_kwargs)
-                except Exception:
-                    context_kwargs.pop("device_scale_factor", None)
-                    context = await browser.new_context(**context_kwargs)
-                context.set_default_timeout(settings.render_timeout_seconds * 1000)
-                page = await context.new_page()
-                await setup_blocking(context, monitor)
+                    context_kwargs: dict = {
+                        "viewport": {
+                            "width": monitor.viewport_width,
+                            "height": monitor.viewport_height,
+                        },
+                    }
+                    if proxy:
+                        context_kwargs["proxy"] = proxy
+                    if reuse_session and flow.session_state:
+                        context_kwargs["storage_state"] = flow.session_state
 
-                if flow and flow.steps and not reuse_session:
-                    await replay_login(page, monitor)
-
-                response = await navigate(page, monitor)
-                # Site-root warm-up to clear a cold-deep-link anti-bot wall.
-                warmed = await warm_up_if_blocked(page, response, monitor)
-                if warmed is not None:
-                    response = warmed
-                await do_wait(page, monitor)
-                await apply_actions(page, monitor)
-
-                # Desktop capture only — the mobile preview is taken separately,
-                # with phone emulation, below.
-                result = await capture(page, response, monitor, mobile=False)
-
-                # Persist (refresh) session state whenever a login flow exists —
-                # not only for step-based logins. This keeps an injected
-                # clearance cookie (e.g. DataDome) rolling forward on every
-                # successful check instead of going stale.
-                mobile_state = context_kwargs.get("storage_state")
-                if flow is not None:
+                    # Retina-crisp captures; fall back if the engine rejects it.
+                    context_kwargs["device_scale_factor"] = settings.screenshot_scale
                     try:
-                        state = await context.storage_state()
-                        mark_session(flow, state)
-                        result.session_state = state
-                        mobile_state = state
+                        context = await browser.new_context(**context_kwargs)
+                    except Exception:
+                        context_kwargs.pop("device_scale_factor", None)
+                        context = await browser.new_context(**context_kwargs)
+                    context.set_default_timeout(settings.render_timeout_seconds * 1000)
+                    page = await context.new_page()
+                    await setup_blocking(context, monitor)
+
+                    if flow and flow.steps and not reuse_session:
+                        await replay_login(page, monitor)
+
+                    response = await navigate(page, monitor)
+                    # Site-root warm-up to clear a cold-deep-link anti-bot wall.
+                    warmed = await warm_up_if_blocked(page, response, monitor)
+                    if warmed is not None:
+                        response = warmed
+                    await do_wait(page, monitor)
+                    await apply_actions(page, monitor)
+
+                    # Desktop capture only — the mobile preview is taken separately,
+                    # with phone emulation, below.
+                    result = await capture(page, response, monitor, mobile=False)
+
+                    # Persist (refresh) session state whenever a login flow exists —
+                    # not only for step-based logins. This keeps an injected
+                    # clearance cookie (e.g. DataDome) rolling forward on every
+                    # successful check instead of going stale.
+                    mobile_state = context_kwargs.get("storage_state")
+                    if flow is not None:
+                        try:
+                            state = await context.storage_state()
+                            mark_session(flow, state)
+                            result.session_state = state
+                            mobile_state = state
+                        except Exception:
+                            pass
+
+                    try:
+                        await context.close()
                     except Exception:
                         pass
 
-                try:
-                    await context.close()
-                except Exception:
-                    pass
-
-                # Mobile preview in a phone-emulated context (best-effort).
-                if result is not None and result.ok and result.screenshot_png:
+                    # Mobile preview in a phone-emulated context (best-effort).
+                    if result is not None and result.ok and result.screenshot_png:
+                        try:
+                            msecs = await self._capture_mobile(browser, monitor, mobile_state)
+                            if msecs:
+                                result.screenshot_mobile_sections = msecs
+                                result.screenshot_mobile_png = msecs[0]
+                        except Exception:
+                            pass
+                finally:
+                    # Always reap the browser PROCESS. The async_playwright context
+                    # manager stops the driver, but a mid-render exception would
+                    # otherwise leak the launched browser (memory/process growth).
                     try:
-                        msecs = await self._capture_mobile(browser, monitor, mobile_state)
-                        if msecs:
-                            result.screenshot_mobile_sections = msecs
-                            result.screenshot_mobile_png = msecs[0]
+                        await browser.close()
                     except Exception:
                         pass
-
-                try:
-                    await browser.close()
-                except Exception:
-                    pass
 
             result.render_ms = int((time.monotonic() - start) * 1000)
             return result

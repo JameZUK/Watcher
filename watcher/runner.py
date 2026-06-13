@@ -311,6 +311,14 @@ async def _maybe_triage(app, monitor, change_result, result, intent=None):
     key = get_openrouter_key(app)
     if not key:
         return None
+    # Triage fires on every detected change — the highest-frequency AI entry point.
+    # Count it against the owner's shared-key budget like every other AI call, so a
+    # rapidly-flapping page can't drive unbounded spend. Over budget → skip triage
+    # (the change is still recorded with its non-AI summary).
+    from .web.ratelimit import allow
+    if not allow(f"ai:{monitor.user_id}", limit=settings.ai_max_calls,
+                 window=settings.ai_window_seconds):
+        return None
     has_text = bool((change_result.diff_text or "").strip())
     image = None if has_text else (change_result.diff_overlay_png or result.screenshot_png)
     return await triage_change(
@@ -594,8 +602,29 @@ def _help_hint(reason: str | None) -> str:
     )
 
 
+# Monitors whose check is running right now. The scheduled job (monitor-{id}) and a
+# manual / relogin trigger (now-{id}) are INDEPENDENT APScheduler jobs, so without a
+# guard they could run the SAME monitor concurrently — racing the shared `prev`
+# snapshot into a duplicate Change + duplicate notification, plus lost-update writes
+# to consecutive_failures / churn_lines. De-dupe per monitor.
+_check_inflight: set[int] = set()
+
+
 async def check_monitor(monitor_id: int) -> None:
-    """Run one full check cycle for a monitor. Safe to call concurrently."""
+    """Run one full check cycle for a monitor, de-duplicated per monitor so a manual
+    trigger can't race the scheduled tick. Safe to call concurrently for DIFFERENT
+    monitors."""
+    if monitor_id in _check_inflight:
+        log.debug("check_monitor(%s) skipped — a check is already in flight", monitor_id)
+        return
+    _check_inflight.add(monitor_id)          # atomic w.r.t. the loop (no await above)
+    try:
+        await _check_monitor_inner(monitor_id)
+    finally:
+        _check_inflight.discard(monitor_id)
+
+
+async def _check_monitor_inner(monitor_id: int) -> None:
     async with _semaphore:
         async with SessionLocal() as session:
             monitor = (
@@ -827,6 +856,10 @@ async def check_monitor(monitor_id: int) -> None:
                 # only about the thing they described, so unrelated page churn (rotating
                 # jobs/ads/recommendations) shouldn't even reach the timeline.
                 if effective_intent and importance == "noise":
+                    # Log the suppression so an out-of-scope drop (incl. a prompt-
+                    # injection-driven "rate this noise") is auditable, not silent.
+                    log.info("monitor %s: change dropped as out-of-scope noise "
+                             "(headline=%r)", monitor.id, triage.headline if triage else None)
                     await session.commit()
                     return
 

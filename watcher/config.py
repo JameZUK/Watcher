@@ -38,6 +38,13 @@ class Settings(BaseSettings):
     # Extra hostnames permitted in Host/Origin (besides the request host) — e.g.
     # the public hostname when behind a reverse proxy. Comma-separated via env.
     trusted_hosts: str = Field(default="")
+    # Honour X-Forwarded-For for the client IP used in rate-limit keys. Enable ONLY
+    # when a trusted reverse proxy you control sits in front (it sets/overwrites the
+    # header) — otherwise a direct client could spoof it to dodge/poison the limiter.
+    # Assumes a single front proxy: uses the right-most XFF entry (the IP the proxy
+    # saw). Off by default → keys on the socket peer. Fixes the "all clients collapse
+    # to the proxy IP" lockout when proxied.
+    trust_proxy_headers: bool = Field(default=False)
 
     # --- Server ---
     host: str = Field(default="0.0.0.0")

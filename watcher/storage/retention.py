@@ -79,6 +79,15 @@ async def _gc_blobs() -> None:
             live.update(
                 k for k in (await session.execute(select(col))).scalars().all() if k
             )
+        # Whole-page captures store one blob per SECTION in these JSON arrays; only
+        # the first section is also mirrored into screenshot_blob, so sections 2..N
+        # are referenced ONLY here. Flatten them into the live set or the GC would
+        # delete still-referenced section images (silent screenshot-history loss).
+        section_cols = (Snapshot.screenshot_sections, Snapshot.screenshot_mobile_sections)
+        for col in section_cols:
+            for arr in (await session.execute(select(col))).scalars().all():
+                if arr:
+                    live.update(k for k in arr if k)
 
     def _sweep() -> None:
         now = time.time()

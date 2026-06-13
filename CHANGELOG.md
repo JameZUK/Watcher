@@ -2,6 +2,53 @@
 
 All notable changes to Watcher are documented here. Dates are ISO-8601.
 
+## 2026-06-14 — Security & reliability hardening (full code-review batch)
+
+A full code review of the authenticated surface (which the prior black-box pentest
+couldn't reach) plus a recursive re-review until convergence. Fixes:
+
+### Security
+- **Render-time SSRF closed in-process.** The browser used to re-resolve DNS and
+  follow redirects / JS navigations to internal hosts (169.254.169.254, 127.0.0.1,
+  RFC1918) after the one-shot pre-navigation check. Both engines now install a
+  `context.route` guard that aborts ANY request — redirects and navigations included —
+  to a host that resolves internal (`netsec.host_resolves_internal`), unless
+  `WATCHER_ALLOW_PRIVATE_TARGETS`. (DNS-rebinding-within-a-render and ws/downloads
+  remain best closed by an egress firewall, as documented.)
+- **AI-login manual remote-control can no longer be steered into the internal
+  network.** The user-driven login browser now carries the same SSRF route guard, so
+  a click/typed-URL to an internal host is blocked at the network layer (it was an
+  authenticated internal-network read/exfil proxy before).
+- **AI-login is now rate-limited** (per-user quota on start) and **capped at 3
+  concurrent live login browsers per user** — it spawned real browsers + spent the
+  shared AI key with no guard.
+- **Per-change AI triage is now counted against the per-user AI budget** (it was the
+  only AI path that bypassed it — unbounded shared-key spend on a flapping page).
+- **Prompt-injection hardening.** Attacker-controlled page text (diff, churn, title,
+  profile) is now fenced and the triage/profiler prompts carry an explicit trust-
+  boundary rule (page content is data to describe, never instructions to obey) — so a
+  page can't inject "rate this noise" to silently suppress a real change. Suppressed-
+  as-noise changes are now logged for auditability.
+- **Rate-limiter can honour `X-Forwarded-For`** (`WATCHER_TRUST_PROXY_HEADERS`, off by
+  default) so a reverse-proxy deployment doesn't collapse all clients to one bucket
+  (login-lockout DoS). Uses the right-most entry; enable only behind a proxy that
+  appends/overwrites XFF.
+
+### Reliability / correctness
+- **Retention GC no longer deletes still-referenced screenshot sections.** `_gc_blobs`
+  only scanned the scalar blob columns, so whole-page capture sections 2..N (referenced
+  only in the `screenshot_sections` JSON arrays) were silently unlinked after the grace
+  window — quietly destroying screenshot history. Now flattened into the live set.
+- **A manual check can no longer race the scheduled tick** for the same monitor
+  (duplicate Change + duplicate notification + lost-update on the failure counter) —
+  a per-monitor in-flight guard de-dupes concurrent checks.
+- **Playwright browser processes are always reaped** (try/finally) — a mid-render
+  exception used to leak the browser process.
+- **Tall-page screenshot stitching is memory-bounded** — the canvas is clamped to the
+  height cap before allocation (was allocating the full pathological canvas first).
+- **Startup warns if the `regex` module is missing** (the ReDoS guard on user ignore-
+  patterns silently falls back to un-timed stdlib `re` without it).
+
 ## 2026-06-14 — Two-column Settings, Account & monitor form on desktop
 
 ### Changed

@@ -105,6 +105,15 @@ def _host_resolves_internal(host: str) -> bool:
     return bool(ips) and any(not _ip_is_public(ip) for ip in ips)
 
 
+def host_resolves_internal(host: str) -> bool:
+    """Public wrapper: True if ``host`` resolves to any private/internal address.
+    Used by the engine-level render-time SSRF route guard to abort browser
+    requests (incl. redirects / JS navigations) to internal targets — the
+    in-process complement to an egress firewall. Blocking (resolves DNS); call
+    off the event loop."""
+    return _host_resolves_internal((host or "").strip().lower())
+
+
 def render_block_reason(url: str) -> str | None:
     """Render-time SSRF gate: block a bad scheme or a host that RESOLVES to an
     internal address. Returns None on resolution failure (transient — let the

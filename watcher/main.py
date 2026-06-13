@@ -67,6 +67,12 @@ async def lifespan(app: FastAPI):
     if settings.patch_playwright:
         from ._playwright_patch import apply as _patch_playwright
         logging.getLogger("watcher").info(_patch_playwright())
+    from .detection.noise import REDOS_GUARD_ACTIVE
+    if not REDOS_GUARD_ACTIVE:
+        logging.getLogger("watcher").warning(
+            "The `regex` module is not installed — user ignore-patterns fall back to "
+            "stdlib `re`, which has NO per-call timeout, re-opening a ReDoS vector. "
+            "Install dependencies (`pip install -r requirements.txt`).")
     await init_db()
     await schedule_all()
     start_scheduler()

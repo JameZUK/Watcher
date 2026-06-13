@@ -38,6 +38,10 @@ def _dlog(msg: str, *args) -> None:
 MAX_STEPS = 14
 CODE_WAIT_SECONDS = 300
 SESSION_TTL = 900
+# Cap concurrent live login browsers per user (each is a real headless browser =
+# significant RAM + a process). Bounds resource exhaustion, especially via the
+# credential-free manual mode. The oldest over the cap are torn down on a new start.
+MAX_SESSIONS_PER_USER = 3
 
 # Annotate + list the page's interactive elements so the model can reference them
 # by index, and so we can act on them via [data-ai-idx="N"].
@@ -170,6 +174,10 @@ async def _new_context(engine: str, proxy: str | None):
         browser = await cm.__aenter__()
         ctx = await browser.new_context(viewport=dict(_LOGIN_VIEWPORT))
         ctx.set_default_timeout(15000)
+        # SSRF guard: this browser can be DRIVEN by the user (manual remote control),
+        # so block any navigation/request to an internal host at the network layer.
+        from ..engines._common import install_ssrf_guard
+        await install_ssrf_guard(ctx)
 
         async def close():
             try:
@@ -183,6 +191,10 @@ async def _new_context(engine: str, proxy: str | None):
     browser = await btype.launch(**kwargs)
     ctx = await browser.new_context(viewport=dict(_LOGIN_VIEWPORT))
     ctx.set_default_timeout(15000)
+    # SSRF guard (see the Camoufox branch): the user can drive this browser, so
+    # block requests/navigations to internal hosts at the network layer.
+    from ..engines._common import install_ssrf_guard
+    await install_ssrf_guard(ctx)
 
     async def close():
         for c in (browser.close, pw.stop):
@@ -1262,6 +1274,16 @@ async def _settle(page) -> None:
         pass
 
 
+def _kill_session(v: LoginSession) -> None:
+    """Cancel a live session's agent task and drop it from the registry."""
+    if v._task is not None:
+        try:
+            v._task.cancel()
+        except Exception:
+            pass
+    _SESSIONS.pop(v.id, None)
+
+
 def create_session(monitor_id: int, user_id: int, url: str, secrets: dict) -> LoginSession:
     _gc()
     # One login browser per monitor: tear down any prior session for it. Two
@@ -1269,12 +1291,16 @@ def create_session(monitor_id: int, user_id: int, url: str, secrets: dict) -> Lo
     # and stalls the OAuth handoff — exactly the "stuck" symptom.
     for old in [v for v in _SESSIONS.values() if v.monitor_id == monitor_id]:
         _dlog("ai-login: replacing prior session %s for monitor %s", old.id[:8], monitor_id)
-        if old._task is not None:
-            try:
-                old._task.cancel()
-            except Exception:
-                pass
-        _SESSIONS.pop(old.id, None)
+        _kill_session(old)
+    # Bound concurrent live login browsers per user (each is a real headless browser).
+    # Evict the oldest over the cap so a user can't accumulate many (esp. via the
+    # credential-free manual mode) and exhaust the box's RAM/process budget.
+    user_live = sorted((v for v in _SESSIONS.values() if v.user_id == user_id),
+                       key=lambda v: v.created_at)
+    for old in user_live[:max(0, len(user_live) - (MAX_SESSIONS_PER_USER - 1))]:
+        _dlog("ai-login: evicting oldest session %s for user %s (per-user cap)",
+              old.id[:8], user_id)
+        _kill_session(old)
     s = LoginSession(id=uuid.uuid4().hex, monitor_id=monitor_id, user_id=user_id,
                      url=url, secrets=secrets)
     s._code_event = asyncio.Event()

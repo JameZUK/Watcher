@@ -929,6 +929,14 @@ async def ai_login_start(
     session: AsyncSession = Depends(get_session),
 ):
     monitor = await _owned_monitor(session, user, monitor_id)
+    # Starting a login spawns a REAL headless browser (and AI mode spends the shared
+    # OpenRouter key), so cap it per user like every other expensive endpoint —
+    # otherwise it's an unthrottled render-pool / AI-budget exhaustion vector. The
+    # per-user concurrent-session cap in create_session bounds live browsers too.
+    if not _ai_quota_ok(user):
+        return JSONResponse(
+            {"ok": False, "error": "Rate limit reached — wait a moment before starting another login."},
+            status_code=429)
     app = await get_app_settings(session)
     key = get_openrouter_key(app)
 

@@ -11,6 +11,12 @@ except ImportError:  # graceful fallback (no interruptibility)
     _rx = None
     _RX_TIMEOUT = None
 
+# True when the interruptible-regex ReDoS guard is available. The app warns at
+# startup when this is False — a deploy that skipped `pip install regex` silently
+# falls back to stdlib `re`, which has NO per-call timeout, re-opening the ReDoS
+# vector on user-supplied ignore-patterns.
+REDOS_GUARD_ACTIVE = _rx is not None
+
 
 def _apply_ignore(pattern: str, text: str) -> str:
     """Apply a user ignore-regex with a time budget; on an invalid or
