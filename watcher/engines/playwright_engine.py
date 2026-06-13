@@ -183,9 +183,9 @@ class PlaywrightRenderer:
             # navigation, so a cold deep-link can be gated even though desktop cleared
             # it, leaving the mobile render contentless (and its element map empty).
             resp = await navigate(page, monitor)
-            warmed = await warm_up_if_blocked(page, resp, monitor)
-            if warmed is not None:
-                resp = warmed
+            # Side effect lands the page on real content (carried-over clearance cookie);
+            # the return value isn't needed here — the screenshot/map use the page state.
+            await warm_up_if_blocked(page, resp, monitor)
             await do_wait(page, monitor)
             await _settle_for_render(page)
             await click_consent(page, monitor)

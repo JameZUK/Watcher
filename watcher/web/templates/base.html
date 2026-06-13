@@ -145,7 +145,7 @@
                class="block w-full select-none" :class="$store.lb.zoom>1 ? 'cursor-zoom-out' : 'cursor-zoom-in'">
         </template>
         <template x-if="$store.lb.boxes.length && $store.lb.dims">
-          <div class="absolute inset-0">
+          <div class="absolute inset-0 pointer-events-none">
             <template x-for="(b, bi) in $store.lb.boxes" :key="bi">
               <div class="ov-box on" :class="'ov-'+b.kind" :style="lbBoxStyle(b)"
                    @mouseenter="hov=b" @mouseleave="hov=null" @dblclick="$store.lb.toggle()">

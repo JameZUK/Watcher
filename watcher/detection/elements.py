@@ -97,27 +97,47 @@ def diff_maps(before: dict | None, after: dict | None) -> dict:
 
 
 def diff_maps_matched(before: dict | None, after: dict | None,
-                      *, match_threshold: float = 0.6) -> dict:
+                      *, match_threshold: float = 0.6, max_pairs: int = 10000) -> dict:
     """Like ``diff_maps`` but also pairs a removed block with an added block that is
     the SAME slot edited in place (high text similarity) into a 'changed' entry.
 
     Returns ``{'added': [block], 'removed': [block], 'changed': [{'before','after'}]}``.
     Greedy best-match by snippet similarity, so a review/listing whose text mostly
     stayed the same (e.g. a rating ticked 4→5) reads as ONE change, not add+remove.
+
+    The matching is O(removed × added) and runs in the request path, so a page where
+    almost everything changed (up to 400×400 blocks) could otherwise spin for tens of
+    seconds. Two guards keep it cheap: above ``max_pairs`` we skip the in-place pairing
+    entirely (report all as pure add/remove), and below it a length + cheap-ratio
+    prefilter discards the obviously-too-different pairs before the full ``ratio()``.
     """
     d = diff_maps(before, after)
     added = list(d["added"])
     removed = list(d["removed"])
+    if not added or not removed or len(added) * len(removed) > max_pairs:
+        return {"added": added, "removed": removed, "changed": []}
     changed: list[dict] = []
     used: set[int] = set()
     pure_removed: list[dict] = []
+    sm = difflib.SequenceMatcher(autojunk=False)
     for rb in removed:
         rs = rb.get("s") or ""
+        lr = len(rs)
+        sm.set_seq2(rs)
         best_i, best_ratio = -1, match_threshold
         for i, ab in enumerate(added):
             if i in used:
                 continue
-            ratio = difflib.SequenceMatcher(None, rs, ab.get("s") or "").ratio()
+            a_s = ab.get("s") or ""
+            la = len(a_s)
+            # ratio() <= 2*min(la,lr)/(la+lr); skip pairs that can't beat the threshold
+            # (O(1)), then a quick char-multiset upper bound, before the full O(la*lr).
+            if not (la or lr) or (2.0 * min(la, lr)) / (la + lr) <= best_ratio:
+                continue
+            sm.set_seq1(a_s)
+            if sm.real_quick_ratio() <= best_ratio or sm.quick_ratio() <= best_ratio:
+                continue
+            ratio = sm.ratio()
             if ratio > best_ratio:
                 best_ratio, best_i = ratio, i
         if best_i >= 0:

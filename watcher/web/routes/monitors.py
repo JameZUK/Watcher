@@ -1265,16 +1265,26 @@ async def _overlays_payload(session, monitor, change) -> dict | None:
     (e.g. changes from before the element-map feature) → the view falls back to text."""
     if change is None or not (change.from_snapshot_id or change.to_snapshot_id):
         return None
+    import asyncio
+
     from ...detection.elements import build_overlays
     ids = [i for i in (change.from_snapshot_id, change.to_snapshot_id) if i]
+    # Constrain to this monitor's snapshots — defence-in-depth so an overlay can never
+    # be built from another monitor's capture even if a change row were inconsistent.
     rows = (await session.execute(
-        select(Snapshot).where(Snapshot.id.in_(ids)).options(defer(Snapshot.rendered_text))
+        select(Snapshot).where(Snapshot.id.in_(ids), Snapshot.monitor_id == monitor.id)
+        .options(defer(Snapshot.rendered_text))
     )).scalars().all()
     by = {s.id: s for s in rows}
     before, after = by.get(change.from_snapshot_id), by.get(change.to_snapshot_id)
-    desktop = build_overlays(getattr(before, "element_map", None), getattr(after, "element_map", None))
-    mobile = build_overlays(getattr(before, "element_map_mobile", None),
-                            getattr(after, "element_map_mobile", None))
+    # build_overlays runs an O(n²)-bounded greedy text match; off-thread so a
+    # heavily-changed page can never stall the event loop for other requests.
+    bd_map, ad_map = getattr(before, "element_map", None), getattr(after, "element_map", None)
+    bm_map, am_map = getattr(before, "element_map_mobile", None), getattr(after, "element_map_mobile", None)
+    desktop, mobile = await asyncio.gather(
+        asyncio.to_thread(build_overlays, bd_map, ad_map),
+        asyncio.to_thread(build_overlays, bm_map, am_map),
+    )
     if not desktop and not mobile:
         return None
 

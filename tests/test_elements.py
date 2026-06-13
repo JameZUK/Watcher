@@ -58,6 +58,24 @@ def test_diff_maps_matched_pairs_in_place_edits():
     assert [b["k"] for b in m["removed"]] == ["old"]    # genuine remove
 
 
+def test_diff_maps_matched_caps_pairing_work():
+    # Above max_pairs the O(R×A) in-place matching is skipped: everything reads as a
+    # pure add/remove (no 'changed' pairs) so a fully-reflowed page can't stall.
+    before = {"blocks": [{"k": f"b{i}", "s": f"removed block number {i} lorem ipsum dolor"} for i in range(150)]}
+    after = {"blocks": [{"k": f"a{i}", "s": f"added block number {i} lorem ipsum dolor"} for i in range(150)]}
+    m = diff_maps_matched(before, after, max_pairs=100)
+    assert m["changed"] == []
+    assert len(m["added"]) == 150 and len(m["removed"]) == 150
+
+
+def test_diff_maps_matched_prefilter_keeps_true_match():
+    # The length/quick-ratio prefilter must never drop a genuine in-place edit.
+    before = {"blocks": [{"k": "x", "s": "Review by Bob rating 4 stars great place to work overall"}]}
+    after = {"blocks": [{"k": "y", "s": "Review by Bob rating 5 stars great place to work overall"}]}
+    m = diff_maps_matched(before, after)
+    assert len(m["changed"]) == 1 and not m["added"] and not m["removed"]
+
+
 def test_word_diff_segments():
     ops = [(s["op"], s["t"]) for s in word_diff("rating 4 stars great", "rating 5 stars great")]
     assert ("same", "rating") in ops

@@ -622,7 +622,7 @@ _ELEMENT_MAP_JS = r"""() => {
     const r = el.getBoundingClientRect();
     return r.width >= 40 && r.height >= 18; };
   const sx = window.scrollX || 0, sy = window.scrollY || 0;
-  const out = []; const seen = new WeakSet();
+  const out = []; const seen = new WeakSet(); let cand = 0;
   for (const parent of document.querySelectorAll('div,ul,ol,section,main,table,tbody,article')) {
     const kids = parent.children;
     if (kids.length < 3) continue;
@@ -630,6 +630,7 @@ _ELEMENT_MAP_JS = r"""() => {
     for (const k of kids) { const g = sig(k); (groups[g] = groups[g] || []).push(k); }
     for (const g of Object.values(groups)) {
       if (g.length < 3) continue;
+      cand++;                       // a repeated-sibling group exists (latent content)
       for (const item of g) {
         if (seen.has(item) || !vis(item)) continue;
         seen.add(item);
@@ -647,7 +648,7 @@ _ELEMENT_MAP_JS = r"""() => {
   }
   return { pw: Math.round(document.documentElement.scrollWidth),
            ph: Math.round(document.documentElement.scrollHeight),
-           dpr: window.devicePixelRatio || 1, blocks: out };
+           dpr: window.devicePixelRatio || 1, blocks: out, cand: cand };
 }"""
 
 
@@ -685,13 +686,15 @@ async def capture_element_map(page) -> dict | None:
         except Exception:
             return None
 
-    # Retry once after a short beat if the first pass finds nothing — the repeated
-    # content (reviews/listings/cards) may still be hydrating, especially on the
-    # separately-rendered mobile pass. Cheap: only the empty case pays the wait.
+    # Retry once after a short beat ONLY when the page has repeated-sibling groups
+    # that yielded no blocks yet (i.e. the content is likely still hydrating, common
+    # on the separately-rendered mobile pass). A page with no such structure (`cand`
+    # == 0) never has a map to find, so it skips the wait entirely — no latency tax
+    # on the common non-list page.
     data = await _extract()
-    if not (isinstance(data, dict) and data.get("blocks")):
+    if isinstance(data, dict) and not data.get("blocks") and data.get("cand"):
         try:
-            await page.wait_for_timeout(800)
+            await page.wait_for_timeout(600)
         except Exception:
             pass
         data = await _extract()

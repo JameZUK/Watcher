@@ -154,43 +154,49 @@
     {% endfor %}
     <section class="glass rounded-2xl overflow-hidden" x-data='timeMachine({{ ns.items|tojson }}, {{ monitor.id }}, {{ initial_snap_id or "null" }})'
              @tl-goto.window="gotoSnap($event.detail.id)">
+      <!-- Primary row: stable. The device toggle is always present and right-anchored
+           so it never shifts as you scrub; change context (badge/headline) and the
+           timestamp live on the left. Change-specific controls move to the row below. -->
       <div class="px-5 py-3 border-b border-white/10 flex flex-wrap items-center justify-between gap-3">
         <div class="flex items-center gap-2 flex-wrap min-w-0">
           <h2 class="font-semibold text-white">History</h2>
+          <span class="text-xs text-slate-500" x-text="label"></span>
           <template x-if="cp()">
             <div class="flex items-center gap-2 min-w-0">
               <span class="pill pill-amber">change</span>
               <span class="pill" x-show="ovData() && ovData().category" x-cloak x-text="ovData() && ovData().category"></span>
-              <span class="text-xs text-slate-400 truncate" style="max-width:22rem" x-text="(ovData() && ovData().headline) || (frame() && frame().headline) || ''"></span>
+              <span class="text-xs text-slate-400 truncate" style="max-width:20rem" x-text="(ovData() && ovData().headline) || (frame() && frame().headline) || ''"></span>
             </div>
           </template>
         </div>
-        <div class="flex items-center gap-2">
-          <div class="flex p-0.5 rounded-lg bg-white/5 border border-white/10">
-            <button type="button" @click="$store.device.set('desktop')" title="Desktop preview"
-                    :class="$store.device.mode==='desktop' ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-2.5 py-1 rounded-md transition">
-              <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-            </button>
-            <button type="button" @click="$store.device.set('mobile')" title="Mobile preview"
-                    :class="$store.device.mode==='mobile' ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-2.5 py-1 rounded-md transition">
-              <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>
-            </button>
-          </div>
-          <template x-if="cp() && hasOvView()">
-            <button type="button" @click="showChanges=!showChanges" class="btn btn-ghost text-xs" :class="showChanges ? '!text-amber-200' : ''" title="Toggle change highlights">
-              <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-              <span x-text="showChanges ? 'Changes on' : 'Changes off'"></span>
-            </button>
-          </template>
+        <div class="flex p-0.5 rounded-lg bg-white/5 border border-white/10 shrink-0">
+          <button type="button" @click="$store.device.set('desktop')" title="Desktop preview"
+                  :class="$store.device.mode==='desktop' ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-2.5 py-1 rounded-md transition">
+            <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+          </button>
+          <button type="button" @click="$store.device.set('mobile')" title="Mobile preview"
+                  :class="$store.device.mode==='mobile' ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-2.5 py-1 rounded-md transition">
+            <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></svg>
+          </button>
+        </div>
+      </div>
+      <!-- Contextual row: only on a change-point that has highlights. Fixed-width
+           "Highlights" label (amber when on) so it never changes the row's metrics. -->
+      <template x-if="cp() && hasOvView()">
+        <div class="px-5 py-2 border-b border-white/10 flex flex-wrap items-center gap-2">
+          <button type="button" @click="showChanges=!showChanges" class="btn btn-ghost text-xs inline-flex items-center gap-1.5" :class="showChanges ? '!text-amber-200' : 'text-slate-400'" title="Show or hide the change highlights">
+            <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+            <span>Highlights</span>
+          </button>
           <template x-if="hi()">
             <div class="flex p-0.5 rounded-lg bg-white/5 border border-white/10 text-xs">
               <button type="button" @click="side='after'" :class="side==='after' ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-3 py-1 rounded-md transition">After</button>
               <button type="button" @click="side='before'" :class="side==='before' ? 'bg-white/15 text-white' : 'text-slate-400'" class="px-3 py-1 rounded-md transition">Before</button>
             </div>
           </template>
-          <span class="text-xs text-slate-500 hidden sm:inline" x-text="label"></span>
+          <span class="text-[11px] text-slate-500" x-show="hi()" x-cloak>Hover a highlight, or zoom for detail.</span>
         </div>
-      </div>
+      </template>
       <template x-if="frames.length">
         <div>
           <div :class="hi() ? 'ov-grid' : ''">
@@ -198,7 +204,7 @@
                  element-diff highlight boxes. Mobile captures render framed at ~380px. -->
             <div class="relative bg-black/40" :class="hi() ? 'border-b lg:border-b-0 lg:border-r border-white/5' : ''">
               <div x-ref="stage" class="overflow-y-auto overscroll-contain max-h-[65vh] flex justify-center items-start scroll-thin">
-                <div :class="onMobile() ? 'w-[380px] max-w-full my-5 rounded-2xl overflow-hidden border border-white/12 shadow-xl' : 'w-full'">
+                <div :class="onMobile() ? 'w-[380px] max-w-full my-5 rounded-2xl overflow-hidden border border-white/10 shadow-xl' : 'w-full'">
                   <div x-ref="canvas" class="relative w-full">
                     <template x-for="k in count()" :key="dispId() + (onMobile() ? '-m-' : '-d-') + k">
                       <img :src="imgUrl(k-1)" @click="openZoom($event)" @load="onSectionLoad(k)" class="block w-full cursor-zoom-in">
@@ -331,7 +337,7 @@
       <div class="px-4 py-3 border-b border-white/10 font-semibold text-white text-sm flex items-center justify-between">
         Timeline <span class="pill">{{ snapshots|length }}</span>
       </div>
-      <ul class="max-h-[34rem] overflow-y-auto scroll-thin divide-y divide-white/5">
+      <ul class="max-h-[36rem] overflow-y-auto scroll-thin divide-y divide-white/5">
         {% for s in snapshots %}
         {% set cinfo = change_by_snap.get(s.id) %}
         <li>
