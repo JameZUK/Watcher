@@ -70,10 +70,9 @@ def detect(monitor: Monitor, prev: Snapshot | None, current: RenderResult) -> Ch
                             diff_text=summary if changed else None)
 
     if mode == DetectionMode.visual:
-        before_png = blobs.get_bytes(prev.screenshot_blob) if prev.screenshot_blob else None
-        if before_png is None or current.screenshot_png is None:
+        vd = _visual_full(prev, current)         # whole page, not just the top section
+        if vd is None:
             return ChangeResult(False, mode, 0.0, "No screenshot to compare")
-        vd = visual.diff_images(before_png, current.screenshot_png)
         changed = vd.changed and vd.magnitude >= _visual_floor(monitor)
         return ChangeResult(changed, mode, vd.magnitude, vd.summary,
                             diff_overlay_png=vd.overlay_png if changed else None,
@@ -97,6 +96,23 @@ def detect(monitor: Monitor, prev: Snapshot | None, current: RenderResult) -> Ch
                         diff_text=td.unified if changed else None)
 
 
+def _visual_full(prev: Snapshot, current: RenderResult):
+    """Whole-page visual diff (all stored sections, not just the top one), with a
+    fallback to the legacy single top-blob diff for pre-sectioning snapshots. Returns a
+    VisualDiff or None."""
+    prev_secs = getattr(prev, "screenshot_sections", None)
+    cur_secs = getattr(current, "screenshot_sections", None)
+    before_secs = [blobs.get_bytes(k) for k in prev_secs] if prev_secs else None
+    vd = (visual.diff_sections(before_secs, cur_secs)
+          if (before_secs and cur_secs) else None)
+    if vd is not None:
+        return vd
+    before_png = blobs.get_bytes(prev.screenshot_blob) if prev.screenshot_blob else None
+    if before_png is not None and current.screenshot_png is not None:
+        return visual.diff_images(before_png, current.screenshot_png)
+    return None
+
+
 def _detect_auto(monitor: Monitor, prev: Snapshot, current: RenderResult) -> ChangeResult:
     """Smart mode: detect both content (text) and appearance (visual) changes,
     and surface whichever changed — with both a text diff and a visual overlay."""
@@ -105,10 +121,13 @@ def _detect_auto(monitor: Monitor, prev: Snapshot, current: RenderResult) -> Cha
 
     vd = None
     visual_changed = False
-    before_png = blobs.get_bytes(prev.screenshot_blob) if prev.screenshot_blob else None
-    if before_png is not None and current.screenshot_png is not None:
-        vd = visual.diff_images(before_png, current.screenshot_png)
-        visual_changed = vd.changed and vd.magnitude >= _visual_floor(monitor)
+    # Skip the (whole-page, multi-section) pixel diff when text already confirms a
+    # change — the change is recorded with the text + element-map overlay, so the
+    # expensive pixel pass is only needed to catch an APPEARANCE-only change (no text
+    # change). Saves the pixel work on every content-change check.
+    if not text_changed:
+        vd = _visual_full(prev, current)
+        visual_changed = vd is not None and vd.changed and vd.magnitude >= _visual_floor(monitor)
 
     if not (text_changed or visual_changed):
         return ChangeResult(False, DetectionMode.auto, 0.0, "No change")

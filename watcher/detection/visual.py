@@ -45,6 +45,29 @@ def _fit(a: Image.Image, b: Image.Image) -> tuple[Image.Image, Image.Image]:
     return ca, cb
 
 
+def diff_sections(before_pngs, after_pngs, *, threshold: float = 0.1,
+                  max_sections: int = 8) -> "VisualDiff | None":
+    """Whole-page visual diff: compare the stored page sections top-to-bottom and return
+    the MOST-changed one, so a visual change BELOW the first section isn't missed (the
+    old behaviour only diffed section[0], i.e. the first ~8000 CSS px). Only OVERLAPPING
+    sections are compared (zip) — a section-count change is just a page-height reflow,
+    which pixel diff shouldn't treat as a guaranteed change. Returns None when either
+    side has no sections (caller falls back to the single top-blob diff)."""
+    bp = [b for b in (before_pngs or []) if b][:max_sections]
+    ap = [a for a in (after_pngs or []) if a][:max_sections]
+    if not bp or not ap:
+        return None
+    best: VisualDiff | None = None
+    for b, a in zip(bp, ap):
+        try:
+            vd = diff_images(b, a, threshold=threshold)
+        except Exception:
+            continue
+        if best is None or vd.magnitude > best.magnitude:
+            best = vd
+    return best
+
+
 def diff_images(before_png: bytes, after_png: bytes, *, threshold: float = 0.1) -> VisualDiff:
     before, after = _fit(_load(before_png), _load(after_png))
     # _load bounds each image to the megapixel budget, but _fit pads them to a common

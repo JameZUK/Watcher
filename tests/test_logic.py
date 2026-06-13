@@ -692,6 +692,25 @@ def test_rate_limiter_window():
     assert allow("unit", limit=3, window=60)         # reset clears it
 
 
+def test_visual_diff_sections_catches_below_fold_change():
+    """Whole-page visual diff: a change in a LOWER section is detected even when the top
+    section is identical (the old top-section-only diff would miss it)."""
+    import io
+    from PIL import Image
+    from watcher.detection import visual
+
+    def png(color):
+        b = io.BytesIO(); Image.new("RGB", (48, 48), color).save(b, format="PNG"); return b.getvalue()
+
+    top = png((255, 255, 255))
+    before = [top, png((255, 255, 255))]
+    after = [top, png((0, 0, 0))]            # only section[1] changed
+    vd = visual.diff_sections(before, after)
+    assert vd is not None and vd.changed and vd.magnitude > 0.5
+    assert visual.diff_sections(before, before).changed is False
+    assert visual.diff_sections([], after) is None   # no sections → caller falls back
+
+
 def test_visual_noise_floor(monkeypatch):
     """Sub-floor pixel churn (anti-aliasing, lazy images, carousels) must NOT
     register as a change — the root cause of an early phantom-change bug."""
