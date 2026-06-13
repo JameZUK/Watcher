@@ -606,6 +606,80 @@ async def mobile_sections_or_none(page) -> list[bytes] | None:
     return await full_page_sections(page)
 
 
+# Generic content-block extractor (no per-site selectors): find repeated-sibling
+# groups (>=3 children sharing a tag+class signature) whose VISIBLE items carry a
+# meaningful amount of text — i.e. list/feed items like reviews, job rows, product
+# cards, articles. Returns each item's text + full-PAGE bounding box (doc coords, CSS
+# px) plus the page dimensions / devicePixelRatio, so a later step can locate "which
+# item changed" by content and crop it from this render's own screenshot. Bounded.
+_ELEMENT_MAP_JS = r"""() => {
+  const norm = t => (t || '').replace(/\s+/g, ' ').trim();
+  const sig = el => el.tagName.toLowerCase() + '|' +
+      ((el.className || '').toString().trim().split(/\s+/).slice(0, 2).join('.'));
+  const vis = el => { let cs; try { cs = getComputedStyle(el); } catch (e) { return false; }
+    if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity || '1') === 0) return false;
+    const r = el.getBoundingClientRect();
+    return r.width >= 40 && r.height >= 18; };
+  const sx = window.scrollX || 0, sy = window.scrollY || 0;
+  const out = []; const seen = new WeakSet();
+  for (const parent of document.querySelectorAll('div,ul,ol,section,main,table,tbody,article')) {
+    const kids = parent.children;
+    if (kids.length < 3) continue;
+    const groups = {};
+    for (const k of kids) { const g = sig(k); (groups[g] = groups[g] || []).push(k); }
+    for (const g of Object.values(groups)) {
+      if (g.length < 3) continue;
+      for (const item of g) {
+        if (seen.has(item) || !vis(item)) continue;
+        seen.add(item);
+        const text = norm(item.innerText || item.textContent || '');
+        if (text.length < 25 || text.length > 2000) continue;
+        const r = item.getBoundingClientRect();
+        out.push({ t: text.slice(0, 600),
+                   x: Math.round(r.left + sx), y: Math.round(r.top + sy),
+                   w: Math.round(r.width), h: Math.round(r.height) });
+        if (out.length >= 400) break;
+      }
+      if (out.length >= 400) break;
+    }
+    if (out.length >= 400) break;
+  }
+  return { pw: Math.round(document.documentElement.scrollWidth),
+           ph: Math.round(document.documentElement.scrollHeight),
+           dpr: window.devicePixelRatio || 1, blocks: out };
+}"""
+
+
+async def capture_element_map(page) -> dict | None:
+    """Capture a compact, content-anchored map of the page's repeated content blocks
+    with their full-page bounding boxes (this render's own coordinates). Generic — no
+    per-site selectors. Best-effort; returns None on failure or an empty page.
+
+    Shape: {"pw","ph","dpr", "blocks":[{"k": content-key, "x","y","w","h", "s": snippet}]}
+    where the key is a digit-masked text hash so counts/dates that tick every load
+    don't make an otherwise-identical block look new.
+    """
+    import hashlib
+    import re
+    try:
+        await page.evaluate("() => window.scrollTo(0, 0)")
+    except Exception:
+        pass
+    try:
+        data = await page.evaluate(_ELEMENT_MAP_JS)
+    except Exception:
+        return None
+    if not isinstance(data, dict) or not data.get("blocks"):
+        return None
+    blocks = []
+    for b in data["blocks"]:
+        t = b.get("t") or ""
+        key = hashlib.sha1(re.sub(r"\d+", "#", t.lower()).encode("utf-8")).hexdigest()[:12]
+        blocks.append({"k": key, "x": b.get("x"), "y": b.get("y"),
+                       "w": b.get("w"), "h": b.get("h"), "s": t[:160]})
+    return {"pw": data.get("pw"), "ph": data.get("ph"), "dpr": data.get("dpr"), "blocks": blocks}
+
+
 async def navigate(page, monitor: Monitor):
     """Navigate to the monitor URL, tolerating a wait condition that never settles.
 
@@ -1048,6 +1122,14 @@ async def capture(page, response, monitor: Monitor, mobile: bool = True) -> Rend
     except Exception:
         result.screenshot_sections = None
         result.screenshot_png = None
+
+    # Content-anchored element map at the desktop layout (this render's own coords) —
+    # for later resolution-independent change localization. Captured here (after the
+    # desktop screenshot, before any mobile resize) so its bboxes match that capture.
+    try:
+        result.element_map = await capture_element_map(page)
+    except Exception:
+        result.element_map = None
 
     # Second full-page screenshot at a mobile viewport, for device-appropriate
     # previews. Re-uses the already-loaded page (just resizes), so no extra

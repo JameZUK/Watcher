@@ -316,6 +316,9 @@ class Snapshot(Base):
     html_blob: Mapped[str | None] = mapped_column(String(64), default=None)
     screenshot_blob: Mapped[str | None] = mapped_column(String(64), default=None)         # desktop (top section)
     screenshot_mobile_blob: Mapped[str | None] = mapped_column(String(64), default=None)  # mobile (top section)
+    # Content-anchored element map (repeated content blocks + full-page bboxes, in the
+    # capture's own coordinates) for resolution-independent change localization.
+    element_map: Mapped[dict | None] = mapped_column(JSON, default=None)
     # Whole-page captures as ordered blob-key lists (full-width sections, top→bottom).
     screenshot_sections: Mapped[list] = mapped_column(JSON, default=list)
     screenshot_mobile_sections: Mapped[list] = mapped_column(JSON, default=list)

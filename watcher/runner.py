@@ -760,6 +760,7 @@ async def _check_monitor_inner(monitor_id: int) -> None:
             snap.screenshot_mobile_blob = _b["screenshot_mobile_blob"]
             snap.screenshot_sections = _b["screenshot_sections"]
             snap.screenshot_mobile_sections = _b["screenshot_mobile_sections"]
+            snap.element_map = result.element_map
             snap.content_hash = _b["content_hash"]
 
             # Auto-populate the monitor name from the page title if left blank

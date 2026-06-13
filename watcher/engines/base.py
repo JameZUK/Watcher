@@ -51,6 +51,10 @@ class RenderResult:
     # Whole-page captures sliced into readable, full-width sections (top→bottom).
     screenshot_sections: list | None = None
     screenshot_mobile_sections: list | None = None
+    # Content-anchored element map: generic repeated content blocks (reviews, list
+    # items, cards) with their full-page bounding boxes — for resolution-independent
+    # change localization (diff by content, crop in this render's own coordinates).
+    element_map: dict | None = None
     content_type: str | None = None
     render_ms: int | None = None
     # Updated browser storage_state if a login flow ran (for session persistence).
