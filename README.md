@@ -25,12 +25,13 @@
 
 - **Smart detection (default)** — watches a page's **content (text) and appearance (visual) together**, and shows you both in a tabbed diff. Other modes: rendered **text**, **visual** (screenshot), single **element** (CSS/XPath), raw **HTML**, and **JSON**.
 - **Real browser rendering** — Chromium / Firefox / WebKit via Playwright, plus **[Camoufox](https://github.com/daijro/camoufox)** (stealth Firefox) for anti-bot targets. Desktop **and** mobile previews are captured each check.
-- **Sees changes in place** — dashboard cards show live screenshot thumbnails; the diff viewer overlays **changed regions in red** on the actual page, with an interactive **before/after slider**.
+- **Sees changes in place** — dashboard cards show live screenshot thumbnails; the diff viewer overlays **changed regions in red** on the actual page, with an interactive **before/after slider**, a scrubbable **history timeline**, and full-screen **zoom**.
+- **Clickable links on every capture** — captures are screenshots, but Watcher extracts each page's hyperlinks from the DOM and floats **real clickable anchors** over the image, so you can jump straight from a snapshot to the live page (history view **and** zoom, desktop **and** mobile, opens in a new tab) — even on links that sit under a change highlight.
 - **Group monitoring & price comparison** — group related pages (the **same product across retailers**) and watch them together: a side-by-side comparison with the **cheapest highlighted**, all prices on **one chart**, and a single group alert ("tell me when the cheapest drops below £X"). Groups aren't just for price — choose **back-in-stock**, **any-change**, or a **custom AI intent** that's combined with each page's own.
 - **AI triage & setup** *(optional)* — an OpenRouter-hosted model (or any OpenAI-compatible / **Ollama** endpoint) writes a one-line **headline**, classifies the change (price / stock / content / cosmetic …), and rates **importance** so low-value churn is muted. It also **builds monitors and groups from a plain-English goal** ("track this across these retailers and alert me under £250"), **suggests what to watch for**, and **summarises** recent activity.
 - **Value tracking & trends** — extract a numeric value (price, stock count, rating) each check, chart it over time, and fire **threshold alerts** ("tell me when it drops below £300").
 - **Notifications** — in-app **inbox**, **Web Push**, **HMAC-signed webhooks**, **Email/SMTP**, **Telegram**, **Discord**, and **ntfy** — with **hourly digests** and **quiet hours** so non-urgent changes batch up instead of pinging you at 3am.
-- **Reliability & observability** — per-check render/detect timeouts, retries, **auto-pause** after repeated failures (with a recovery alert), **adaptive intervals**, **auto-escalation to stealth Camoufox** when a render is bot-walled, optional **automatic AI re-login** when a login session expires (credential logins, no captcha), and a **status page** (per-monitor success rate, render times, AI budget, blob-store size).
+- **Reliability & observability** — per-check render/detect timeouts, retries, **auto-pause** after repeated failures (with a recovery alert), **adaptive intervals**, **auto-escalation to stealth Camoufox** when a render is bot-walled, optional **automatic AI re-login** when a login session expires (credential logins, no captcha), and a **status page** (per-monitor success rate, render times, AI budget, blob-store size). A **per-step render trace** flags *degraded* captures and **auto-skips steps that repeatedly time out** (with per-monitor toggles), so one slow step never sinks the whole render.
 - **Anti-bot & authenticated sites** — Camoufox stealth rendering with an automatic **site-root warm-up** that clears cold-deep-link walls (banks a clearance cookie, then retries with a same-site referer); blocked / challenge pages (DataDome, Cloudflare, PerimeterX, …) are detected and surfaced instead of silently failing; **paste Cookie Editor JSON** to reuse a logged-in session or clear a bot check; recorded **login flows**, **per-monitor proxies** and a health-checked **shared proxy pool**. Stored credentials and pasted session cookies are **encrypted at rest**.
 - **Noise control** — ignore selectors, ReDoS-safe regex ignore patterns, a per-monitor minimum-change threshold, **and a global visual noise floor** that absorbs anti-aliasing, lazy-loaded images, and carousels so trivial pixel churn never alerts you.
 - **Accounts, 2FA & admin** — multi-user with self-service **profile / password** changes and **TOTP two-factor auth** (authenticator app), plus an **admin panel** to create/manage users, toggle self-service signup, and **require 2FA** for everyone.
@@ -40,15 +41,23 @@
 
 ## 📸 Screenshots
 
-| Dashboard — monitors & groups | Grouped price comparison |
+| Dashboard — monitors, groups & an AI fleet summary | Status — per-monitor health & resource use |
 |---|---|
-| ![Dashboard](docs/screenshots/dashboard.png) | ![Group price comparison](docs/screenshots/group-prices.png) |
+| ![Dashboard](docs/screenshots/dashboard.png) | ![Status page](docs/screenshots/status.png) |
 
-| Track trends across sources | AI-triaged change inbox |
+| Grouped price comparison (cheapest highlighted) | Combined price trend across sources |
 |---|---|
-| ![Combined price chart](docs/screenshots/group-trends.png) | ![Change inbox](docs/screenshots/inbox.png) |
+| ![Group price comparison](docs/screenshots/group-prices.png) | ![Combined price chart](docs/screenshots/group-trends.png) |
 
-<p align="center"><img alt="Mobile" src="docs/screenshots/mobile.png" width="300"></p>
+| Monitor detail — history, change highlights & render trace | Hyperlinks made clickable on the captured page |
+|---|---|
+| ![Monitor detail](docs/screenshots/detail.png) | ![Clickable links](docs/screenshots/links.png) |
+
+| AI-triaged change inbox | Fully responsive on mobile |
+|---|---|
+| ![Change inbox](docs/screenshots/inbox.png) | <img alt="Mobile" src="docs/screenshots/mobile.png" width="320"> |
+
+> The demo above is generated by [`scripts/seed_demo.py`](scripts/seed_demo.py) on a `demo@watcher.local` account — product price groups, an AI-news group, and a triaged inbox.
 
 ## 🚀 Quick start (Docker)
 
@@ -155,10 +164,10 @@ All settings are environment variables prefixed `WATCHER_` (see [`.env.example`]
 | `WATCHER_MIN_INTERVAL_SECONDS` | `900` | Floor on how often a monitor can check (15 min). |
 | `WATCHER_MIN_VISUAL_CHANGE` | `0.005` | Global **visual noise floor** (fraction of pixels). See below. |
 | `WATCHER_AUTO_PAUSE_AFTER_FAILURES` | `6` | Pause a monitor after this many consecutive failures (`0` disables). |
-| `WATCHER_RENDER_TIMEOUT_SECONDS` / `_DETECT_TIMEOUT_SECONDS` | `45` / `20` | Hard ceilings per render / per diff. |
+| `WATCHER_RENDER_TIMEOUT_SECONDS` / `_DETECT_TIMEOUT_SECONDS` | `60` / `20` | Hard ceilings per render / per diff. |
 | `WATCHER_MAX_RENDER_CONCURRENCY` / `_MAX_CAMOUFOX_CONCURRENCY` | `3` / `2` | Concurrent renders overall / for (RAM-heavy) Camoufox. |
-| `WATCHER_MAX_SCREENSHOT_HEIGHT_PX` | `8000` | Cap a full-page capture's height (CSS px) so a long page can't make a 100+ MP image. |
-| `WATCHER_MAX_SCREENSHOT_MEGAPIXELS` / `_WEBP_QUALITY` | `12` / `85` | Stored screenshots are downscaled to this budget and saved as **WebP** (≈ PNG/10–50 for documents; text stays readable). `0` keeps native PNG. |
+| `WATCHER_MAX_SCREENSHOT_HEIGHT_PX` | `80000` | Safety clip on a full-page capture's height (CSS px) so a pathological infinite-scroll page can't spike memory. Whole pages are sliced into readable WebP **sections** below this. |
+| `WATCHER_MAX_SCREENSHOT_MEGAPIXELS` / `_WEBP_QUALITY` | `20` / `85` | Each section is downscaled to this budget and saved as **WebP** (≈ PNG/10–50 for documents; text stays readable). `0` keeps native PNG. |
 | `WATCHER_MAX_DIFF_MEGAPIXELS` | `2` | Downscale screenshots before the (pure-Python) pixel diff — keeps it fast + under the detect timeout. |
 | `WATCHER_AUTO_RELOGIN_COOLDOWN_SECONDS` | `21600` | Wait after a failed automatic AI re-login before retrying (6 h). |
 | `WATCHER_VAPID_PUBLIC_KEY` / `_PRIVATE_KEY` | — | Enable Web Push. Generate with `pip install py-vapid && vapid --gen`. |

@@ -6,6 +6,7 @@ first. Run: .venv/bin/python scripts/seed_demo.py
 from __future__ import annotations
 
 import asyncio
+import os
 import random
 from datetime import datetime, timedelta, timezone
 
@@ -22,10 +23,14 @@ NOW = datetime.now(timezone.utc)
 THUMBS: dict[str, str] = {}
 
 
+_THUMB_DIR = os.path.join(os.path.dirname(__file__), "demo_thumbs")
+
+
 def _thumb(path: str) -> str:
     key = THUMBS.get(path)
     if key is None:
-        with open(path, "rb") as f:
+        full = path if os.path.isabs(path) else os.path.join(_THUMB_DIR, path)
+        with open(full, "rb") as f:
             key = blobs.put_bytes(f.read())
         THUMBS[path] = key
     return key
