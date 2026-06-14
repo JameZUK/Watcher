@@ -218,6 +218,14 @@ class Monitor(Base):
     # Organization
     tags: Mapped[list] = mapped_column(JSON, default=list)
     adaptive_interval: Mapped[bool] = mapped_column(Boolean, default=False)  # auto-tune cadence
+
+    # Render-step feedback. `render_step_overrides` are explicit per-monitor toggles
+    # ({step: "off"} force-skips a step; "on" pins it so it's never auto-skipped).
+    # `render_step_stats` is LEARNED health ({step: {"fail_streak": n, "last": "timeout"}}):
+    # a skippable step that times out N times in a row is auto-skipped until it
+    # recovers (or the monitor is re-saved, which resets the learning).
+    render_step_overrides: Mapped[dict] = mapped_column(JSON, default=dict)
+    render_step_stats: Mapped[dict] = mapped_column(JSON, default=dict)
     group_id: Mapped[int | None] = mapped_column(
         ForeignKey("groups.id", ondelete="SET NULL"), default=None, index=True)
 
@@ -328,6 +336,12 @@ class Snapshot(Base):
     screenshot_mobile_sections: Mapped[list] = mapped_column(JSON, default=list)
 
     render_ms: Mapped[int | None] = mapped_column(Integer, default=None)
+    # Per-step render trace for this capture: ordered [{"step","ms","outcome","why"?}, …]
+    # where outcome ∈ ok|timeout|error|skipped. `degraded` is true when an optional
+    # step timed out, errored, or was auto-skipped — i.e. the capture may be lower
+    # quality (missing mobile preview, un-dismissed banner, partial reveal).
+    render_trace: Mapped[list | None] = mapped_column(JSON, default=None)
+    degraded: Mapped[bool] = mapped_column(Boolean, default=False)
 
     monitor: Mapped["Monitor"] = relationship(back_populates="snapshots")
 

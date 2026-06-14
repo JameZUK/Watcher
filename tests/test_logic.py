@@ -994,3 +994,141 @@ def test_engine_error_message():
     assert "libwoff2dec" not in msg            # the raw wall is gone
     assert engine_error_message("Executable doesn't exist at /path") is not None
     assert engine_error_message("TimeoutError: nope") is None
+
+
+# --- Render-step feedback ----------------------------------------------------
+
+def test_render_trace_outcomes_and_degraded():
+    """A clean step records ok+timing; a non-critical error is swallowed and recorded;
+    a step that overruns its bound is recorded as a timeout. Any of the latter two
+    flags the render degraded."""
+    import asyncio
+    from types import SimpleNamespace as N
+    from watcher.engines._common import RenderTrace
+
+    tr = RenderTrace(N(render_step_overrides={}, render_step_stats={}))
+
+    async def ok(): return "v"
+    async def boom(): raise ValueError("x")
+    async def slow(): await asyncio.sleep(5)
+
+    async def run():
+        assert await tr.step("settle_content", lambda: ok()) == "v"
+        assert await tr.step("hide_banners", lambda: boom()) is None       # error → None
+        assert await tr.step("reveal_content", lambda: slow(), bound=0.01) is None  # timeout
+    asyncio.run(run())
+
+    by = {e["step"]: e for e in tr.entries}
+    assert by["settle_content"]["outcome"] == "ok"
+    assert by["hide_banners"]["outcome"] == "error"
+    assert by["reveal_content"]["outcome"] == "timeout"
+    assert tr.degraded is True
+
+
+def test_render_trace_disable_autoskip_and_pin():
+    """User 'off' force-skips (intended, not degraded); a step past the timeout streak
+    auto-skips (degraded); 'on' pins a step so it runs despite the streak."""
+    import asyncio
+    from types import SimpleNamespace as N
+    from watcher.engines._common import RenderTrace, RENDER_AUTOSKIP_AFTER
+
+    ran = []
+    async def work(name): ran.append(name); return name
+
+    tr = RenderTrace(N(
+        render_step_overrides={"mobile": "off", "reveal_content": "on"},
+        render_step_stats={
+            "hide_banners": {"fail_streak": RENDER_AUTOSKIP_AFTER},
+            "reveal_content": {"fail_streak": RENDER_AUTOSKIP_AFTER + 5},
+        },
+    ))
+
+    async def run():
+        assert await tr.step("mobile", lambda: work("mobile")) is None       # user-disabled
+        assert await tr.step("hide_banners", lambda: work("hb")) is None     # auto-skipped
+        assert await tr.step("reveal_content", lambda: work("rc")) == "rc"   # pinned → runs
+    asyncio.run(run())
+
+    assert ran == ["rc"]
+    by = {e["step"]: e for e in tr.entries}
+    assert by["mobile"]["why"] == "disabled" and by["hide_banners"]["why"] == "auto"
+    assert tr.degraded is True   # the auto-skip degrades the render
+
+    # A purely user-disabled render is intentional, not degraded.
+    tr2 = RenderTrace(N(render_step_overrides={"mobile": "off"}, render_step_stats={}))
+    asyncio.run(tr2.step("mobile", lambda: work("m2")))
+    assert tr2.degraded is False
+
+
+def test_render_trace_critical_reraises_and_ignores_override():
+    """A critical step (navigate, screenshot) re-raises so the engine's own error path
+    handles it, and ignores disable/auto-skip — the payload is never skipped."""
+    import asyncio
+    import pytest as _pytest
+    from types import SimpleNamespace as N
+    from watcher.engines._common import RenderTrace
+
+    tr = RenderTrace(N(render_step_overrides={"navigate": "off"}, render_step_stats={}))
+
+    async def boom(): raise RuntimeError("nav failed")
+
+    async def run():
+        with _pytest.raises(RuntimeError):
+            await tr.step("navigate", lambda: boom(), critical=True)
+    asyncio.run(run())
+    # It RAN despite the 'off' override (critical), and recorded the error.
+    assert tr.entries[-1]["step"] == "navigate" and tr.entries[-1]["outcome"] == "error"
+
+
+def test_record_render_trace_updates_learned_streak():
+    """The runner folds a render's trace onto the snapshot and into the monitor's
+    learned health: a timeout advances that step's fail-streak, a clean run resets it,
+    and the mobile: prefix is folded into the bare step name."""
+    from types import SimpleNamespace as N
+    from watcher.runner import _record_render_trace
+
+    mon = N(render_step_stats={"hide_banners": {"fail_streak": 1}})
+    snap = N(render_trace=None, degraded=False)
+    result = N(degraded=True, render_trace=[
+        {"step": "hide_banners", "ms": 4000, "outcome": "timeout"},
+        {"step": "settle_content", "ms": 50, "outcome": "ok"},
+        {"step": "mobile:screenshot", "ms": 10, "outcome": "ok"},
+    ])
+    _record_render_trace(mon, snap, result)
+    assert snap.degraded is True and snap.render_trace is result.render_trace
+    assert mon.render_step_stats["hide_banners"]["fail_streak"] == 2   # timeout → +1
+    assert mon.render_step_stats["settle_content"]["fail_streak"] == 0  # ok → reset
+
+    # A clean run clears a previously-failing step's streak (auto-skip recovers).
+    mon2 = N(render_step_stats={"hide_banners": {"fail_streak": 5}})
+    snap2 = N(render_trace=None, degraded=False)
+    _record_render_trace(mon2, snap2, N(degraded=False, render_trace=[
+        {"step": "hide_banners", "ms": 30, "outcome": "ok"}]))
+    assert mon2.render_step_stats["hide_banners"]["fail_streak"] == 0
+
+
+def test_apply_form_render_step_toggles():
+    """The edit form's render-step checkboxes round-trip into render_step_overrides
+    (unchecked → 'off'), and saving clears learned auto-skips. The create form / API
+    (no 'present' marker) leaves overrides untouched."""
+    from watcher.web.routes.monitors import _apply_form
+    from watcher.models import Monitor
+
+    m = Monitor()
+    m.render_step_stats = {"hide_banners": {"fail_streak": 9}}
+    _apply_form(m, {
+        "name": "x", "url": "https://e.com", "engine": "chromium", "detection_mode": "auto",
+        "render_steps_present": "on",
+        # checked steps present; hide_banners + mobile absent → unchecked → 'off'
+        "render_step_settle_content": "on", "render_step_click_consent": "on",
+        "render_step_consent_autodismiss": "on", "render_step_reveal_content": "on",
+        "render_step_element_map": "on",
+    })
+    assert m.render_step_overrides == {"hide_banners": "off", "mobile": "off"}
+    assert m.render_step_stats == {}   # editing is a deliberate "try again"
+
+    m2 = Monitor()
+    m2.render_step_overrides = {"mobile": "off"}
+    _apply_form(m2, {"name": "y", "url": "https://e.com",
+                     "engine": "chromium", "detection_mode": "auto"})
+    assert m2.render_step_overrides == {"mobile": "off"}   # untouched without the marker

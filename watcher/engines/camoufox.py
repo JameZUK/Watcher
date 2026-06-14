@@ -10,13 +10,13 @@ best-effort: if it fails or is blocked, the desktop capture is unaffected.
 
 from __future__ import annotations
 
-import asyncio
 import time
 
 from ..auth.login_flows import mark_session, session_is_valid
 from ..config import settings
 from ..models import Monitor
 from ._common import (
+    RenderTrace,
     _settle_for_render,
     apply_actions,
     capture,
@@ -73,18 +73,21 @@ class CamoufoxRenderer:
                 if flow and flow.steps and not reuse_session:
                     await replay_login(page, monitor)
 
-                response = await navigate(page, monitor)
+                trace = RenderTrace(monitor)
+                response = await trace.step(
+                    "navigate", lambda: navigate(page, monitor), critical=True)
                 # A cold deep-link can hit an anti-bot wall (e.g. Glassdoor's
                 # "Humans only"); a site-root warm-up that banks a clearance
                 # cookie usually clears it. No-op when the first hit succeeded.
-                warmed = await warm_up_if_blocked(page, response, monitor)
+                warmed = await trace.step(
+                    "warm_up", lambda: warm_up_if_blocked(page, response, monitor))
                 if warmed is not None:
                     response = warmed
-                await do_wait(page, monitor)
-                await apply_actions(page, monitor)
+                await trace.step("do_wait", lambda: do_wait(page, monitor))
+                await trace.step("apply_actions", lambda: apply_actions(page, monitor))
 
                 # mobile=False: the in-page resize is a no-op on Camoufox.
-                result = await capture(page, response, monitor, mobile=False)
+                result = await capture(page, response, monitor, mobile=False, trace=trace)
 
                 try:
                     desktop_state = await context.storage_state()
@@ -112,15 +115,17 @@ class CamoufoxRenderer:
             remaining = settings.render_timeout_seconds - (time.monotonic() - start)
             if (settings.capture_mobile_preview and result is not None and result.ok
                     and result.http_status not in (401, 403, 429) and remaining >= 8):
-                try:
-                    mobile_secs, mmap = await asyncio.wait_for(
-                        self._capture_mobile(monitor, launch_kwargs, desktop_state), timeout=remaining)
+                async def _mobile():
+                    mobile_secs, mmap = await self._capture_mobile(
+                        monitor, launch_kwargs, desktop_state)
                     if mobile_secs:
                         result.screenshot_mobile_sections = mobile_secs
                         result.screenshot_mobile_png = mobile_secs[0]
                         result.element_map_mobile = mmap
-                except Exception:
-                    pass
+                # Recorded as one bounded "mobile" step: a pass that keeps timing out
+                # gets auto-skipped, and a slow pass never blows the budget.
+                await trace.step("mobile", _mobile, bound=remaining)
+                trace.apply_to(result)
 
             if result is None:  # defensive — capture() never returns None today
                 return RenderResult(ok=False, error="No content captured",

@@ -64,6 +64,11 @@ class RenderResult:
     # HTML of any consent/cookie banner the automatic handler could NOT clear —
     # fed to the optional AI fallback so it can learn dismiss selectors.
     unhandled_consent_html: list | None = None
+    # Per-step render trace ([{"step","ms","outcome","why"?}, …]) and a flag set when
+    # an optional step timed out / errored / was skipped (so the capture may be lower
+    # quality). Populated by the engine's RenderTrace; persisted onto the snapshot.
+    render_trace: list | None = None
+    degraded: bool = False
     extra: dict = field(default_factory=dict)
 
 

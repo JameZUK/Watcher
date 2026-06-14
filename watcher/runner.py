@@ -448,6 +448,37 @@ def _is_transient(result) -> bool:
     return result.http_status is None or result.http_status >= 500
 
 
+def _record_render_trace(monitor, snap, result) -> None:
+    """Persist this render's per-step trace onto the snapshot and fold its outcomes
+    into the monitor's learned step health (which drives auto-skip). Only a
+    *timeout* advances a step's fail-streak (the auto-skip trigger); a clean run
+    resets it. A user-disabled or one-off errored step doesn't move the streak."""
+    if result is None:
+        return
+    snap.degraded = bool(getattr(result, "degraded", False))
+    trace = getattr(result, "render_trace", None)
+    if not trace:
+        return
+    snap.render_trace = trace
+    rank = {"ok": 0, "skipped": 1, "error": 2, "timeout": 3}
+    worst: dict[str, str] = {}
+    for e in trace:
+        name = (e.get("step") or "").split(":", 1)[-1]   # fold the mobile: prefix in
+        o = e.get("outcome", "ok")
+        if rank.get(o, 0) >= rank.get(worst.get(name, "ok"), 0):
+            worst[name] = o
+    stats = dict(monitor.render_step_stats or {})
+    for name, outcome in worst.items():
+        st = dict(stats.get(name) or {})
+        if outcome == "timeout":
+            st["fail_streak"] = int(st.get("fail_streak", 0)) + 1
+        elif outcome == "ok":
+            st["fail_streak"] = 0
+        st["last"] = outcome
+        stats[name] = st
+    monitor.render_step_stats = stats
+
+
 async def _fail(session, monitor, snap, *, error, http_status, title=None, result=None) -> None:
     """Record an error snapshot, bump the failure streak, and alert / auto-pause.
 
@@ -478,6 +509,7 @@ async def _fail(session, monitor, snap, *, error, http_status, title=None, resul
         except Exception:
             logging.getLogger("watcher").warning(
                 "could not persist block-page capture for monitor %s", monitor.id)
+    _record_render_trace(monitor, snap, result)
     session.add(snap)
     prev = monitor.consecutive_failures or 0
     monitor.consecutive_failures = prev + 1
@@ -742,6 +774,7 @@ async def _check_monitor_inner(monitor_id: int, *, manual: bool = False) -> None
                     snap.status = SnapshotStatus.error
                     snap.error = "Login session expired — automatic re-login in progress…"
                     snap.http_status = result.http_status
+                    _record_render_trace(monitor, snap, result)
                     session.add(snap)
                     await session.commit()
                     return
@@ -808,6 +841,7 @@ async def _check_monitor_inner(monitor_id: int, *, manual: bool = False) -> None
             snap.element_map = result.element_map
             snap.element_map_mobile = result.element_map_mobile
             snap.content_hash = _b["content_hash"]
+            _record_render_trace(monitor, snap, result)
 
             # Auto-populate the monitor name from the page title if left blank
             # (or still on the legacy "Untitled" placeholder).

@@ -209,6 +209,33 @@
           <textarea name="consent_clicks" rows="2" placeholder="#accept-cookies&#10;button.close-modal — one CSS selector per line, clicked in order after load" class="field font-mono">{{ '\n'.join(m.consent_clicks) if m and m.consent_clicks else '' }}</textarea>
           <p class="text-xs text-slate-500 mt-1">Automatic banner handling usually covers this. Add selectors only for stubborn cookie walls, modals, or a captcha checkbox the auto-handler misses.</p>
         </div>
+
+        {% set render_steps = [
+          ('settle_content', 'Wait for content to appear'),
+          ('click_consent', 'Click consent / cookie buttons'),
+          ('consent_autodismiss', 'Auto-dismiss late banners'),
+          ('hide_banners', 'Hide cookie &amp; ad banners'),
+          ('reveal_content', 'Reveal full page (force lazy-load)'),
+          ('element_map', 'Map elements (precise change localization)'),
+          ('mobile', 'Capture mobile preview') ] %}
+        <div class="sm:col-span-2" x-data="{ open: false }">
+          <input type="hidden" name="render_steps_present" value="1">
+          <button type="button" @click="open = !open" class="flex items-center gap-1.5 text-sm font-medium text-slate-300 hover:text-white">
+            <span x-text="open ? '▾' : '▸'" class="text-slate-500"></span> Render steps
+          </button>
+          <p class="text-xs text-slate-500 mt-1">Uncheck a step to skip it for this monitor. Steps that repeatedly time out are auto-skipped automatically until the page recovers (or you re-save this monitor).</p>
+          <div x-show="open" x-cloak class="grid sm:grid-cols-2 gap-x-5 gap-y-2 mt-3">
+            {% for name, label in render_steps %}
+            {% set ov = (m.render_step_overrides.get(name) if m and m.render_step_overrides else none) %}
+            {% set streak = (m.render_step_stats.get(name, {}).get('fail_streak', 0) if m and m.render_step_stats else 0) %}
+            <label class="flex items-center gap-2 text-xs text-slate-300">
+              <input type="checkbox" name="render_step_{{ name }}" {{ 'checked' if ov != 'off' else '' }} class="rounded bg-white/10 border-white/20 text-brand-500">
+              {{ label|safe }}
+              {% if streak >= 3 %}<span class="text-amber-400" title="Auto-skipped after {{ streak }} consecutive timeouts">· auto-skipped</span>{% endif %}
+            </label>
+            {% endfor %}
+          </div>
+        </div>
       </div>
     </section>
 

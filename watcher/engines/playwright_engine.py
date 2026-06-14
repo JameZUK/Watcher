@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
 
 from ..auth.login_flows import mark_session, session_is_valid
 from ..config import settings
 from ..models import Monitor
 from ._common import (
+    RenderTrace,
     _settle_for_render,
     apply_actions,
     capture,
@@ -83,17 +83,20 @@ class PlaywrightRenderer:
                     if flow and flow.steps and not reuse_session:
                         await replay_login(page, monitor)
 
-                    response = await navigate(page, monitor)
+                    trace = RenderTrace(monitor)
+                    response = await trace.step(
+                        "navigate", lambda: navigate(page, monitor), critical=True)
                     # Site-root warm-up to clear a cold-deep-link anti-bot wall.
-                    warmed = await warm_up_if_blocked(page, response, monitor)
+                    warmed = await trace.step(
+                        "warm_up", lambda: warm_up_if_blocked(page, response, monitor))
                     if warmed is not None:
                         response = warmed
-                    await do_wait(page, monitor)
-                    await apply_actions(page, monitor)
+                    await trace.step("do_wait", lambda: do_wait(page, monitor))
+                    await trace.step("apply_actions", lambda: apply_actions(page, monitor))
 
                     # Desktop capture only — the mobile preview is taken separately,
                     # with phone emulation, below.
-                    result = await capture(page, response, monitor, mobile=False)
+                    result = await capture(page, response, monitor, mobile=False, trace=trace)
 
                     # Persist (refresh) session state whenever a login flow exists —
                     # not only for step-based logins. This keeps an injected
@@ -122,15 +125,16 @@ class PlaywrightRenderer:
                     remaining = settings.render_timeout_seconds - (time.monotonic() - start)
                     if (settings.capture_mobile_preview and result is not None and result.ok
                             and result.screenshot_png and remaining >= 6):
-                        try:
-                            msecs, mmap = await asyncio.wait_for(
-                                self._capture_mobile(browser, monitor, mobile_state), timeout=remaining)
+                        async def _mobile():
+                            msecs, mmap = await self._capture_mobile(browser, monitor, mobile_state)
                             if msecs:
                                 result.screenshot_mobile_sections = msecs
                                 result.screenshot_mobile_png = msecs[0]
                                 result.element_map_mobile = mmap
-                        except Exception:
-                            pass
+                        # Recorded as one bounded "mobile" step: a pass that keeps timing
+                        # out gets auto-skipped, and a slow pass never blows the budget.
+                        await trace.step("mobile", _mobile, bound=remaining)
+                        trace.apply_to(result)
                 finally:
                     # Always reap the browser PROCESS. The async_playwright context
                     # manager stops the driver, but a mid-render exception would

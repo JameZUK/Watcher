@@ -49,6 +49,13 @@ from ...netsec import validate_monitor_url, validate_proxy, validate_public_url
 # Successful checks roll this forward via mark_session(), so it self-maintains.
 COOKIE_SESSION_TTL = timedelta(days=7)
 
+# User-manageable render steps (must mirror the skippable steps in engines._common
+# RENDER_STEPS and the checkboxes in monitor_form.html). Order = display order.
+RENDER_STEP_NAMES = (
+    "settle_content", "click_consent", "consent_autodismiss",
+    "hide_banners", "reveal_content", "element_map", "mobile",
+)
+
 # Cap bulk import to avoid mass-creation / render-pool exhaustion.
 _IMPORT_CAP = 500
 from ...scheduler import is_checking, reschedule_monitor, trigger_now, unschedule_monitor
@@ -168,6 +175,17 @@ def _apply_form(monitor: Monitor, form) -> None:
         monitor.value_threshold = None
     vdir = (form.get("value_threshold_dir") or "").strip()
     monitor.value_threshold_dir = vdir if vdir in ("below", "above") else None
+
+    # Render-step toggles. The form posts render_steps_present=1 plus a checkbox per
+    # manageable step (checked = run, unchecked = skip). Absent on the create form /
+    # API → leave overrides untouched (every step runs by default).
+    if _bool(form, "render_steps_present"):
+        overrides = {name: "off" for name in RENDER_STEP_NAMES
+                     if not _bool(form, f"render_step_{name}")}
+        monitor.render_step_overrides = overrides
+        # Editing is a deliberate "try again" — clear learned auto-skips so a
+        # previously-flaky step gets a fresh chance under the new settings.
+        monitor.render_step_stats = {}
 
     # Organization
     monitor.tags = [t.strip() for t in (form.get("tags") or "").split(",") if t.strip()][:10]

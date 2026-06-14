@@ -115,6 +115,34 @@
       </div>
     </div>
     {% endif %}
+    {% if latest and latest.render_trace %}
+    <!-- Render-step feedback: per-step outcomes for the latest capture -->
+    <section class="glass rounded-2xl p-4 sm:p-5" x-data="{ open: {{ 'true' if latest.degraded else 'false' }} }">
+      <button type="button" @click="open = !open" class="w-full flex items-center justify-between gap-3 text-left">
+        <span class="flex items-center gap-2 font-semibold text-white text-sm">
+          <svg viewBox="0 0 24 24" class="h-4 w-4 text-slate-400" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+          Render steps
+          {% if latest.degraded %}<span class="px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/15 text-amber-300 border border-amber-500/30">degraded</span>{% endif %}
+        </span>
+        <span class="text-xs text-slate-500 flex items-center gap-2">{% if latest.render_ms %}{{ latest.render_ms }}ms{% endif %}<span x-text="open ? '▾' : '▸'"></span></span>
+      </button>
+      <div x-show="open" x-cloak class="mt-3 space-y-1">
+        {% for step in latest.render_trace %}
+        {% set badge = {'ok':'bg-emerald-500/15 text-emerald-300','timeout':'bg-red-500/15 text-red-300','error':'bg-red-500/15 text-red-300','skipped':'bg-slate-500/15 text-slate-400'} %}
+        <div class="flex items-center justify-between gap-3 text-xs">
+          <span class="font-mono text-slate-300">{{ step.step }}</span>
+          <span class="flex items-center gap-2">
+            {% if step.ms %}<span class="text-slate-500">{{ step.ms }}ms</span>{% endif %}
+            <span class="px-1.5 py-0.5 rounded {{ badge.get(step.outcome, 'bg-slate-500/15 text-slate-400') }}">{{ step.outcome }}{% if step.why %} · {{ step.why }}{% endif %}</span>
+          </span>
+        </div>
+        {% endfor %}
+      </div>
+      {% if latest.degraded %}
+      <p x-show="open" x-cloak class="text-xs text-amber-300/70 mt-2.5">Some optional steps timed out, errored, or were skipped — the capture may be missing the mobile preview, a banner, or full-page content. Steps that keep timing out are auto-skipped; adjust them under <a href="/monitors/{{ monitor.id }}/edit" class="underline hover:text-white">Render steps</a>.</p>
+      {% endif %}
+    </section>
+    {% endif %}
     {% if value_series and value_series|length >= 2 %}
     <!-- Tracked-value history chart -->
     <section class="glass rounded-2xl p-5 sm:p-6"

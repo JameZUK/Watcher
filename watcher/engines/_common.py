@@ -9,12 +9,116 @@ from __future__ import annotations
 import asyncio
 import json as _json
 import random
+import time
 from urllib.parse import urlparse
 
 from ..auth.login_flows import resolve_secrets
 from ..config import settings
 from ..models import Monitor
 from .base import VISIBLE_TEXT_JS, RenderResult
+
+# Playwright's TimeoutError, imported defensively so this module still imports
+# without browsers installed (the package is only present in the render image).
+try:
+    from playwright.async_api import TimeoutError as _PWTimeout
+except Exception:  # pragma: no cover - playwright always present in the engine image
+    _PWTimeout = asyncio.TimeoutError
+_STEP_TIMEOUTS = (asyncio.TimeoutError, _PWTimeout)
+
+
+# --- Render-step feedback -----------------------------------------------------
+# Optional render steps that can be traced, bounded, and (after repeated timeouts)
+# auto-skipped. Maps step name → (per-step time bound in seconds, auto-skippable?).
+# CRITICAL steps (navigate, the screenshot itself, text extraction) are deliberately
+# NOT here — they're the payload and are run with critical=True, never skipped and
+# never silently swallowed.
+RENDER_STEPS: dict[str, tuple[float | None, bool]] = {
+    "warm_up":             (25, False),   # anti-bot clearance — bound, but never skip
+    "settle_content":      (12, True),
+    "click_consent":       (10, True),
+    "consent_autodismiss": (6,  True),
+    "hide_banners":        (10, True),
+    "reveal_content":      (12, True),
+    "element_map":         (10, True),
+    "mobile":              (None, True),  # bound supplied by caller (remaining budget)
+}
+# Consecutive timeouts before a skippable step is auto-skipped for a monitor.
+RENDER_AUTOSKIP_AFTER = 3
+
+
+class RenderTrace:
+    """Records per-step render outcomes, bounds each optional step, and skips steps
+    the monitor disabled (user override) or that keep timing out (learned health).
+
+    A step is run via ``await trace.step(name, factory, …)`` where ``factory`` is a
+    zero-arg callable returning the coroutine — so a skipped step's coroutine is
+    never even created. Best-effort steps return None on skip/timeout/error (callers
+    already tolerate None); critical steps re-raise so the engine's own error path
+    handles them. The accumulated ``entries``/``degraded`` are copied onto the
+    RenderResult, and the runner folds them back into the monitor's learned stats."""
+
+    def __init__(self, monitor: Monitor, *, prefix: str = "") -> None:
+        self._overrides = dict(getattr(monitor, "render_step_overrides", None) or {})
+        self._stats = dict(getattr(monitor, "render_step_stats", None) or {})
+        self._prefix = prefix          # "" desktop pass, "mobile:" for the mobile pass
+        self.entries: list[dict] = []
+        self.degraded = False
+
+    def _skip_reason(self, name: str) -> str | None:
+        ov = self._overrides.get(name)
+        if ov == "off":
+            return "disabled"          # user turned it off
+        if ov == "on":
+            return None                # user pinned it on — never auto-skip
+        _bound, skippable = RENDER_STEPS.get(name, (None, False))
+        if skippable:
+            st = self._stats.get(name) or {}
+            if int(st.get("fail_streak", 0)) >= RENDER_AUTOSKIP_AFTER:
+                return "auto"          # kept timing out → learned skip
+        return None
+
+    def _add(self, name: str, ms: int, outcome: str, why: str | None = None) -> None:
+        e = {"step": self._prefix + name, "ms": ms, "outcome": outcome}
+        if why:
+            e["why"] = why
+        self.entries.append(e)
+
+    async def step(self, name: str, factory, *, bound="default", critical: bool = False):
+        """Run optional step ``name``; record its timing + outcome. Returns the step's
+        value, or None when skipped/timed-out/errored (for non-critical steps)."""
+        reason = None if critical else self._skip_reason(name)
+        if reason:
+            self._add(name, 0, "skipped", reason)
+            # A user-disabled step is intended (not a quality regression); an
+            # auto-skip means we gave up on a step that should have run → degraded.
+            if reason != "disabled":
+                self.degraded = True
+            return None
+        if bound == "default":
+            bound = RENDER_STEPS.get(name, (None, False))[0]
+        t = time.monotonic()
+        outcome, value = "ok", None
+        try:
+            coro = factory()
+            value = await (asyncio.wait_for(coro, timeout=bound) if bound else coro)
+        except _STEP_TIMEOUTS:
+            outcome = "timeout"
+            self.degraded = True
+            if critical:
+                self._add(name, int((time.monotonic() - t) * 1000), outcome)
+                raise
+        except Exception:
+            outcome = "error"
+            self.degraded = True
+            if critical:
+                self._add(name, int((time.monotonic() - t) * 1000), outcome)
+                raise
+        self._add(name, int((time.monotonic() - t) * 1000), outcome)
+        return value
+
+    def apply_to(self, result: "RenderResult") -> None:
+        result.render_trace = self.entries
+        result.degraded = self.degraded or bool(getattr(result, "degraded", False))
 
 # --- "uBlock-style" cleanup: drop ad/tracker requests + hide cookie banners ---
 # This is a built-in equivalent (works headless across Chromium + Camoufox via
@@ -1142,13 +1246,18 @@ def _compress_screenshot(png: bytes, max_height_px: int = 0) -> bytes:
         return png
 
 
-async def capture(page, response, monitor: Monitor, mobile: bool = True) -> RenderResult:
+async def capture(page, response, monitor: Monitor, mobile: bool = True,
+                  trace: "RenderTrace | None" = None) -> RenderResult:
     """Capture HTML, visible text, screenshot, and selector/JSON value.
 
     `mobile` controls whether a second mobile-viewport screenshot is taken by
     resizing the page. Camoufox forbids runtime viewport resizing, so it passes
     mobile=False and captures the mobile view via a separate instance instead.
+
+    `trace` records per-step timing/outcomes and skips steps the monitor disabled
+    or that keep timing out; a standalone one is created when not supplied.
     """
+    trace = trace or RenderTrace(monitor)
     result = RenderResult()
     result.http_status = response.status if response else None
     result.content_type = (
@@ -1165,24 +1274,22 @@ async def capture(page, response, monitor: Monitor, mobile: bool = True) -> Rend
         except Exception:
             result.rendered_text = body
         result.html = body
+        trace.apply_to(result)
         return result
 
     # Wait for meaningful content to appear before capturing. This handles
     # anti-bot challenge interstitials (DataDome/Cloudflare) that swap in the
     # real page via JS a moment after load, as well as late client rendering.
-    await _settle_for_content(page)
+    await trace.step("settle_content", lambda: _settle_for_content(page))
 
     # Accept/dismiss via configured clicks first (reveals content behind hard
     # consent walls), then hide whatever banners remain — so they pollute neither
     # the captured text nor the screenshot / visual diff.
-    await click_consent(page, monitor)
+    await trace.step("click_consent", lambda: click_consent(page, monitor))
     # Keep dismissing banners as they mount (catches late CMPs during the rest of
     # capture), then do the first explicit sweep.
-    await install_consent_autodismiss(page, monitor)
-    try:
-        await hide_banners(page, monitor)
-    except Exception:
-        pass
+    await trace.step("consent_autodismiss", lambda: install_consent_autodismiss(page, monitor))
+    await trace.step("hide_banners", lambda: hide_banners(page, monitor))
 
     try:
         result.title = (await page.title() or "").strip() or None
@@ -1222,8 +1329,8 @@ async def capture(page, response, monitor: Monitor, mobile: bool = True) -> Rend
     # we could only hide, not accept) PLUS any large positioned overlay still
     # covering the page (a paywall/interstitial the heuristic couldn't dismiss)
     # feed the runner's optional AI dismiss-selector fallback.
+    walls = await trace.step("hide_banners", lambda: hide_banners(page, monitor)) or []
     try:
-        walls = await hide_banners(page, monitor) or []
         obstr = await detect_obstructions(page, monitor) or []
         merged = list(dict.fromkeys([*walls, *obstr]))[:2]
         result.unhandled_consent_html = merged or None
@@ -1232,11 +1339,14 @@ async def capture(page, response, monitor: Monitor, mobile: bool = True) -> Rend
 
     # Reveal the full page (force lazy media, release leftover scroll-locks) so
     # the full-page screenshot isn't a tall mostly-blank image.
-    await reveal_full_content(page, monitor)
+    await trace.step("reveal_content", lambda: reveal_full_content(page, monitor))
 
     # Full-page screenshot at the desktop viewport, sliced into readable sections.
+    # Critical: timed but never skipped (it's the payload) — failures re-raise into
+    # the existing fallback below.
     try:
-        result.screenshot_sections = await full_page_sections(page)
+        result.screenshot_sections = await trace.step(
+            "screenshot", lambda: full_page_sections(page), critical=True)
         result.screenshot_png = result.screenshot_sections[0] if result.screenshot_sections else None
     except Exception:
         result.screenshot_sections = None
@@ -1245,15 +1355,13 @@ async def capture(page, response, monitor: Monitor, mobile: bool = True) -> Rend
     # Content-anchored element map at the desktop layout (this render's own coords) —
     # for later resolution-independent change localization. Captured here (after the
     # desktop screenshot, before any mobile resize) so its bboxes match that capture.
-    try:
-        result.element_map = await capture_element_map(page)
-    except Exception:
-        result.element_map = None
+    result.element_map = await trace.step("element_map", lambda: capture_element_map(page))
 
     # Second full-page screenshot at a mobile viewport, for device-appropriate
     # previews. Re-uses the already-loaded page (just resizes), so no extra
     # navigation. Responsive sites reflow via media queries.
     if not mobile:
+        trace.apply_to(result)
         return result
     try:
         await page.set_viewport_size(
@@ -1275,4 +1383,5 @@ async def capture(page, response, monitor: Monitor, mobile: bool = True) -> Rend
         except Exception:
             pass
 
+    trace.apply_to(result)
     return result
