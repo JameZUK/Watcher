@@ -21,6 +21,13 @@ import uuid
 
 import pytest
 
+# Memory-frugal Chromium: a single process (no separate renderer/gpu/utility procs)
+# keeps RAM low enough to run inside the whole `pytest tests/` suite without the OOM
+# killer firing (exit 137). --disable-dev-shm-usage avoids the tiny default /dev/shm.
+_LAUNCH_ARGS = [
+    "--single-process", "--no-sandbox", "--disable-gpu", "--disable-dev-shm-usage",
+]
+
 
 def _free_port() -> int:
     s = socket.socket()
@@ -48,7 +55,7 @@ def live_server():
     sync_mod = pytest.importorskip("playwright.sync_api")
     try:                                   # need an actual browser binary, not just the lib
         with sync_mod.sync_playwright() as p:
-            p.chromium.launch().close()
+            p.chromium.launch(args=_LAUNCH_ARGS).close()
     except Exception as e:                 # pragma: no cover - env-dependent
         pytest.skip(f"no Chromium browser available: {e}")
 
@@ -105,7 +112,7 @@ def test_lightbox_popup_hover_tap_zoom_and_no_stale(live_server):
     from playwright.sync_api import sync_playwright
     base = live_server
     with sync_playwright() as p:
-        browser = p.chromium.launch()
+        browser = p.chromium.launch(args=_LAUNCH_ARGS)
         ctx = browser.new_context(viewport={"width": 900, "height": 700}, has_touch=True)
         page = ctx.new_page()
         try:
