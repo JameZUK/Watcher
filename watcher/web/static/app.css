@@ -297,9 +297,8 @@ html.perf-lite .popover { background: #14121e; backdrop-filter: none; -webkit-ba
   background: rgba(15,13,28,.97); border: 1px solid rgba(255,255,255,.14);
   border-radius: .6rem; padding: .6rem .7rem; box-shadow: 0 10px 34px rgba(0,0,0,.55);
   pointer-events: none; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
-.ov-pop.right { left: calc(100% + 10px); }
-.ov-pop.left  { right: calc(100% + 10px); }
-/* Wide/full-width box (e.g. a mobile capture spans the whole width): a side popup
-   would sit off-screen, so drop it just below the box, anchored to the left edge. */
-.ov-pop.below { left: 0; right: auto; top: calc(100% + 8px); }
+/* Pinned variant: positioned (position:fixed) at the pointer/tap in viewport coords
+   by JS and clamped on-screen — replaces the old anchored-to-box side placement,
+   which ran off-screen for full-width mobile highlight boxes. */
+.ov-pop.ov-pop-pin { position: fixed; top: auto; z-index: 65; }
 html.perf-lite .ov-pop { background: #14121e; backdrop-filter: none; -webkit-backdrop-filter: none; }

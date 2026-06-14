@@ -558,16 +558,20 @@ function timeMachine(frames, mid, initialId){return {
   boxClass(b){ const on = (this.sel === b || this.hover === b); return 'ov-' + b.kind + (on ? ' on' : ''); },
   kindText(b){ return b ? 'ov-' + b.kind + '-t' : ''; },
   segClass(s){ return s.op === 'add' ? 'diff-add' : s.op === 'del' ? 'diff-del' : 'text-slate-400'; },
-  popSide(b){ const d = this.dims(); const pw = d.pw||1;
-    if ((b.w||0)/pw > 0.6) return 'below';   // wide/full-width box → below (a side popup clips off-screen)
-    return ((b.x||0)/pw < 0.55) ? 'right' : 'left'; },
   pick(b){ this.sel = (this.sel === b ? null : b); this.scrollToBox(b); },
   scrollToBox(b){ const d = this.dims(), st = this.$refs.stage, cv = this.$refs.canvas;
     if (st && cv && b){ st.scrollTo({ top: (b.y/(d.ph||1))*cv.clientHeight - 100, behavior: 'smooth' }); } },
-  // Overlay payload for the lightbox: the change-highlight boxes + page dims for the
-  // CURRENT side/variant, so the zoomed page shows the same highlights as the stage
-  // (and they scale with zoom). Empty when there are no highlights to draw.
-  lbOverlay(){ return this.hi() ? { boxes: this.boxes(), dims: this.dims() } : {}; },
+  // Default lightbox zoom: 1 (fit width) for desktop, but a mobile capture is natively
+  // ~390 CSS px wide — filling the full window width over-zooms it — so fit it near a
+  // phone width instead (≤1), letting the user zoom in from there.
+  lbFit(){ if (!this.onMobile()) return 1;
+    const vw = (typeof window !== 'undefined' && window.innerWidth) || 1280;
+    return Math.max(0.2, Math.min(1, 460 / vw)); },
+  // Overlay payload for the lightbox: the default fit zoom, plus the change-highlight
+  // boxes + page dims for the CURRENT side/variant when highlights are active (so the
+  // zoomed page shows the same highlights as the stage, scaling with zoom).
+  lbOverlay(){ const o = { fit: this.lbFit() };
+    if (this.hi()){ o.boxes = this.boxes(); o.dims = this.dims(); } return o; },
   // Zoom = the full-screen lightbox (zoom in/out/fit), same as the history view —
   // now carrying the change highlights when viewing a change. For a specific block,
   // open scrolled to it so you can zoom in and read it.
