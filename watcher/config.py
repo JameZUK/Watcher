@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     # Whole-render "slow" backstop: a render whose total time exceeds this fraction of
     # the per-pass budget (render_timeout_seconds) is flagged degraded even when no
     # single step tripped — it ate most of the budget, so it's "not right". 0 disables.
-    render_slow_fraction: float = Field(default=0.9)
+    render_slow_fraction: float = Field(default=0.8)
 
     # --- Abuse / resource limits (public-exposure hardening) ---
     allow_private_targets: bool = Field(default=False)   # let monitors hit private IPs
