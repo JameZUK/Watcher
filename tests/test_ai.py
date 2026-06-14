@@ -180,6 +180,8 @@ def test_triage_prompt_enforces_scope_and_grounding(fake_http):
     assert "ground every word" in system        # don't claim what the diff doesn't show
     assert "scope" in system and "noise" in system   # out-of-scope → noise
     assert "keyword" in system                  # anti-conflation rule
+    # don't parrot the instruction's qualifier (e.g. label a non-analyst review "analyst")
+    assert "does not describe what changed" in system and "parroting" in system
     user = msgs[1]["content"]
     user_text = user if isinstance(user, str) else " ".join(p.get("text", "") for p in user)
     assert "only reviews, ignore job listings" in user_text
