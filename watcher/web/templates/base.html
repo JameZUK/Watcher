@@ -113,7 +113,7 @@
   </nav>
 
   <!-- Fullscreen image lightbox: zoom (buttons / double-tap / pinch) + scroll-to-pan -->
-  <div x-data="{ moved: false, hov: null, pp: { x: 0, y: 0 },
+  <div x-data="{ moved: false,
                  pos(){ if (this.moved) return; const el = $refs.lbscroll; if (!el) return;
                    const max = Math.max(0, el.scrollHeight - el.clientHeight);
                    el.scrollTop = Math.min(max, Math.max(0, $store.lb.atFrac * el.scrollHeight - el.clientHeight / 2)); },
@@ -124,23 +124,24 @@
                  // The detail popup is a single fixed element pinned NEAR the pointer/tap
                  // and clamped to stay on-screen (the old side-of-box placement ran off
                  // the edge for full-width mobile boxes). Hover on desktop; tap on touch.
-                 showPop(b, ev){ this.hov = b; this.place(ev); },
-                 hidePop(){ this.hov = null; },
-                 togglePop(b, ev){ if (this.hov === b) this.hidePop(); else this.showPop(b, ev); },
+                 // State lives on $store.lb so open()/close() reset it deterministically.
+                 showPop(b, ev){ $store.lb.hov = b; this.place(ev); },
+                 hidePop(){ $store.lb.hov = null; },
+                 togglePop(b, ev){ if ($store.lb.hov === b) this.hidePop(); else this.showPop(b, ev); },
                  place(ev){ const PAD = 10, vw = window.innerWidth, vh = window.innerHeight;
                    const cx = (ev && ev.clientX != null) ? ev.clientX : vw/2;
                    const cy = (ev && ev.clientY != null) ? ev.clientY : vh/2;
-                   this.pp = { x: cx + 14, y: cy + 14 };
+                   $store.lb.pp = { x: cx + 14, y: cy + 14 };
                    this.$nextTick(() => { const el = this.$refs.pop; if (!el) return;
                      const r = el.getBoundingClientRect(); let x = cx + 14, y = cy + 14;
                      if (x + r.width  > vw - PAD) x = cx - r.width  - 14;   // flip left of pointer
                      if (y + r.height > vh - PAD) y = cy - r.height - 14;   // flip above pointer
                      x = Math.min(Math.max(PAD, x), Math.max(PAD, vw - r.width  - PAD));
                      y = Math.min(Math.max(PAD, y), Math.max(PAD, vh - r.height - PAD));
-                     this.pp = { x, y }; }); } }"
+                     $store.lb.pp = { x, y }; }); } }"
        x-cloak x-show="$store.lb.shown" x-transition.opacity
        class="fixed inset-0 z-[60] bg-black/90 backdrop-blur-sm flex flex-col"
-       x-effect="if ($store.lb.shown) { $store.lb.srcs; moved = false; $nextTick(() => pos()); }"
+       x-effect="$store.lb.srcs; if ($store.lb.shown) { moved = false; $nextTick(() => pos()); }"
        @keydown.escape.window="$store.lb.close()">
     <div class="flex items-center justify-between px-4 h-14 shrink-0">
       <span class="text-sm text-slate-300 tabular-nums" x-text="Math.round($store.lb.zoom*100)+'%'"></span>
@@ -152,12 +153,13 @@
       </div>
     </div>
     <div x-ref="lbscroll" class="flex-1 overflow-auto scroll-thin overscroll-contain" style="touch-action:pan-x pan-y pinch-zoom;"
-         @wheel="moved = true" @touchstart="moved = true" @scroll="hov && hidePop()" @click.self="$store.lb.close()">
+         @wheel="moved = true" @touchstart="moved = true" @scroll="$store.lb.hov && hidePop()" @click.self="$store.lb.close()">
       <!-- All sections stacked (so a tall multi-section capture scrolls as one page),
            wrapped with an optional change-highlight overlay that scales with the zoom. -->
       <div class="mx-auto relative" :style="`width:${$store.lb.zoom*100}%;max-width:none`">
         <template x-for="(s, i) in $store.lb.srcs" :key="i + ':' + s">
           <img :src="s" @dblclick="$store.lb.toggle()" @load="pos()"
+               @pointerdown="$event.pointerType!=='mouse' && hidePop()"
                class="block w-full select-none" :class="$store.lb.zoom>1 ? 'cursor-zoom-out' : 'cursor-zoom-in'">
         </template>
         <template x-if="$store.lb.boxes.length && $store.lb.dims">
@@ -167,7 +169,7 @@
                    desktop, tap on touch) so it can be pinned on-screen near the input -->
               <button type="button" class="ov-box on" :class="'ov-'+b.kind" :style="lbBoxStyle(b)"
                    @pointerenter="$event.pointerType==='mouse' && showPop(b, $event)"
-                   @pointermove="$event.pointerType==='mouse' && hov===b && place($event)"
+                   @pointermove="$event.pointerType==='mouse' && $store.lb.hov===b && place($event)"
                    @pointerleave="$event.pointerType==='mouse' && hidePop()"
                    @pointerdown="$event.pointerType!=='mouse' && togglePop(b, $event)"
                    @dblclick="$store.lb.toggle()"></button>
@@ -176,18 +178,19 @@
         </template>
       </div>
     </div>
-    <!-- Shared change-highlight detail popup: position:fixed at the pointer/tap, clamped on-screen. -->
-    <div x-ref="pop" x-show="hov" x-cloak class="ov-pop ov-pop-pin" :style="`left:${pp.x}px;top:${pp.y}px`">
-      <template x-if="hov">
-        <div>
-          <div class="flex items-center gap-1.5 mb-1">
-            <span class="text-[10px] uppercase tracking-wide font-semibold" :class="kindCls(hov)" x-text="hov.kind"></span>
-            <span class="text-[10px] text-slate-500" x-text="hov.type"></span>
-          </div>
-          <template x-if="hov.diff && hov.diff.length"><p class="text-xs leading-snug break-words"><template x-for="(s, sj) in hov.diff" :key="sj"><span :class="segCls(s)" x-text="s.t + ' '"></span></template></p></template>
-          <template x-if="!(hov.diff && hov.diff.length)"><p class="text-xs text-slate-300 break-words" x-text="hov.snippet"></p></template>
-        </div>
-      </template>
+    <!-- Shared change-highlight detail popup: position:fixed at the pointer/tap, clamped
+         on-screen. Content is bound directly (no x-if) so it can never lag the x-show
+         container and flash as an empty box; null-safe since x-show keeps it in the DOM. -->
+    <div x-ref="pop" x-cloak class="ov-pop ov-pop-pin"
+         :style="($store.lb.hov && $store.lb.shown) ? `display:block;left:${$store.lb.pp.x}px;top:${$store.lb.pp.y}px` : 'display:none'">
+      <div class="flex items-center gap-1.5 mb-1">
+        <span class="text-[10px] uppercase tracking-wide font-semibold" :class="$store.lb.hov ? kindCls($store.lb.hov) : ''" x-text="$store.lb.hov && $store.lb.hov.kind"></span>
+        <span class="text-[10px] text-slate-500" x-text="$store.lb.hov && $store.lb.hov.type"></span>
+      </div>
+      <p class="text-xs leading-snug break-words" x-show="$store.lb.hov && $store.lb.hov.diff && $store.lb.hov.diff.length">
+        <template x-for="(s, sj) in ($store.lb.hov && $store.lb.hov.diff) || []" :key="sj"><span :class="segCls(s)" x-text="s.t + ' '"></span></template>
+      </p>
+      <p class="text-xs text-slate-300 break-words" x-show="$store.lb.hov && !($store.lb.hov.diff && $store.lb.hov.diff.length)" x-text="$store.lb.hov && $store.lb.hov.snippet"></p>
     </div>
     <p class="text-center text-[11px] text-slate-500 py-2 shrink-0 sm:hidden">Tap a highlight for detail · double-tap or pinch to zoom · drag to pan</p>
   </div>
@@ -288,15 +291,21 @@
       // boxes are page-coord {x,y,w,h,kind}; dims is {pw,ph}. Positioned by percentage
       // so they scale with the zoom transform.
       shown: false, srcs: [], zoom: 1, fit: 1, atFrac: 0, boxes: [], dims: null,
+      // Active change-highlight detail + its on-screen position. Kept on the STORE (not
+      // the viewer component) so open()/close() can reset it SYNCHRONOUSLY — otherwise a
+      // stale/empty popup can survive a close→reopen (the popup's x-show races the
+      // component's reset). hov = the box being shown, pp = its clamped {x,y} px.
+      hov: null, pp: { x: 0, y: 0 },
       open(src, frac, opts){ this.srcs = (Array.isArray(src) ? src : [src]).filter(Boolean);
                  this.atFrac = Math.min(1, Math.max(0, frac || 0));
                  const o = opts || {}; this.boxes = o.boxes || []; this.dims = o.dims || null;
+                 this.hov = null; this.pp = { x: 0, y: 0 };   // never carry a popup across opens
                  // fit ≤ 1 is the default "fit to view" zoom. A mobile capture passes a
                  // smaller fit so a narrow phone page isn't blown up to the full window
                  // width (over-zoomed); the user can still zoom in from there.
                  this.fit = Math.min(1, Math.max(0.15, o.fit || 1));
                  this.zoom = this.fit; this.shown = true; document.documentElement.style.overflow = 'hidden'; },
-      close(){ this.shown = false; this.boxes = []; this.dims = null; document.documentElement.style.overflow = ''; },
+      close(){ this.shown = false; this.hov = null; this.boxes = []; this.dims = null; document.documentElement.style.overflow = ''; },
       reset(){ this.zoom = this.fit; },
       zoomIn(){ this.zoom = Math.min(this.zoom * 1.5, 8); },
       zoomOut(){ this.zoom = Math.max(this.zoom / 1.5, this.fit); },
