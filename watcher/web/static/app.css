@@ -92,6 +92,14 @@ body {
   .modal-scroll { align-items: flex-start; }
   .ailogin-shot { max-height: 42vh !important; }
 }
+
+/* Group price/latest table on mobile: tighten the cell padding and the source-name
+   subtitle so the "Remove" action column isn't pushed off the right edge (it was
+   clipped to "Remov"). */
+@media (max-width: 639px) {
+  .group-table th, .group-table td { padding-left: .55rem; padding-right: .55rem; }
+  .group-table td .truncate { max-width: 9rem; }
+}
 .btn-primary {
   color:#fff; padding:.6rem 1.1rem;
   background: linear-gradient(100deg, var(--accent-a), var(--accent-b));

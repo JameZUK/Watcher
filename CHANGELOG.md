@@ -5,6 +5,9 @@ All notable changes to Watcher are documented here. Dates are ISO-8601.
 ## 2026-06-14 — Mobile UX fixes
 
 ### Fixed
+- **Group price/latest table clipped the "Remove" button on mobile.** The cell padding
+  and the source-name subtitle made the table wider than a phone screen, so the Remove
+  action was cut off to "Remov". Tightened both on small screens so it fits.
 - **AI-login dialog was unusable on mobile in manual mode.** With the tall live-page
   screenshot, the centred modal grew taller than the screen, so both the ✕ (top) and
   the "Capture session & finish" button (bottom) were clipped off-screen with no way to
