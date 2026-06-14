@@ -5,6 +5,11 @@ All notable changes to Watcher are documented here. Dates are ISO-8601.
 ## 2026-06-14 — Mobile UX fixes
 
 ### Fixed
+- **AI-login dialog was unusable on mobile in manual mode.** With the tall live-page
+  screenshot, the centred modal grew taller than the screen, so both the ✕ (top) and
+  the "Capture session & finish" button (bottom) were clipped off-screen with no way to
+  scroll to them — leaving you stuck mid-login. The overlay now scrolls (top-aligned on
+  small screens) and the live screenshot is capped, so every control is reachable.
 - **Blank diff view / lightbox / history for first-time visitors (a JS crash).** The
   effects-mode auto-detect deferred with `requestIdleCallback(fn, 600)` — but its second
   argument is an options object, not a delay, so passing a number throws a TypeError on

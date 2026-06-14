@@ -81,6 +81,17 @@ body {
 /* Mobile: the fixed bottom nav is ~67px tall — pad page content so its end isn't
    hidden behind it (the bar also reserves the iOS safe-area inset on top). */
 @media (max-width: 639px) { main { padding-bottom: 5.75rem !important; } }
+
+/* Centred fixed modals (e.g. the AI-login dialog) can be taller than the screen —
+   especially on mobile in manual mode with a tall live screenshot. Centering then
+   clipped the header (✕) and the bottom action buttons off-screen with no way to
+   reach them. Let the overlay scroll, and top-align it on small screens so the whole
+   dialog is reachable; cap the live screenshot so the controls fit. */
+.modal-scroll { overflow-y: auto; }
+@media (max-width: 639px) {
+  .modal-scroll { align-items: flex-start; }
+  .ailogin-shot { max-height: 42vh !important; }
+}
 .btn-primary {
   color:#fff; padding:.6rem 1.1rem;
   background: linear-gradient(100deg, var(--accent-a), var(--accent-b));

@@ -255,7 +255,7 @@
 
           <!-- Live login modal -->
           <div x-show="open" x-cloak @keydown.escape.window="close()"
-               class="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/75">
+               class="modal-scroll fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/75">
             <div class="glass rounded-2xl w-full p-5 space-y-3 transition-all"
                  :class="manual ? 'max-w-5xl' : 'max-w-lg'">
               <div class="flex items-center justify-between">
@@ -265,7 +265,7 @@
                 <button type="button" @click="close()" class="btn btn-ghost !px-2.5 !py-1">✕</button>
               </div>
               <!-- Live view. In manual mode it's clickable/typeable and relays to the browser. -->
-              <div class="rounded-lg overflow-hidden border bg-black/40 overflow-y-auto"
+              <div class="ailogin-shot rounded-lg overflow-hidden border bg-black/40 overflow-y-auto"
                    :class="manual ? 'border-amber-400/60 cursor-crosshair max-h-[76vh]' : 'border-white/10 max-h-[46vh]'"
                    x-show="hasShot" x-cloak>
                 <img :src="shotUrl" alt="login page" class="block w-full select-none"
