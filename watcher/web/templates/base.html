@@ -121,7 +121,9 @@
                    return `left:${100*(b.x||0)/pw}%;top:${100*(b.y||0)/ph}%;width:${100*(b.w||0)/pw}%;height:${100*(b.h||0)/ph}%`; },
                  segCls(s){ return s.op === 'add' ? 'diff-add' : s.op === 'del' ? 'diff-del' : 'text-slate-400'; },
                  kindCls(b){ return b ? 'ov-' + b.kind + '-t' : ''; },
-                 popSide(b){ const d = $store.lb.dims || {}; return ((b.x||0)/(d.pw||1) < 0.55) ? 'right' : 'left'; } }"
+                 popSide(b){ const d = $store.lb.dims || {}; const pw = d.pw||1;
+                   if ((b.w||0)/pw > 0.6) return 'below';   // wide/full-width box (mobile) → below; a side popup clips off-screen
+                   return ((b.x||0)/pw < 0.55) ? 'right' : 'left'; } }"
        x-cloak x-show="$store.lb.shown" x-transition.opacity
        class="fixed inset-0 z-[60] bg-black/90 backdrop-blur-sm flex flex-col"
        x-effect="if ($store.lb.shown) { $store.lb.srcs; moved = false; $nextTick(() => pos()); }"

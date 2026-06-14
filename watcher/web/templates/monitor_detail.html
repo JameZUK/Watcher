@@ -558,7 +558,9 @@ function timeMachine(frames, mid, initialId){return {
   boxClass(b){ const on = (this.sel === b || this.hover === b); return 'ov-' + b.kind + (on ? ' on' : ''); },
   kindText(b){ return b ? 'ov-' + b.kind + '-t' : ''; },
   segClass(s){ return s.op === 'add' ? 'diff-add' : s.op === 'del' ? 'diff-del' : 'text-slate-400'; },
-  popSide(b){ const d = this.dims(); return ((b.x||0)/(d.pw||1) < 0.55) ? 'right' : 'left'; },
+  popSide(b){ const d = this.dims(); const pw = d.pw||1;
+    if ((b.w||0)/pw > 0.6) return 'below';   // wide/full-width box → below (a side popup clips off-screen)
+    return ((b.x||0)/pw < 0.55) ? 'right' : 'left'; },
   pick(b){ this.sel = (this.sel === b ? null : b); this.scrollToBox(b); },
   scrollToBox(b){ const d = this.dims(), st = this.$refs.stage, cv = this.$refs.canvas;
     if (st && cv && b){ st.scrollTo({ top: (b.y/(d.ph||1))*cv.clientHeight - 100, behavior: 'smooth' }); } },

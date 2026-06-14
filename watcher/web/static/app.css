@@ -299,4 +299,7 @@ html.perf-lite .popover { background: #14121e; backdrop-filter: none; -webkit-ba
   pointer-events: none; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
 .ov-pop.right { left: calc(100% + 10px); }
 .ov-pop.left  { right: calc(100% + 10px); }
+/* Wide/full-width box (e.g. a mobile capture spans the whole width): a side popup
+   would sit off-screen, so drop it just below the box, anchored to the left edge. */
+.ov-pop.below { left: 0; right: auto; top: calc(100% + 8px); }
 html.perf-lite .ov-pop { background: #14121e; backdrop-filter: none; -webkit-backdrop-filter: none; }
