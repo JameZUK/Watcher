@@ -2,6 +2,19 @@
 
 All notable changes to Watcher are documented here. Dates are ISO-8601.
 
+## 2026-06-14 — Mobile UX fixes
+
+### Fixed
+- **Page content no longer hidden behind the mobile bottom nav.** The fixed bottom
+  navigation bar (~67px) overlapped the end of every page (content had only 32px of
+  bottom padding) — the last card/section was cut off. Mobile pages now reserve room
+  for the bar.
+- **The redundant "New monitor" button is gone from the mobile header.** It was meant
+  to be hidden on small screens, but `.btn` (loaded after Tailwind, same specificity)
+  silently overrode the `hidden` utility, so it stayed — taking ~⅓ of the header width
+  on every page, duplicating the bottom-nav "+". Restored the utility's effect (a latent
+  bug that also broke `hidden`/`sm:hidden` on any button).
+
 ## 2026-06-14 — "Refine" the watch instruction with one click
 
 ### Added
