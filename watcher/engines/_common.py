@@ -1003,12 +1003,15 @@ def _whiteness(webp_bytes: bytes) -> float:
     try:
         from io import BytesIO
 
+        import numpy as np
         from PIL import Image
         Image.MAX_IMAGE_PIXELS = None
         im = Image.open(BytesIO(webp_bytes)).convert("RGB")
         im.thumbnail((48, 48))
-        px = list(im.getdata())
-        return sum(1 for q in px if min(q) > 245) / max(1, len(px))
+        arr = np.asarray(im)                      # (H, W, 3) uint8
+        if arr.size == 0:
+            return 0.0
+        return float((arr.min(axis=2) > 245).mean())   # fraction of ~white pixels
     except Exception:
         return 0.0
 
