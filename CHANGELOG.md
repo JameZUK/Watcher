@@ -5,10 +5,11 @@ All notable changes to Watcher are documented here. Dates are ISO-8601.
 ## 2026-06-13 — Fix blank/white screenshots on very tall pages
 
 ### Fixed
-- **Zoom/popup preview now shows the whole page.** The lightbox opened only the one
-  section you clicked, so on a multi-section capture you couldn't scroll above or below
-  that section. It now stacks all the capture's sections and opens at the top, so you
-  can scroll the entire page (and pinch/zoom) in the popup.
+- **Zoom/popup preview now shows the whole page, at the spot you clicked.** The lightbox
+  opened only the one section you clicked, so on a multi-section capture you couldn't
+  scroll above or below it. It now stacks all the capture's sections so you can scroll
+  the entire page (and pinch/zoom), and opens scrolled to the position you were viewing
+  in the preview (the click point, or the preview's centre for the zoom button).
 - **Very tall pages captured mostly blank/white** (e.g. The Register's ~30k-px
   homepage). A single `full_page` screenshot of a page beyond Chromium's rasteriser
   limit comes back unpainted even though every individual viewport paints fine. Tall

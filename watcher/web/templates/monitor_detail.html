@@ -179,7 +179,7 @@
                    to reconstruct it (framed as a phone for mobile captures). -->
               <div :class="onMobile() ? 'w-[380px] max-w-full my-5 rounded-2xl overflow-hidden border border-white/12 shadow-xl' : 'w-full'">
                 <template x-for="k in count()" :key="frames[i].id + (onMobile() ? '-m-' : '-d-') + k">
-                  <img :src="imgUrl(k-1)" @click="$store.lb.open(allUrls())" @load="onSectionLoad(k)"
+                  <img :src="imgUrl(k-1)" @click="openZoom($event)" @load="onSectionLoad(k)"
                        class="block w-full cursor-zoom-in">
                 </template>
               </div>
@@ -189,7 +189,7 @@
             <span class="absolute top-3 right-3 pill backdrop-blur" x-show="$store.device.isMobile && frames[i] && !frames[i].msections" x-cloak>desktop only · no mobile capture yet</span>
             <!-- "more below" hint, only when the capture overflows the stage -->
             <div class="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/55 to-transparent" x-show="scrollable" x-cloak></div>
-            <button type="button" @click="$store.lb.open(allUrls())" class="absolute bottom-3 right-3 btn btn-ghost !px-2.5 !py-1.5 backdrop-blur" aria-label="Zoom to full size">
+            <button type="button" @click="openZoom()" class="absolute bottom-3 right-3 btn btn-ghost !px-2.5 !py-1.5 backdrop-blur" aria-label="Zoom to full size">
               <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3M11 8v6M8 11h6"/></svg>
             </button>
           </div>
@@ -526,6 +526,17 @@ function timeMachine(frames, mid){return {
   },
   // Every section URL for the current frame — so the lightbox opens the WHOLE page.
   allUrls(){ const out = []; for (let k = 0; k < this.count(); k++) out.push(this.imgUrl(k)); return out; },
+  // Open the zoom lightbox at the spot being viewed: the 0..1 position of the page at
+  // the click point (or the centre of the preview when triggered by the zoom button).
+  openZoom(ev){
+    const el = this.$refs.stage; let frac = 0;
+    if (el && el.scrollHeight > 0){
+      const r = el.getBoundingClientRect();
+      const y = (ev && ev.clientY != null) ? (ev.clientY - r.top) : (el.clientHeight / 2);
+      frac = (el.scrollTop + y) / el.scrollHeight;
+    }
+    this.$store.lb.open(this.allUrls(), frac);
+  },
   onSectionLoad(k){
     if (k === 1) this.$refs.stage.scrollTop = 0;   // reset to the top on the first section
     this.$nextTick(() => this.scrollable = this.$refs.stage.scrollHeight > this.$refs.stage.clientHeight + 4);

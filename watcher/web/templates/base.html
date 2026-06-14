@@ -113,9 +113,13 @@
   </nav>
 
   <!-- Fullscreen image lightbox: zoom (buttons / double-tap / pinch) + scroll-to-pan -->
-  <div x-data x-cloak x-show="$store.lb.shown" x-transition.opacity
+  <div x-data="{ moved: false,
+                 pos(){ if (this.moved) return; const el = $refs.lbscroll; if (!el) return;
+                   const max = Math.max(0, el.scrollHeight - el.clientHeight);
+                   el.scrollTop = Math.min(max, Math.max(0, $store.lb.atFrac * el.scrollHeight - el.clientHeight / 2)); } }"
+       x-cloak x-show="$store.lb.shown" x-transition.opacity
        class="fixed inset-0 z-[60] bg-black/90 backdrop-blur-sm flex flex-col"
-       x-effect="if ($store.lb.shown) { $store.lb.srcs; $nextTick(() => { if ($refs.lbscroll) $refs.lbscroll.scrollTop = 0; }); }"
+       x-effect="if ($store.lb.shown) { $store.lb.srcs; moved = false; $nextTick(() => pos()); }"
        @keydown.escape.window="$store.lb.close()">
     <div class="flex items-center justify-between px-4 h-14 shrink-0">
       <span class="text-sm text-slate-300 tabular-nums" x-text="Math.round($store.lb.zoom*100)+'%'"></span>
@@ -127,10 +131,10 @@
       </div>
     </div>
     <div x-ref="lbscroll" class="flex-1 overflow-auto scroll-thin overscroll-contain" style="touch-action:pan-x pan-y pinch-zoom;"
-         @click.self="$store.lb.close()">
+         @wheel="moved = true" @touchstart="moved = true" @click.self="$store.lb.close()">
       <!-- All sections stacked, so a tall multi-section capture scrolls as one page. -->
       <template x-for="(s, i) in $store.lb.srcs" :key="i + ':' + s">
-        <img :src="s" @dblclick="$store.lb.toggle()"
+        <img :src="s" @dblclick="$store.lb.toggle()" @load="pos()"
              :style="`width:${$store.lb.zoom*100}%;max-width:none`"
              class="mx-auto block select-none" :class="$store.lb.zoom>1 ? 'cursor-zoom-out' : 'cursor-zoom-in'">
       </template>
@@ -225,8 +229,10 @@
     Alpine.store('lb', {
       // srcs is a list so a multi-section capture opens as the WHOLE page (stacked),
       // not just the one section that was clicked — so you can scroll top-to-bottom.
-      shown: false, srcs: [], zoom: 1,
-      open(src){ this.srcs = (Array.isArray(src) ? src : [src]).filter(Boolean);
+      // atFrac is where to open: the 0..1 position of the page the caller was viewing.
+      shown: false, srcs: [], zoom: 1, atFrac: 0,
+      open(src, frac){ this.srcs = (Array.isArray(src) ? src : [src]).filter(Boolean);
+                 this.atFrac = Math.min(1, Math.max(0, frac || 0));
                  this.zoom = 1; this.shown = true; document.documentElement.style.overflow = 'hidden'; },
       close(){ this.shown = false; document.documentElement.style.overflow = ''; },
       reset(){ this.zoom = 1; },
