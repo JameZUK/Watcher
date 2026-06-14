@@ -250,7 +250,7 @@
                     </div>
                     <template x-for="(b, bi) in boxes()" :key="'box-'+side+'-'+bi">
                       <button type="button" class="ov-box" :class="boxClass(b)" :style="boxStyle(b)"
-                              @mouseenter="hover=b" @mouseleave="hover=null" @click.stop="zoom(b)" :title="'Zoom — '+b.kind+' · '+b.type"></button>
+                              @mouseenter="hover=b" @mouseleave="hover=null" @click.stop="boxClick(b, $event)" :title="'Zoom — '+b.kind+' · '+b.type"></button>
                     </template>
                   </div>
                 </div>
@@ -553,6 +553,12 @@ function timeMachine(frames, mid, initialId){return {
     return `left:${100*(L.x||0)/pw}%;top:${100*(L.y||0)/ph}%;width:${100*(L.w||0)/pw}%;height:${100*(L.h||0)/ph}%`; },
   linkOpts(){ const v = this.linkVariant();
     return v ? { links: v.links || [], linkDims: { pw: v.pw || 1, ph: v.ph || 1 } } : { links: [], linkDims: null }; },
+  // The captured-link anchor at a screen point, even when a change-highlight box sits
+  // on top of it (elementsFromPoint is z-order-agnostic). Lets a box delegate its click
+  // to an underlying link so BOTH work — hover the box for change detail, click to open.
+  linkUnder(ev){ const els = document.elementsFromPoint(ev.clientX, ev.clientY);
+    return els.find(e => e.classList && e.classList.contains('lb-link')) || null; },
+  boxClick(b, ev){ const a = this.linkUnder(ev); if (a) a.click(); else this.zoom(b); },
   // change-point + overlay helpers
   cp(){ const f = this.frame(); return !!(f && f.cid); },
   ovData(){ const f = this.frame(); return (f && this.ovCache[f.cid]) || null; },

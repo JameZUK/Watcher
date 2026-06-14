@@ -121,6 +121,10 @@
                    return `left:${100*(b.x||0)/pw}%;top:${100*(b.y||0)/ph}%;width:${100*(b.w||0)/pw}%;height:${100*(b.h||0)/ph}%`; },
                  lbLinkStyle(L){ const d = $store.lb.linkDims || {}; const pw = d.pw || 1, ph = d.ph || 1;
                    return `left:${100*(L.x||0)/pw}%;top:${100*(L.y||0)/ph}%;width:${100*(L.w||0)/pw}%;height:${100*(L.h||0)/ph}%`; },
+                 // Captured-link anchor at a point even under a highlight box (z-agnostic),
+                 // so a box can delegate its click/tap to an underlying link.
+                 linkUnder(ev){ const els = document.elementsFromPoint(ev.clientX, ev.clientY);
+                   return els.find(e => e.classList && e.classList.contains('lb-link')) || null; },
                  segCls(s){ return s.op === 'add' ? 'diff-add' : s.op === 'del' ? 'diff-del' : 'text-slate-400'; },
                  kindCls(b){ return b ? 'ov-' + b.kind + '-t' : ''; },
                  // The detail popup is a single fixed element pinned NEAR the pointer/tap
@@ -183,7 +187,8 @@
                    @pointerenter="$event.pointerType==='mouse' && showPop(b, $event)"
                    @pointermove="$event.pointerType==='mouse' && $store.lb.hov===b && place($event)"
                    @pointerleave="$event.pointerType==='mouse' && hidePop()"
-                   @pointerdown="$event.pointerType!=='mouse' && togglePop(b, $event)"
+                   @pointerdown="$event.pointerType!=='mouse' && !linkUnder($event) && togglePop(b, $event)"
+                   @click.stop="(() => { const a = linkUnder($event); if (a) a.click(); })()"
                    @dblclick="$store.lb.toggle()"></button>
             </template>
           </div>

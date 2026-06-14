@@ -90,7 +90,8 @@ _OPEN_JS = """
   ];
   const links = [
     {href:'https://example.com/story', x:120, y:120, w:320, h:20, t:'A story'},
-    {href:'https://example.com/wide',  x:0,   y:700, w:1000, h:20, t:'Wide link'},
+    // sits UNDER the narrow 'added' box (y:60) → clicking that box must open THIS link
+    {href:'https://example.com/boxed', x:120, y:62,  w:300, h:18, t:'Boxed link'},
   ];
   const img = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
   Alpine.store('lb').open([img], 0, {boxes, dims:{pw:1000, ph:2000}, fit,
@@ -140,6 +141,15 @@ def test_lightbox_popup_hover_tap_zoom_and_no_stale(live_server):
             assert "noopener" in (a0.get_attribute("rel") or "")
             ar = a0.bounding_box()
             assert ar["x"] >= 0 and ar["x"] + ar["width"] <= vw + 1 and ar["width"] > 0
+
+            # --- link + highlight box coexist: clicking the 'added' box (which sits over a
+            #     link) opens the link via elementsFromPoint delegation, not zoom/popup ---
+            boxed = page.locator(".fixed.inset-0 .ov-box").nth(0)   # the 'added' box over a link
+            with ctx.expect_page() as popup_info:
+                boxed.click()
+            popup = popup_info.value
+            assert "example.com/boxed" in popup.url
+            popup.close()
 
             # --- hover (mouse) the RIGHT EDGE of the full-width box ---
             page.mouse.move(5, 5)                  # start outside any box
