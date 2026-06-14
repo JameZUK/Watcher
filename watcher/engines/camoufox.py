@@ -21,6 +21,7 @@ from ._common import (
     apply_actions,
     capture,
     capture_element_map,
+    capture_link_map,
     click_consent,
     do_wait,
     hide_banners,
@@ -116,12 +117,13 @@ class CamoufoxRenderer:
             if (settings.capture_mobile_preview and result is not None and result.ok
                     and result.http_status not in (401, 403, 429) and remaining >= 8):
                 async def _mobile():
-                    mobile_secs, mmap = await self._capture_mobile(
+                    mobile_secs, mmap, lmap = await self._capture_mobile(
                         monitor, launch_kwargs, desktop_state)
                     if mobile_secs:
                         result.screenshot_mobile_sections = mobile_secs
                         result.screenshot_mobile_png = mobile_secs[0]
                         result.element_map_mobile = mmap
+                        result.link_map_mobile = lmap
                 # Recorded as one bounded "mobile" step: a pass that keeps timing out
                 # gets auto-skipped, and a slow pass never blows the budget.
                 await trace.step("mobile", _mobile, bound=remaining)
@@ -144,10 +146,10 @@ class CamoufoxRenderer:
 
     async def _capture_mobile(
         self, monitor: Monitor, launch_kwargs: dict, storage_state: dict | None
-    ) -> tuple[list[bytes] | None, dict | None]:
+    ) -> tuple[list[bytes] | None, dict | None, dict | None]:
         """Capture a mobile-viewport screenshot (whole page, as sections) plus a
-        content-anchored element map, via a dedicated Camoufox window. Returns
-        (sections|None, element_map|None).
+        content-anchored element map AND a clickable-link map, via a dedicated Camoufox
+        window. Returns (sections|None, element_map|None, link_map|None).
 
         Camoufox honours the render size only when the size is fixed at launch
         (`window=`) AND the context uses `no_viewport=True`. The size is RANDOMISED
@@ -184,9 +186,10 @@ class CamoufoxRenderer:
             # SPA/shadow-DOM pages read as low-text even when fully rendered).
             secs = await mobile_sections_or_none(page)
             mmap = await capture_element_map(page) if secs else None
+            lmap = await capture_link_map(page) if secs else None
 
             try:
                 await context.close()
             except Exception:
                 pass
-            return secs, mmap
+            return secs, mmap, lmap

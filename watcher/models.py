@@ -331,6 +331,10 @@ class Snapshot(Base):
     # capture's own coordinates) for resolution-independent change localization.
     element_map: Mapped[dict | None] = mapped_column(JSON, default=None)
     element_map_mobile: Mapped[dict | None] = mapped_column(JSON, default=None)
+    # Visible hyperlinks + full-page bboxes + absolute hrefs ({"pw","ph","links":[…]}),
+    # so the history viewer can overlay clickable anchors on the screenshot.
+    link_map: Mapped[dict | None] = mapped_column(JSON, default=None)
+    link_map_mobile: Mapped[dict | None] = mapped_column(JSON, default=None)
     # Whole-page captures as ordered blob-key lists (full-width sections, top→bottom).
     screenshot_sections: Mapped[list] = mapped_column(JSON, default=list)
     screenshot_mobile_sections: Mapped[list] = mapped_column(JSON, default=list)

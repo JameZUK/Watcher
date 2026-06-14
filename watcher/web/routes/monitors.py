@@ -1401,6 +1401,23 @@ async def snapshot_image(
     return _serve_blob_image(request, key)
 
 
+@router.get("/monitors/{monitor_id}/snapshots/{snapshot_id}/links")
+async def snapshot_links(
+    monitor_id: int,
+    snapshot_id: int,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Clickable-link map for a snapshot (desktop + mobile variants), fetched on demand
+    by the history viewer to overlay real anchors on the screenshot. Each variant is
+    {"pw","ph","links":[{href,x,y,w,h,t}]} in the capture's own page coordinates."""
+    await _owned_monitor(session, user, monitor_id)
+    snap = await session.get(Snapshot, snapshot_id)
+    if not snap or snap.monitor_id != monitor_id:
+        raise HTTPException(404)
+    return JSONResponse({"desktop": snap.link_map, "mobile": snap.link_map_mobile})
+
+
 @router.get("/monitors/{monitor_id}/changes/{change_id}/overlays")
 async def change_overlays_json(
     monitor_id: int,

@@ -13,6 +13,7 @@ from ._common import (
     apply_actions,
     capture,
     capture_element_map,
+    capture_link_map,
     click_consent,
     do_wait,
     hide_banners,
@@ -126,11 +127,12 @@ class PlaywrightRenderer:
                     if (settings.capture_mobile_preview and result is not None and result.ok
                             and result.screenshot_png and remaining >= 6):
                         async def _mobile():
-                            msecs, mmap = await self._capture_mobile(browser, monitor, mobile_state)
+                            msecs, mmap, lmap = await self._capture_mobile(browser, monitor, mobile_state)
                             if msecs:
                                 result.screenshot_mobile_sections = msecs
                                 result.screenshot_mobile_png = msecs[0]
                                 result.element_map_mobile = mmap
+                                result.link_map_mobile = lmap
                         # Recorded as one bounded "mobile" step: a pass that keeps timing
                         # out gets auto-skipped, and a slow pass never blows the budget.
                         await trace.step("mobile", _mobile, bound=remaining)
@@ -157,12 +159,12 @@ class PlaywrightRenderer:
                 render_ms=int((time.monotonic() - start) * 1000),
             )
 
-    async def _capture_mobile(self, browser, monitor: Monitor,
-                              storage_state: dict | None) -> tuple[list[bytes] | None, dict | None]:
+    async def _capture_mobile(self, browser, monitor: Monitor, storage_state: dict | None
+                              ) -> tuple[list[bytes] | None, dict | None, dict | None]:
         """Capture a mobile-viewport screenshot (whole page, as sections) plus a
-        content-anchored element map, in a phone-emulated context (mobile UA + touch
-        where supported), re-navigating so UA-sensitive sites serve their real mobile
-        layout. Returns (sections|None, element_map|None)."""
+        content-anchored element map AND a clickable-link map, in a phone-emulated
+        context (mobile UA + touch where supported), re-navigating so UA-sensitive
+        sites serve their real mobile layout. Returns (sections|None, emap|None, lmap|None)."""
         base: dict = {
             "viewport": {"width": settings.mobile_viewport_width,
                          "height": settings.mobile_viewport_height},
@@ -185,7 +187,7 @@ class PlaywrightRenderer:
             except Exception:
                 context = None
         if context is None:
-            return None, None
+            return None, None, None
 
         try:
             context.set_default_timeout(settings.render_timeout_seconds * 1000)
@@ -208,7 +210,8 @@ class PlaywrightRenderer:
             # SPA/shadow-DOM pages read as low-text even when fully rendered).
             secs = await mobile_sections_or_none(page)
             mmap = await capture_element_map(page) if secs else None
-            return secs, mmap
+            lmap = await capture_link_map(page) if secs else None
+            return secs, mmap, lmap
         finally:
             try:
                 await context.close()

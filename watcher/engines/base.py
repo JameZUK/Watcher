@@ -57,6 +57,10 @@ class RenderResult:
     # change localization (diff by content, crop in this render's own coordinates).
     element_map: dict | None = None
     element_map_mobile: dict | None = None
+    # Visible hyperlinks with full-page bboxes + absolute hrefs ({"pw","ph","links":[…]}),
+    # so the history viewer can overlay clickable anchors on the screenshot.
+    link_map: dict | None = None
+    link_map_mobile: dict | None = None
     content_type: str | None = None
     render_ms: int | None = None
     # Updated browser storage_state if a login flow ran (for session persistence).

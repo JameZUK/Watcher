@@ -70,6 +70,7 @@ _ADDED_COLUMNS = {
         "screenshot_sections": "JSON", "screenshot_mobile_sections": "JSON",
         "element_map": "JSON", "element_map_mobile": "JSON",
         "render_trace": "JSON", "degraded": "BOOLEAN DEFAULT 0",
+        "link_map": "JSON", "link_map_mobile": "JSON",
     },
     "changes": {
         "visual_blob": "VARCHAR(64)", "visual_mobile_blob": "VARCHAR(64)",

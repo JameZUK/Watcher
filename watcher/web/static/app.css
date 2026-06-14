@@ -301,4 +301,14 @@ html.perf-lite .popover { background: #14121e; backdrop-filter: none; -webkit-ba
    by JS and clamped on-screen — replaces the old anchored-to-box side placement,
    which ran off-screen for full-width mobile highlight boxes. */
 .ov-pop.ov-pop-pin { position: fixed; top: auto; z-index: 65; }
+
+/* Clickable hyperlink overlaid on a capture (history stage + zoom lightbox). The shot
+   is an image, so we float a transparent anchor over each link's captured bbox; a faint
+   brand tint on hover/focus signals it's clickable (works for mouse + keyboard; on touch
+   a tap just opens it). */
+.lb-link { position: absolute; pointer-events: auto; cursor: pointer; border-radius: 3px;
+  outline: 1px solid transparent; outline-offset: -1px; -webkit-tap-highlight-color: transparent;
+  transition: background-color .12s ease, outline-color .12s ease; }
+.lb-link:hover, .lb-link:focus-visible {
+  background: rgba(129,140,248,.20); outline-color: rgba(129,140,248,.7); }
 html.perf-lite .ov-pop { background: #14121e; backdrop-filter: none; -webkit-backdrop-filter: none; }

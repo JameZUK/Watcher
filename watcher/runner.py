@@ -848,6 +848,8 @@ async def _check_monitor_inner(monitor_id: int, *, manual: bool = False) -> None
             snap.screenshot_mobile_sections = _b["screenshot_mobile_sections"]
             snap.element_map = result.element_map
             snap.element_map_mobile = result.element_map_mobile
+            snap.link_map = result.link_map
+            snap.link_map_mobile = result.link_map_mobile
             snap.content_hash = _b["content_hash"]
             _record_render_trace(monitor, snap, result)
 

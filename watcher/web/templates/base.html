@@ -119,6 +119,8 @@
                    el.scrollTop = Math.min(max, Math.max(0, $store.lb.atFrac * el.scrollHeight - el.clientHeight / 2)); },
                  lbBoxStyle(b){ const d = $store.lb.dims || {}; const pw = d.pw || 1, ph = d.ph || 1;
                    return `left:${100*(b.x||0)/pw}%;top:${100*(b.y||0)/ph}%;width:${100*(b.w||0)/pw}%;height:${100*(b.h||0)/ph}%`; },
+                 lbLinkStyle(L){ const d = $store.lb.linkDims || {}; const pw = d.pw || 1, ph = d.ph || 1;
+                   return `left:${100*(L.x||0)/pw}%;top:${100*(L.y||0)/ph}%;width:${100*(L.w||0)/pw}%;height:${100*(L.h||0)/ph}%`; },
                  segCls(s){ return s.op === 'add' ? 'diff-add' : s.op === 'del' ? 'diff-del' : 'text-slate-400'; },
                  kindCls(b){ return b ? 'ov-' + b.kind + '-t' : ''; },
                  // The detail popup is a single fixed element pinned NEAR the pointer/tap
@@ -161,6 +163,16 @@
           <img :src="s" @dblclick="$store.lb.toggle()" @load="pos()"
                @pointerdown="$event.pointerType!=='mouse' && hidePop()"
                class="block w-full select-none" :class="$store.lb.zoom>1 ? 'cursor-zoom-out' : 'cursor-zoom-in'">
+        </template>
+        <!-- Clickable hyperlinks overlaid on the zoomed capture (click-through container;
+             only the anchors take pointer events, so panning still works between them). -->
+        <template x-if="$store.lb.links.length && $store.lb.linkDims">
+          <div class="absolute inset-0 pointer-events-none">
+            <template x-for="(L, li) in $store.lb.links" :key="'lk-'+li">
+              <a :href="L.href" :style="lbLinkStyle(L)" :title="L.t || L.href" class="lb-link"
+                 target="_blank" rel="noopener noreferrer nofollow" @click.stop></a>
+            </template>
+          </div>
         </template>
         <template x-if="$store.lb.boxes.length && $store.lb.dims">
           <div class="absolute inset-0 pointer-events-none">
@@ -291,6 +303,7 @@
       // boxes are page-coord {x,y,w,h,kind}; dims is {pw,ph}. Positioned by percentage
       // so they scale with the zoom transform.
       shown: false, srcs: [], zoom: 1, fit: 1, atFrac: 0, boxes: [], dims: null,
+      links: [], linkDims: null,        // clickable-link overlay (page-coord anchors)
       // Active change-highlight detail + its on-screen position. Kept on the STORE (not
       // the viewer component) so open()/close() can reset it SYNCHRONOUSLY — otherwise a
       // stale/empty popup can survive a close→reopen (the popup's x-show races the
@@ -299,13 +312,15 @@
       open(src, frac, opts){ this.srcs = (Array.isArray(src) ? src : [src]).filter(Boolean);
                  this.atFrac = Math.min(1, Math.max(0, frac || 0));
                  const o = opts || {}; this.boxes = o.boxes || []; this.dims = o.dims || null;
+                 this.links = o.links || []; this.linkDims = o.linkDims || null;
                  this.hov = null; this.pp = { x: 0, y: 0 };   // never carry a popup across opens
                  // fit ≤ 1 is the default "fit to view" zoom. A mobile capture passes a
                  // smaller fit so a narrow phone page isn't blown up to the full window
                  // width (over-zoomed); the user can still zoom in from there.
                  this.fit = Math.min(1, Math.max(0.15, o.fit || 1));
                  this.zoom = this.fit; this.shown = true; document.documentElement.style.overflow = 'hidden'; },
-      close(){ this.shown = false; this.hov = null; this.boxes = []; this.dims = null; document.documentElement.style.overflow = ''; },
+      close(){ this.shown = false; this.hov = null; this.boxes = []; this.dims = null;
+               this.links = []; this.linkDims = null; document.documentElement.style.overflow = ''; },
       reset(){ this.zoom = this.fit; },
       zoomIn(){ this.zoom = Math.min(this.zoom * 1.5, 8); },
       zoomOut(){ this.zoom = Math.max(this.zoom / 1.5, this.fit); },

@@ -40,6 +40,7 @@ RENDER_STEPS: dict[str, tuple[float | None, bool]] = {
     "hide_banners":        (10, True),
     "reveal_content":      (12, True),
     "element_map":         (10, True),
+    "link_map":            (10, True),
     "mobile":              (None, True),  # bound supplied by caller (remaining budget)
 }
 # Consecutive bad rounds (timeout OR slow) before a skippable step is auto-skipped.
@@ -829,6 +830,56 @@ async def capture_element_map(page) -> dict | None:
     return {"pw": data.get("pw"), "ph": data.get("ph"), "dpr": data.get("dpr"), "blocks": blocks}
 
 
+# Extract every VISIBLE hyperlink with its full-page bounding box (this render's own CSS
+# coordinates, matching the screenshot) + absolute href. Lets the history viewer overlay
+# real clickable anchors on the captured image. Generic, no per-site selectors.
+_LINK_MAP_JS = r"""
+() => {
+  const de = document.documentElement, body = document.body;
+  const pw = Math.max(de.scrollWidth, body ? body.scrollWidth : 0, de.clientWidth || 0);
+  const ph = Math.max(de.scrollHeight, body ? body.scrollHeight : 0, de.clientHeight || 0);
+  const sx = window.scrollX || window.pageXOffset || 0;
+  const sy = window.scrollY || window.pageYOffset || 0;
+  const out = [], seen = new Set();
+  for (const a of document.querySelectorAll('a[href]')) {
+    if (out.length >= 600) break;
+    const href = a.href;                                   // resolved to absolute
+    if (!href) continue;
+    if (!/^(https?:|mailto:|tel:)/i.test(href)) continue;  // only openable schemes
+    const r = a.getBoundingClientRect();
+    if (r.width < 6 || r.height < 6) continue;             // skip slivers / hidden
+    const st = getComputedStyle(a);
+    if (st.visibility === 'hidden' || st.display === 'none' || st.opacity === '0') continue;
+    const x = Math.round(r.left + sx), y = Math.round(r.top + sy);
+    const w = Math.round(r.width), h = Math.round(r.height);
+    if (x + w < 0 || y + h < 0 || x > pw || y > ph) continue;   // off-page
+    const k = href + '|' + x + ',' + y + ',' + w + ',' + h;     // dedupe nested anchors
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push({href, x, y, w, h, t: (a.innerText || a.getAttribute('aria-label') || '').trim().slice(0, 100)});
+  }
+  return {pw, ph, links: out};
+}
+"""
+
+
+async def capture_link_map(page) -> dict | None:
+    """Capture every visible hyperlink's full-page bbox + absolute href so the history
+    viewer can overlay clickable anchors on the screenshot. Best-effort; returns None
+    on failure or a page with no usable links. Shape: {"pw","ph","links":[{href,x,y,w,h,t}]}."""
+    try:
+        await page.evaluate("() => window.scrollTo(0, 0)")
+    except Exception:
+        pass
+    try:
+        data = await page.evaluate(_LINK_MAP_JS)
+    except Exception:
+        return None
+    if not isinstance(data, dict) or not data.get("links"):
+        return None
+    return {"pw": data.get("pw"), "ph": data.get("ph"), "links": data["links"]}
+
+
 async def settle_network(page, *, cap_ms: int, quiet_ms: int = 700,
                          max_inflight: int = 2, poll_ms: int = 100) -> str:
     """Adaptive 'page has settled' wait — a smart replacement for the strict
@@ -1369,6 +1420,8 @@ async def capture(page, response, monitor: Monitor, mobile: bool = True,
     # for later resolution-independent change localization. Captured here (after the
     # desktop screenshot, before any mobile resize) so its bboxes match that capture.
     result.element_map = await trace.step("element_map", lambda: capture_element_map(page))
+    # Clickable-link map at the same layout (matches the desktop screenshot coords).
+    result.link_map = await trace.step("link_map", lambda: capture_link_map(page))
 
     # Second full-page screenshot at a mobile viewport, for device-appropriate
     # previews. Re-uses the already-loaded page (just resizes), so no extra

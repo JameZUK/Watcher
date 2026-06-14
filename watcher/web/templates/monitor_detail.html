@@ -240,6 +240,14 @@
                     <template x-for="k in count()" :key="dispId() + (onMobile() ? '-m-' : '-d-') + k">
                       <img :src="imgUrl(k-1)" @click="openZoom($event)" @load="onSectionLoad(k)" class="block w-full cursor-zoom-in">
                     </template>
+                    <!-- Clickable hyperlinks captured from the DOM, overlaid on the shot.
+                         Container is click-through; only the anchors take pointer events. -->
+                    <div class="absolute inset-0 pointer-events-none">
+                      <template x-for="(L, li) in links()" :key="'lnk-'+dispId()+'-'+li">
+                        <a :href="L.href" :style="linkStyle(L)" :title="L.t || L.href" class="lb-link"
+                           target="_blank" rel="noopener noreferrer nofollow" @click.stop></a>
+                      </template>
+                    </div>
                     <template x-for="(b, bi) in boxes()" :key="'box-'+side+'-'+bi">
                       <button type="button" class="ov-box" :class="boxClass(b)" :style="boxStyle(b)"
                               @mouseenter="hover=b" @mouseleave="hover=null" @click.stop="zoom(b)" :title="'Zoom — '+b.kind+' · '+b.type"></button>
@@ -252,6 +260,11 @@
               <span class="absolute top-3 right-3 pill backdrop-blur" x-show="$store.device.isMobile && frame() && !frame().msections" x-cloak>desktop only · no mobile capture yet</span>
               <span class="absolute top-3 right-3 pill pill-amber backdrop-blur" x-show="noMobileDiff()" x-cloak>no mobile diff · highlights on desktop</span>
               <div class="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/55 to-transparent" x-show="scrollable" x-cloak></div>
+              <span class="absolute bottom-3 left-3 pill backdrop-blur inline-flex items-center gap-1" x-show="links().length" x-cloak
+                    title="Hyperlinks captured from the page are clickable — they open in a new tab">
+                <svg viewBox="0 0 24 24" class="h-3 w-3" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>
+                links clickable
+              </span>
               <button type="button" @click="openZoom()" class="absolute bottom-3 right-3 btn btn-ghost !px-2.5 !py-1.5 backdrop-blur" aria-label="Zoom to full size">
                 <svg viewBox="0 0 24 24" class="h-4 w-4" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3M11 8v6M8 11h6"/></svg>
               </button>
@@ -501,6 +514,7 @@ function timeMachine(frames, mid, initialId){return {
     if (initialId){ const j = this.frames.findIndex(f => f.id === initialId); if (j >= 0) idx = j; }
     this.i = idx;
     this.$watch('i', () => this.onFrameChange());
+    this.$watch('side', () => this.ensureLinks());   // 'before' side = a different snapshot
     this.onFrameChange();
   },
   frame(){ return this.frames[this.i] || null; },
@@ -513,6 +527,7 @@ function timeMachine(frames, mid, initialId){return {
     this.sel = null; this.hover = null; this.side = 'after';
     const f = this.frame();
     if (f && f.cid && !this.ovCache[f.cid]) this.fetchOv(f.cid);
+    this.ensureLinks();
     // let the sidebar timeline highlight the active check (separate scope)
     this.$dispatch('tl-active', { id: f ? f.id : null });
     this.$nextTick(() => { if (this.$refs.stage) this.$refs.stage.scrollTop = 0; });
@@ -523,6 +538,21 @@ function timeMachine(frames, mid, initialId){return {
     catch(e){ this.ovCache[cid] = { overlays: null, text: [] }; }
     this.ovLoading = false;
   },
+  // --- clickable-link layer: real <a> anchors overlaid on the capture ----------
+  linkCache: {},
+  async fetchLinks(id){
+    try { this.linkCache[id] = await (await fetch(`/monitors/${this.mid}/snapshots/${id}/links`)).json(); }
+    catch(e){ this.linkCache[id] = { desktop: null, mobile: null }; }
+  },
+  // Lazy-load the displayed snapshot's links (one payload carries desktop + mobile).
+  ensureLinks(){ const id = this.dispId(); if (id && !(id in this.linkCache)) this.fetchLinks(id); },
+  linkVariant(){ const d = this.linkCache[this.dispId()]; if (!d) return null;
+    return this.onMobile() ? d.mobile : d.desktop; },
+  links(){ const v = this.linkVariant(); return (v && v.links) || []; },
+  linkStyle(L){ const v = this.linkVariant(), pw = (v && v.pw) || 1, ph = (v && v.ph) || 1;
+    return `left:${100*(L.x||0)/pw}%;top:${100*(L.y||0)/ph}%;width:${100*(L.w||0)/pw}%;height:${100*(L.h||0)/ph}%`; },
+  linkOpts(){ const v = this.linkVariant();
+    return v ? { links: v.links || [], linkDims: { pw: v.pw || 1, ph: v.ph || 1 } } : { links: [], linkDims: null }; },
   // change-point + overlay helpers
   cp(){ const f = this.frame(); return !!(f && f.cid); },
   ovData(){ const f = this.frame(); return (f && this.ovCache[f.cid]) || null; },
@@ -570,7 +600,7 @@ function timeMachine(frames, mid, initialId){return {
   // Overlay payload for the lightbox: the default fit zoom, plus the change-highlight
   // boxes + page dims for the CURRENT side/variant when highlights are active (so the
   // zoomed page shows the same highlights as the stage, scaling with zoom).
-  lbOverlay(){ const o = { fit: this.lbFit() };
+  lbOverlay(){ const o = { fit: this.lbFit(), ...this.linkOpts() };
     if (this.hi()){ o.boxes = this.boxes(); o.dims = this.dims(); } return o; },
   // Zoom = the full-screen lightbox (zoom in/out/fit), same as the history view —
   // now carrying the change highlights when viewing a change. For a specific block,

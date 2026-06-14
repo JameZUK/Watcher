@@ -283,6 +283,51 @@ def test_group_price_alert_fires_once():
 
 # --- account / OTP / admin -------------------------------------------------
 
+def test_snapshot_links_endpoint():
+    """The history viewer fetches a snapshot's clickable-link map (desktop + mobile);
+    a snapshot from another monitor 404s (anti-IDOR)."""
+    async def _t():
+        from watcher.config import settings
+        from watcher.main import create_app
+        from watcher.auth.security import hash_password
+        from watcher.models import Monitor, Snapshot, User
+
+        lmap = {"pw": 1280, "ph": 900, "links": [
+            {"href": "https://example.com/a", "x": 10, "y": 20, "w": 100, "h": 16, "t": "A"}]}
+        async with SessionLocal() as s:
+            email = _email()
+            u = User(email=email, password_hash=hash_password("password123"))
+            other = User(email=_email(), password_hash=hash_password("password123"))
+            s.add_all([u, other]); await s.flush()
+            m = Monitor(user_id=u.id, url="https://x.test", name="M", notify_channels=["inbox"])
+            mo = Monitor(user_id=other.id, url="https://y.test", name="O", notify_channels=["inbox"])
+            s.add_all([m, mo]); await s.flush()
+            snap = Snapshot(monitor_id=m.id, link_map=lmap,
+                            link_map_mobile={"pw": 390, "ph": 1700, "links": []})
+            other_snap = Snapshot(monitor_id=mo.id)
+            s.add_all([snap, other_snap]); await s.flush()
+            mid, sid, other_sid = m.id, snap.id, other_snap.id
+            await s.commit()   # persist so the app (separate session) sees it
+
+        app = create_app()
+        c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t",
+                              headers={"Origin": "http://t"}, follow_redirects=True)
+        async with c:
+            await c.post("/register", data={"email": email, "password": "password123"})
+            await c.post("/login", data={"email": email, "password": "password123"})
+            r = await c.get(f"/monitors/{mid}/snapshots/{sid}/links")
+            assert r.status_code == 200
+            body = r.json()
+            assert body["desktop"]["links"][0]["href"] == "https://example.com/a"
+            assert body["mobile"]["pw"] == 390
+            # a snapshot belonging to another monitor must not be reachable here
+            r = await c.get(f"/monitors/{mid}/snapshots/{other_sid}/links")
+            assert r.status_code == 404
+        return True
+
+    assert _run(_t)
+
+
 def test_otp_login_flow():
     async def _t():
         import pyotp

@@ -88,8 +88,13 @@ _OPEN_JS = """
     {x:0,   y:400, w:1000, h:22, kind:'changed', type:'item', snippet:'changed snippet',
      diff:[{op:'del',t:'old'},{op:'add',t:'new'},{op:'same',t:'tail'}]},
   ];
+  const links = [
+    {href:'https://example.com/story', x:120, y:120, w:320, h:20, t:'A story'},
+    {href:'https://example.com/wide',  x:0,   y:700, w:1000, h:20, t:'Wide link'},
+  ];
   const img = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
-  Alpine.store('lb').open([img], 0, {boxes, dims:{pw:1000, ph:2000}, fit});
+  Alpine.store('lb').open([img], 0, {boxes, dims:{pw:1000, ph:2000}, fit,
+                                     links, linkDims:{pw:1000, ph:2000}});
 }
 """
 
@@ -124,6 +129,17 @@ def test_lightbox_popup_hover_tap_zoom_and_no_stale(live_server):
             # --- desktop fit: opens at 100% ---
             _open(page, 1)
             assert page.evaluate("() => Alpine.store('lb').zoom") == 1
+
+            # --- clickable-link overlay: real target=_blank anchors, on the page ---
+            anchors = page.locator(".fixed.inset-0 .lb-link")
+            anchors.first.wait_for(state="visible", timeout=3000)
+            assert anchors.count() == 2
+            a0 = anchors.first
+            assert a0.get_attribute("href") == "https://example.com/story"
+            assert a0.get_attribute("target") == "_blank"
+            assert "noopener" in (a0.get_attribute("rel") or "")
+            ar = a0.bounding_box()
+            assert ar["x"] >= 0 and ar["x"] + ar["width"] <= vw + 1 and ar["width"] > 0
 
             # --- hover (mouse) the RIGHT EDGE of the full-width box ---
             page.mouse.move(5, 5)                  # start outside any box
