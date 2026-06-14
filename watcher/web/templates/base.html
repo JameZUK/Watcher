@@ -211,8 +211,12 @@
       },
       init() {
         if (this.mode === 'auto' && !this.detected) {
-          // Defer so the probe doesn't race page setup / busy main thread.
-          (window.requestIdleCallback || setTimeout)(() => this.detect(), 600);
+          // Defer so the probe doesn't race page setup / busy main thread. NB:
+          // requestIdleCallback's 2nd arg is an options object, not a delay — passing a
+          // number throws (TypeError), which previously aborted store registration and
+          // broke the device/lightbox stores (blank diff view) for first-time visitors.
+          if (window.requestIdleCallback) requestIdleCallback(() => this.detect(), { timeout: 600 });
+          else setTimeout(() => this.detect(), 600);
         } else { this.apply(); }
       },
     });

@@ -5,6 +5,14 @@ All notable changes to Watcher are documented here. Dates are ISO-8601.
 ## 2026-06-14 — Mobile UX fixes
 
 ### Fixed
+- **Blank diff view / lightbox / history for first-time visitors (a JS crash).** The
+  effects-mode auto-detect deferred with `requestIdleCallback(fn, 600)` — but its second
+  argument is an options object, not a delay, so passing a number throws a TypeError on
+  Chromium. That aborted Alpine store registration, so the `device` and lightbox stores
+  never loaded and every `$store.device`/`$store.lb` binding failed — the before/after
+  diff comparison, the highlighted-differences overlay, the lightbox and the desktop/
+  mobile toggle all came up empty (until a perf result was cached). Pass the proper
+  `{ timeout: 600 }` options (and fall back to setTimeout).
 - **Page content no longer hidden behind the mobile bottom nav.** The fixed bottom
   navigation bar (~67px) overlapped the end of every page (content had only 32px of
   bottom padding) — the last card/section was cut off. Mobile pages now reserve room
