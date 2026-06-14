@@ -328,6 +328,29 @@ def test_snapshot_links_endpoint():
     assert _run(_t)
 
 
+def test_ai_suggest_goal_route():
+    """The 'Suggest a goal' endpoint is wired + auth-guarded: validates the URL and
+    reports cleanly when AI isn't configured (no OpenRouter key in the test env)."""
+    async def _t():
+        from watcher.config import settings
+        from watcher.main import create_app
+        settings.registration_open = True
+        email = _email()
+        app = create_app()
+        c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t",
+                              headers={"Origin": "http://t"}, follow_redirects=True)
+        async with c:
+            await c.post("/register", data={"email": email, "password": "password123"})
+            await c.post("/login", data={"email": email, "password": "password123"})
+            r = await c.post("/monitors/ai-suggest-goal", json={"url": ""})
+            assert r.status_code == 400 and "URL" in r.json()["error"]
+            r = await c.post("/monitors/ai-suggest-goal", json={"url": "https://example.com"})
+            assert r.status_code == 400 and "AI" in r.json()["error"]   # no key configured
+        return True
+
+    assert _run(_t)
+
+
 def test_otp_login_flow():
     async def _t():
         import pyotp

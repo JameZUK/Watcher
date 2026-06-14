@@ -633,6 +633,79 @@ async def suggest_watch_items(
     return out[:8] or None
 
 
+_GOAL_SCHEMA = {
+    "name": "watch_goal",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "goal": {"type": "string", "description": "One plain-English sentence."},
+        },
+        "required": ["goal"],
+    },
+}
+
+_GOAL_SYSTEM = (
+    "You help a user set up a website-change monitor. Read the page and write ONE "
+    "short, plain-English instruction — first person, as if telling the tool what to "
+    "do — for the single most useful thing to watch for on THIS page. Examples: "
+    "'Alert me when the price of this graphics card drops or it goes out of stock.' / "
+    "'Tell me when a new article is published.' / 'Notify me if this job listing "
+    "changes or is removed.' One sentence, under 140 characters, no preamble. This is "
+    "a starting point the user will review and edit. Respond ONLY with the JSON."
+)
+
+
+async def suggest_goal(
+    *,
+    api_key: str,
+    model: str,
+    base_url: str | None = None,
+    url: str,
+    title: str | None,
+    page_text: str,
+    timeout: float = 40.0,
+) -> str | None:
+    """A single plain-English 'what to watch for' goal sentence for a page, to pre-fill
+    the 'Set up with AI' box (the user reviews/edits it). None on failure."""
+    if not api_key or not (page_text or "").strip():
+        return None
+    text = page_text.strip()
+    if len(text) > 8000:
+        text = text[:8000] + "\n…(truncated)…"
+    user = f"URL: {url}\n" + (f"Title: {title}\n" if title else "") + "\nPage content:\n" + text
+    body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _GOAL_SYSTEM},
+            {"role": "user", "content": user},
+        ],
+        "temperature": 0.3,
+        "max_tokens": 120,
+        "response_format": {"type": "json_schema", "json_schema": _GOAL_SCHEMA},
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
+    try:
+        resp = await _post_with_retry(base_url or OPENROUTER_URL, body, headers, timeout)
+        if resp.status_code != 200:
+            logger.warning("OpenRouter suggest_goal failed: HTTP %s %s", resp.status_code, resp.text[:200])
+            return None
+        content = resp.json()["choices"][0]["message"]["content"]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("OpenRouter suggest_goal error: %s", exc)
+        return None
+    txt = (content or "").strip()
+    start, end = txt.find("{"), txt.rfind("}")
+    if start == -1 or end == -1:
+        return None
+    try:
+        data = json.loads(txt[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+    return (data.get("goal") or "").strip() or None
+
+
 _VALUE_SCHEMA = {
     "name": "tracked_value",
     "strict": True,

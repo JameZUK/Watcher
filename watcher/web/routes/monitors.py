@@ -16,7 +16,7 @@ from sqlalchemy.orm import defer, selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...ai import (ai_login_action, configure_monitor, solve_captcha_grid,
-                   suggest_watch_items, summarize_history)
+                   suggest_goal, suggest_watch_items, summarize_history)
 from ...app_settings import get_app_settings, get_openrouter_key
 from ...auth import ai_login
 from ...auth.login_flows import (
@@ -325,6 +325,13 @@ def _html_title(html: str) -> str | None:
     return title[:255] or None
 
 
+# Briefly cache the raw page fetch for new-monitor AI setup, keyed by (user, url), so
+# "Suggest a goal" and the follow-up "Set up with AI" share ONE fetch — and the config
+# is built from the same text the goal was drafted from.
+_PAGE_TEXT_CACHE: dict[tuple[int, str], tuple[str | None, str, float]] = {}
+_PAGE_TEXT_TTL = 120.0  # seconds
+
+
 async def _page_text_for_suggest(session, user, url, monitor_id):
     """(title, text) for AI suggestions: prefer a recent capture, else fetch raw."""
     if monitor_id:
@@ -343,6 +350,12 @@ async def _page_text_for_suggest(session, user, url, monitor_id):
         ).scalar_one_or_none()
         if snap and (snap.rendered_text or "").strip():
             return snap.title, snap.rendered_text
+    # New-monitor path: reuse a recent fetch of this exact URL (within the TTL).
+    import time as _time
+    ckey = (user.id, url)
+    cached = _PAGE_TEXT_CACHE.get(ckey)
+    if cached and cached[2] > _time.monotonic():
+        return cached[0], cached[1]
     # Server-side fetch of a user URL → guard against SSRF (private/metadata
     # targets) and validate every redirect hop manually.
     if validate_public_url(url):
@@ -364,7 +377,14 @@ async def _page_text_for_suggest(session, user, url, monitor_id):
                 break
         if r is None or r.status_code >= 400:
             return None, ""
-        return _html_title(r.text), _html_to_text(r.text)[:12000]
+        title, text = _html_title(r.text), _html_to_text(r.text)[:12000]
+        if (text or "").strip():
+            now = _time.monotonic()
+            _PAGE_TEXT_CACHE[ckey] = (title, text, now + _PAGE_TEXT_TTL)
+            if len(_PAGE_TEXT_CACHE) > 256:   # opportunistic prune of expired entries
+                for k in [k for k, v in list(_PAGE_TEXT_CACHE.items()) if v[2] <= now]:
+                    _PAGE_TEXT_CACHE.pop(k, None)
+        return title, text
     except Exception:
         return None, ""
 
@@ -433,6 +453,40 @@ async def ai_suggest_watch(
     if not suggestions:
         return JSONResponse({"ok": False, "error": "No suggestions came back — try again."}, status_code=502)
     return JSONResponse({"ok": True, "suggestions": suggestions, "title": (title or "").strip()})
+
+
+@router.post("/monitors/ai-suggest-goal")
+async def ai_suggest_goal(
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Read the page and draft a one-line 'what to watch for' goal to pre-fill the
+    'Set up with AI' box (the user reviews/edits it before creating the monitor). The
+    rendered page text is cached briefly so the follow-up ai-create reuses it (one fetch)."""
+    if not _ai_quota_ok(user):
+        return JSONResponse({"ok": False, "error": "Too many AI requests — wait a moment."}, status_code=429)
+    data = await request.json()
+    url = (data.get("url") or "").strip()
+    if not url:
+        return JSONResponse({"ok": False, "error": "Enter a URL to watch first."}, status_code=400)
+    app = await get_app_settings(session)
+    key = get_openrouter_key(app)
+    if not key:
+        return JSONResponse(
+            {"ok": False, "error": "AI isn’t configured — an admin must set an OpenRouter key in Settings."},
+            status_code=400,
+        )
+    title, text = await _page_text_for_suggest(session, user, url, None)
+    if not (text or "").strip():
+        return JSONResponse(
+            {"ok": False, "error": "Couldn’t read this page — check the URL, then try again."},
+            status_code=502,
+        )
+    goal = await suggest_goal(api_key=key, model=app.ai_model, base_url=app.ai_base_url, url=url, title=title, page_text=text)
+    if not goal:
+        return JSONResponse({"ok": False, "error": "Couldn’t draft a goal — describe it yourself, or try again."}, status_code=502)
+    return JSONResponse({"ok": True, "goal": goal, "title": (title or "").strip()})
 
 
 @router.post("/monitors/ai-create")

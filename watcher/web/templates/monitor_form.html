@@ -43,11 +43,19 @@
         <svg viewBox="0 0 24 24" class="h-4 w-4 text-brand-400" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg>
         Set up with AI
       </h2>
-      <p class="text-xs text-slate-400">Describe what you want to watch — the AI reviews the page above and configures everything (detection, interval, value tracking, alerts).</p>
+      <p class="text-xs text-slate-400">Describe what you want to watch — or let the AI draft it from the page — then it configures everything (detection, interval, value tracking, alerts).</p>
       <textarea name="goal" x-model="goal" rows="2" placeholder="e.g. Alert me if this product's price drops below £250, or if it goes out of stock" class="field"></textarea>
       <p class="text-xs text-red-300" x-show="aiError" x-cloak x-text="aiError"></p>
-      <button type="submit" formaction="/monitors/ai-create" @click="aiGuard($event)" :disabled="busy"
-              class="btn btn-primary text-sm" x-text="busy ? 'Reviewing the page…' : 'Set up with AI'"></button>
+      <div class="flex flex-wrap items-center gap-2">
+        <button type="submit" formaction="/monitors/ai-create" @click="aiGuard($event)" :disabled="busy || suggesting"
+                class="btn btn-primary text-sm" x-text="busy ? 'Reviewing the page…' : 'Set up with AI'"></button>
+        <button type="button" @click="suggestGoal()" :disabled="suggesting || busy"
+                class="btn btn-ghost text-sm inline-flex items-center gap-1.5" title="Read the page and draft a goal you can edit">
+          <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 1.9 4.6L18.5 9.5 13.9 11.4 12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3Z"/><path d="M19 14v3m1.5-1.5h-3"/></svg>
+          <span x-text="suggesting ? 'Reading the page…' : 'Suggest a goal'"></span>
+        </button>
+      </div>
+      <p class="text-[11px] text-slate-500" x-show="!goal.trim()" x-cloak>Tip: leave the box empty and press <span class="text-slate-400">Set up with AI</span> — it'll draft a goal from the page for you to review.</p>
     </section>
 
     <!-- Advanced toggle -->
@@ -585,13 +593,35 @@
 <script>
 function monitorForm(opts){return {
   mode: opts.mode || 'auto', login: !!opts.login, adv: !!opts.adv,
-  goal: '', busy: false, aiError: '',
+  goal: '', busy: false, aiError: '', suggesting: false,
+  // $root is the component root (the <form>); $el would be the clicked button.
+  _url(){ return (this.$root.querySelector('input[name=url]')?.value || '').trim(); },
+  // Read the page and draft an editable one-line goal into the box (the user reviews
+  // it, then presses "Set up with AI"). Shares its page fetch with ai-create server-side.
+  async suggestGoal(){
+    const url = this._url();
+    if (!url){ this.aiError = 'Enter a URL to watch first.'; return; }
+    this.suggesting = true; this.aiError = '';
+    try {
+      const r = await fetch('/monitors/ai-suggest-goal', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url }),
+      });
+      const d = await r.json();
+      if (d.ok && d.goal){
+        this.goal = d.goal;
+        const nameEl = this.$root.querySelector('input[name=name]');
+        if (nameEl && !nameEl.value.trim() && d.title) nameEl.value = d.title;
+      } else { this.aiError = d.error || 'Couldn’t draft a goal — describe it yourself.'; }
+    } catch (e) { this.aiError = 'Request failed.'; }
+    this.suggesting = false;
+  },
   // Friendly inline validation for "Set up with AI" (no native required popup).
   aiGuard(e){
-    // $root is the component root (the <form>); $el would be the clicked button.
-    const url = (this.$root.querySelector('input[name=url]')?.value || '').trim();
+    const url = this._url();
     if (!url){ e.preventDefault(); this.aiError = 'Enter a URL to watch first.'; return; }
-    if (!this.goal.trim()){ e.preventDefault(); this.aiError = 'Describe what you want to watch for.'; return; }
+    if (!this.goal.trim()){   // empty goal → draft one for review instead of erroring
+      e.preventDefault(); this.suggestGoal(); return;
+    }
     this.aiError = '';   // valid → let the native submit proceed (busy is set on @submit,
                          // NOT here: disabling the button mid-click would cancel the submit)
   },
