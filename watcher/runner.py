@@ -450,17 +450,25 @@ def _is_transient(result) -> bool:
 
 def _record_render_trace(monitor, snap, result) -> None:
     """Persist this render's per-step trace onto the snapshot and fold its outcomes
-    into the monitor's learned step health (which drives auto-skip). Only a
-    *timeout* advances a step's fail-streak (the auto-skip trigger); a clean run
-    resets it. A user-disabled or one-off errored step doesn't move the streak."""
+    into the monitor's learned step health (which drives auto-skip). A *timeout* or a
+    near-timeout *slow* round advances a step's fail-streak (the auto-skip trigger); a
+    clean run resets it. A user-disabled or one-off errored step doesn't move it. As a
+    backstop, a whole render that ate most of the budget is flagged degraded even if no
+    single step tripped."""
     if result is None:
         return
     snap.degraded = bool(getattr(result, "degraded", False))
+    # Whole-render slow backstop: total time near the per-pass budget → "not right".
+    rt_ms = getattr(result, "render_ms", None)
+    budget_ms = settings.render_timeout_seconds * 1000
+    if (settings.render_slow_fraction and rt_ms and budget_ms
+            and rt_ms > budget_ms * settings.render_slow_fraction):
+        snap.degraded = True
     trace = getattr(result, "render_trace", None)
     if not trace:
         return
     snap.render_trace = trace
-    rank = {"ok": 0, "skipped": 1, "error": 2, "timeout": 3}
+    rank = {"ok": 0, "skipped": 1, "slow": 2, "error": 3, "timeout": 4}
     worst: dict[str, str] = {}
     for e in trace:
         name = (e.get("step") or "").split(":", 1)[-1]   # fold the mobile: prefix in
@@ -470,7 +478,7 @@ def _record_render_trace(monitor, snap, result) -> None:
     stats = dict(monitor.render_step_stats or {})
     for name, outcome in worst.items():
         st = dict(stats.get(name) or {})
-        if outcome == "timeout":
+        if outcome in ("timeout", "slow"):
             st["fail_streak"] = int(st.get("fail_streak", 0)) + 1
         elif outcome == "ok":
             st["fail_streak"] = 0

@@ -1107,6 +1107,52 @@ def test_record_render_trace_updates_learned_streak():
     assert mon2.render_step_stats["hide_banners"]["fail_streak"] == 0
 
 
+def test_render_trace_flags_slow_step():
+    """A step that runs clean but eats most of its time bound is flagged 'slow'
+    (degraded) rather than silently 'ok' — surfacing a near-hanging render."""
+    import asyncio
+    from types import SimpleNamespace as N
+    from watcher.engines._common import RenderTrace
+
+    tr = RenderTrace(N(render_step_overrides={}, render_step_stats={}))
+
+    async def slowish(): await asyncio.sleep(0.85)   # > 75% of the 1.0s bound, < bound
+    asyncio.run(tr.step("hide_banners", lambda: slowish(), bound=1.0))
+
+    e = tr.entries[-1]
+    assert e["step"] == "hide_banners" and e["outcome"] == "slow"
+    assert tr.degraded is True
+
+
+def test_record_render_trace_slow_streak_and_whole_render_backstop():
+    """A 'slow' step advances the auto-skip streak like a timeout, and a whole render
+    that ate most of the budget is flagged degraded even with an all-ok trace."""
+    from types import SimpleNamespace as N
+    from watcher.runner import _record_render_trace
+    from watcher.config import settings
+
+    # slow step → streak +1 (counts toward auto-skip)
+    mon = N(render_step_stats={"hide_banners": {"fail_streak": 1}})
+    snap = N(render_trace=None, degraded=False)
+    _record_render_trace(mon, snap, N(degraded=True, render_ms=1000, render_trace=[
+        {"step": "hide_banners", "ms": 9000, "outcome": "slow"}]))
+    assert mon.render_step_stats["hide_banners"]["fail_streak"] == 2
+
+    budget = settings.render_timeout_seconds * 1000
+    # all-ok but slow OVERALL → degraded via the backstop
+    s1 = N(render_trace=None, degraded=False)
+    _record_render_trace(N(render_step_stats={}), s1, N(
+        degraded=False, render_ms=int(budget * 0.95),
+        render_trace=[{"step": "navigate", "ms": 100, "outcome": "ok"}]))
+    assert s1.degraded is True
+    # a fast all-ok render stays clean
+    s2 = N(render_trace=None, degraded=False)
+    _record_render_trace(N(render_step_stats={}), s2, N(
+        degraded=False, render_ms=int(budget * 0.2),
+        render_trace=[{"step": "navigate", "ms": 100, "outcome": "ok"}]))
+    assert s2.degraded is False
+
+
 def test_apply_form_render_step_toggles():
     """The edit form's render-step checkboxes round-trip into render_step_overrides
     (unchecked → 'off'), and saving clears learned auto-skips. The create form / API

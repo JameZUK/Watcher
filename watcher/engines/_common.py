@@ -42,8 +42,14 @@ RENDER_STEPS: dict[str, tuple[float | None, bool]] = {
     "element_map":         (10, True),
     "mobile":              (None, True),  # bound supplied by caller (remaining budget)
 }
-# Consecutive timeouts before a skippable step is auto-skipped for a monitor.
+# Consecutive bad rounds (timeout OR slow) before a skippable step is auto-skipped.
 RENDER_AUTOSKIP_AFTER = 3
+# A step that runs clean but eats more than this fraction of its time bound nearly
+# timed out → recorded as "slow" (degrades the render, and counts toward auto-skip
+# like a timeout). For steps with no hard bound (navigate, screenshot) the absolute
+# default ceiling below applies instead.
+RENDER_STEP_SLOW_FRACTION = 0.75
+RENDER_STEP_SLOW_DEFAULT_MS = 12000
 
 
 class RenderTrace:
@@ -97,23 +103,27 @@ class RenderTrace:
         if bound == "default":
             bound = RENDER_STEPS.get(name, (None, False))[0]
         t = time.monotonic()
-        outcome, value = "ok", None
+        outcome, value, err = "ok", None, None
         try:
             coro = factory()
             value = await (asyncio.wait_for(coro, timeout=bound) if bound else coro)
-        except _STEP_TIMEOUTS:
-            outcome = "timeout"
+        except _STEP_TIMEOUTS as exc:
+            outcome, err = "timeout", exc
             self.degraded = True
-            if critical:
-                self._add(name, int((time.monotonic() - t) * 1000), outcome)
-                raise
-        except Exception:
-            outcome = "error"
+        except Exception as exc:
+            outcome, err = "error", exc
             self.degraded = True
-            if critical:
-                self._add(name, int((time.monotonic() - t) * 1000), outcome)
-                raise
-        self._add(name, int((time.monotonic() - t) * 1000), outcome)
+        ms = int((time.monotonic() - t) * 1000)
+        # Ran clean but ate most of its budget → "slow" (near-timeout): degrade the
+        # render and let it count toward auto-skip before it fully hangs.
+        if outcome == "ok":
+            soft = (bound * 1000 * RENDER_STEP_SLOW_FRACTION) if bound else RENDER_STEP_SLOW_DEFAULT_MS
+            if ms > soft:
+                outcome = "slow"
+                self.degraded = True
+        self._add(name, ms, outcome)
+        if critical and err is not None:
+            raise err
         return value
 
     def apply_to(self, result: "RenderResult") -> None:
