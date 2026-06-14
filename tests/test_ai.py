@@ -15,7 +15,7 @@ from watcher.ai import triage as T
 AI_FNS = [
     T.triage_change, T.suggest_watch_items, T.extract_value,
     T.configure_monitor, T.summarize_history, T.suggest_consent_selectors,
-    T.ai_login_action, T.solve_captcha_grid, T.profile_page,
+    T.ai_login_action, T.solve_captcha_grid, T.profile_page, T.refine_intent,
 ]
 
 
@@ -50,6 +50,7 @@ class _FakeClient:
         '"value_threshold_dir":"none","selectors":["#accept-all","#accept-all","button.agree","<bad>"],'
         '"action":"type","index":0,"secret":"username","text":"",'
         '"page_summary":"P","relevant":"R","noise":"N",'
+        '"refined":"Alert only on analyst-role reviews","note":"Resolved the contradiction",'
         '"cells":[1,3,9,99]}'
     )
 
@@ -96,6 +97,22 @@ def test_profile_page_assembles_understanding(fake_http):
     assert "P" in out and "Changes that matter: R" in out
     assert "churn" in out.lower() and "N" in out
     assert fake_http.last["url"] == "http://x/v1"
+
+
+def test_refine_intent_returns_clear_rewrite(fake_http):
+    """refine_intent rewrites a rough draft into a clear instruction (+ a note), and
+    forwards the draft and page context to the model."""
+    out = _run(T.refine_intent(api_key="k", model="m", base_url="http://x/v1",
+                               url="u", title="t", draft="only analyst reviews but all new reviews",
+                               page_profile="reviews have a role field"))
+    assert out == {"refined": "Alert only on analyst-role reviews", "note": "Resolved the contradiction"}
+    sent = fake_http.last["json"]["messages"][1]["content"]
+    assert "only analyst reviews but all new reviews" in sent and "role field" in sent
+
+
+def test_refine_intent_skips_without_draft():
+    """No draft → nothing to refine."""
+    assert _run(T.refine_intent(api_key="k", model="m", url="u", title="t", draft="  ")) is None
 
 
 def test_profile_page_skips_without_text():

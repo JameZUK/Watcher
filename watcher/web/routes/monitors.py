@@ -504,6 +504,50 @@ async def ai_summary(
     return JSONResponse({"ok": True, "summary": text})
 
 
+@router.post("/monitors/refine-intent")
+async def refine_intent_route(
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Rewrite a rough 'what to watch for' draft into a clear, page-grounded one. Used by
+    a button next to the intent field on the create/edit form. Pure suggestion — the
+    client shows it for the user to accept or dismiss; nothing is saved."""
+    if not _ai_quota_ok(user):
+        return JSONResponse({"ok": False, "error": "Too many AI requests — wait a moment."}, status_code=429)
+    form = await request.form()
+    draft = (form.get("intent") or "").strip()
+    if not draft:
+        return JSONResponse({"ok": False, "error": "Write a rough description first, then refine."}, status_code=400)
+    app = await get_app_settings(session)
+    key = get_openrouter_key(app)
+    if not key:
+        return JSONResponse({"ok": False, "error": "AI isn’t configured."}, status_code=400)
+    url = (form.get("url") or "").strip()
+    title = page_text = None
+    mid = form.get("monitor_id")
+    if mid and str(mid).isdigit():
+        try:
+            monitor = await _owned_monitor(session, user, int(mid))
+            title, url = monitor.name, (url or monitor.url)
+            # Use the NEUTRAL captured page text — NOT the stored page profile, which is
+            # derived from the existing intent and would bias the rewrite toward it.
+            snap = (await session.execute(
+                select(Snapshot).where(Snapshot.monitor_id == monitor.id, Snapshot.html_blob.is_not(None))
+                .order_by(Snapshot.taken_at.desc()).limit(1))).scalar_one_or_none()
+            if snap is not None:
+                page_text = snap.rendered_text or (blobs.get_text(snap.html_blob) if snap.html_blob else None)
+        except HTTPException:
+            pass
+    from ...ai import refine_intent
+    res = await refine_intent(
+        api_key=key, model=app.ai_model, base_url=app.ai_base_url,
+        url=url, title=title, draft=draft, page_text=page_text)
+    if not res:
+        return JSONResponse({"ok": False, "error": "Refine failed — try again."}, status_code=502)
+    return JSONResponse({"ok": True, **res})
+
+
 @router.post("/monitors/{monitor_id}/analyze-page")
 async def analyze_page(
     monitor_id: int,

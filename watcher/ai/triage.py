@@ -345,6 +345,85 @@ async def profile_page(
     return "  ".join(parts)
 
 
+_REFINE_SCHEMA = {
+    "name": "refined_intent",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "refined": {"type": "string",
+                        "description": "The rewritten, clear, unambiguous watch instruction (1-3 sentences)."},
+            "note": {"type": "string",
+                     "description": "One short line: what was clarified or assumed (empty if nothing notable)."},
+        },
+        "required": ["refined", "note"],
+    },
+}
+
+_REFINE_SYSTEM = (
+    "You rewrite a user's rough 'what to watch for' instruction for a website-change "
+    "monitor into ONE clear, unambiguous instruction the monitor can act on.\n"
+    "\n"
+    "THE DRAFT IS THE SOURCE OF TRUTH for WHAT the user wants to watch. PRESERVE their "
+    "subject and intent — only clarify; NEVER change the subject to whatever the page "
+    "happens to be about. Use the page context ONLY to make the user's own subject more "
+    "specific and grounded and to resolve ambiguity (refer to the real fields/regions "
+    "that exist on the page, e.g. a review's role field) — but with NO CSS selectors or "
+    "code. If the draft asks about something the page doesn't appear to contain, keep "
+    "the user's subject anyway and say so in 'note' (they may have the wrong URL).\n"
+    "\n"
+    "Resolve contradictions or vagueness by choosing the most likely reading. Structure "
+    "it as what to ALERT on plus what to IGNORE. Keep 'refined' concise (1-3 sentences, "
+    "plain language). In 'note', state in one short line anything you assumed, fixed, or "
+    "flagged (especially a contradiction or a draft/page mismatch) so the user can "
+    "correct it; leave it empty if there was nothing to flag. Respond ONLY with the JSON."
+)
+
+
+async def refine_intent(
+    *, api_key: str, model: str, base_url: str | None = None,
+    url: str, title: str | None, draft: str,
+    page_text: str | None = None, page_profile: str | None = None, timeout: float = 40.0,
+) -> dict | None:
+    """Rewrite a rough watch instruction into a clear, page-grounded one. Returns
+    {"refined": str, "note": str} (note may be empty), or None on failure."""
+    if not api_key or not (draft or "").strip():
+        return None
+    lines = [f"URL: {url}"]
+    if title:
+        lines.append(f"Page title: {title}")
+    if page_profile and page_profile.strip():
+        lines.append("What this page is (already analysed): " + page_profile.strip()[:800])
+    elif page_text and page_text.strip():
+        lines.append("Visible text of the page (sample):\n" + page_text.strip()[:3000])
+    lines.append('\nThe user\'s draft instruction:\n"' + draft.strip()[:600] + '"')
+    body = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": _REFINE_SYSTEM},
+            {"role": "user", "content": "\n".join(lines)},
+        ],
+        "temperature": 0.2,
+        "max_tokens": 400,
+        "response_format": {"type": "json_schema", "json_schema": _REFINE_SCHEMA},
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json", "X-Title": "Watcher"}
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(base_url or OPENROUTER_URL, json=body, headers=headers)
+        if resp.status_code != 200:
+            return None
+        data = json.loads(resp.json()["choices"][0]["message"]["content"])
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("OpenRouter refine-intent error: %s", exc)
+        return None
+    refined = (data.get("refined") or "").strip()
+    if not refined:
+        return None
+    return {"refined": refined, "note": (data.get("note") or "").strip()}
+
+
 _SUGGEST_SCHEMA = {
     "name": "watch_suggestions",
     "strict": True,

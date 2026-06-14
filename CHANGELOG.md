@@ -2,6 +2,18 @@
 
 All notable changes to Watcher are documented here. Dates are ISO-8601.
 
+## 2026-06-14 — "Refine" the watch instruction with one click
+
+### Added
+- **Refine button** next to "What to watch for" on the monitor form. It rewrites your
+  rough/ambiguous draft into one clear, unambiguous instruction — resolving
+  contradictions, structuring it as what to alert on vs ignore, and grounding it in the
+  page's real content (e.g. "filter reviews by the reviewer's role"). It's a suggestion
+  you accept or dismiss; nothing is saved automatically. Generic and AI-driven: it works
+  off your text + the page, never any site-specific rules. (It anchors on YOUR draft as
+  the subject and grounds it in the captured page text, so it can't hijack your intent
+  or bias toward the existing one; it flags a draft/page mismatch in a note.)
+
 ## 2026-06-13 — Fix blank/white screenshots on very tall pages
 
 ### Fixed

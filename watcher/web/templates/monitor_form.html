@@ -452,14 +452,32 @@
         <div>
           <div class="flex items-center justify-between gap-2 mb-1.5">
             <label class="block text-sm font-medium text-slate-300">What to watch for <span class="text-slate-500 font-normal">· optional</span></label>
-            <button type="button" @click="generate()" :disabled="loading"
-                    class="btn btn-ghost !py-1 !px-2.5 text-xs inline-flex items-center gap-1.5 disabled:opacity-50">
-              <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg>
-              <span x-text="loading ? 'Reviewing page…' : 'AI suggest'"></span>
-            </button>
+            <div class="flex items-center gap-1.5">
+              <button type="button" @click="refine()" :disabled="refining || !intent.trim()"
+                      class="btn btn-ghost !py-1 !px-2.5 text-xs inline-flex items-center gap-1.5 disabled:opacity-40"
+                      title="Rewrite your text into a clearer, page-aware instruction">
+                <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 1.9 4.6L18.5 9.5 13.9 11.4 12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3Z"/><path d="M5 17.5 5.7 19 7 19.7 5.7 20.4 5 22l-.7-1.6L3 19.7l1.3-.7L5 17.5Z"/></svg>
+                <span x-text="refining ? 'Refining…' : 'Refine'"></span>
+              </button>
+              <button type="button" @click="generate()" :disabled="loading"
+                      class="btn btn-ghost !py-1 !px-2.5 text-xs inline-flex items-center gap-1.5 disabled:opacity-50">
+                <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v3m0 12v3M3 12h3m12 0h3M5.6 5.6l2.1 2.1m8.6 8.6 2.1 2.1m0-12.8-2.1 2.1M7.7 16.3l-2.1 2.1"/></svg>
+                <span x-text="loading ? 'Reviewing page…' : 'AI suggest'"></span>
+              </button>
+            </div>
           </div>
           <textarea name="ai_watch_intent" x-model="intent" rows="3" placeholder="e.g. Alert me if the price drops below £250, or if it comes back in stock" class="field"></textarea>
           <p class="text-xs text-red-300 mt-1" x-show="error" x-cloak x-text="error"></p>
+          <!-- Refined suggestion: a clearer rewrite of the draft, accept or dismiss -->
+          <div x-show="refined" x-cloak class="mt-2.5 rounded-xl border border-brand-500/30 bg-brand-500/[.07] p-3 space-y-2">
+            <p class="text-xs text-slate-400">Suggested clearer instruction:</p>
+            <p class="text-sm text-slate-100 leading-relaxed" x-text="refined"></p>
+            <p class="text-xs text-amber-300/90" x-show="refineNote" x-cloak x-text="refineNote"></p>
+            <div class="flex gap-2">
+              <button type="button" @click="useRefined()" class="btn btn-primary !py-1 !px-3 text-xs">Use this</button>
+              <button type="button" @click="dismissRefined()" class="btn btn-ghost !py-1 !px-3 text-xs">Dismiss</button>
+            </div>
+          </div>
           <div x-show="suggestions.length" x-cloak class="mt-2.5">
             <p class="text-xs text-slate-500 mb-1.5">Tap to add to the box:</p>
             <div class="flex flex-wrap gap-2">
@@ -552,6 +570,27 @@ function monitorForm(opts){return {
 function aiSection(opts){return {
   ai: !!opts.ai, intent: opts.intent || '', monitorId: opts.monitorId || null,
   loading: false, error: '', suggestions: [],
+  refining: false, refined: '', refineNote: '',
+  // Rewrite the user's rough draft into a clearer, page-grounded instruction.
+  async refine(){
+    const draft = (this.intent || '').trim();
+    if (!draft){ this.error = 'Write a rough description first, then refine.'; return; }
+    const form = this.$el.closest('form');
+    const url = (form?.querySelector('input[name=url]')?.value || '').trim();
+    this.refining = true; this.error = ''; this.refined = ''; this.refineNote = '';
+    try {
+      const fd = new FormData();
+      fd.append('intent', draft); fd.append('url', url);
+      if (this.monitorId) fd.append('monitor_id', this.monitorId);
+      const d = await (await fetch('/monitors/refine-intent', { method: 'POST', body: fd })).json();
+      if (d.ok){ this.refined = d.refined || ''; this.refineNote = d.note || '';
+                 if (!this.refined) this.error = 'No suggestion came back.'; }
+      else this.error = d.error || 'Refine failed.';
+    } catch (e) { this.error = 'Request failed.'; }
+    this.refining = false;
+  },
+  useRefined(){ this.intent = this.refined; this.refined = ''; this.refineNote = ''; },
+  dismissRefined(){ this.refined = ''; this.refineNote = ''; },
   _line(s){ return '- ' + s; },
   has(s){ const l = this._line(s); return this.intent.split('\n').some(x => x.trim() === l); },
   toggle(s){

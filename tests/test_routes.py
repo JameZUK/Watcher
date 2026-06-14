@@ -913,6 +913,29 @@ def test_monitor_detail_renders_with_legacy_null_sections():
     assert _run(_t)
 
 
+def test_refine_intent_endpoint_wired():
+    """The refine-intent endpoint is reachable and returns JSON; with no draft it asks
+    for one, and (AI off in tests) otherwise reports AI isn't configured."""
+    async def _t():
+        from watcher.config import settings
+        from watcher.main import create_app
+        settings.registration_open = True
+        transport = httpx.ASGITransport(app=create_app())
+        email = _email()
+        async with httpx.AsyncClient(transport=transport, base_url="http://t",
+                                     headers={"Origin": "http://t"}, follow_redirects=True) as c:
+            await c.post("/register", data={"email": email, "password": "password123"})
+            r1 = await c.post("/monitors/refine-intent", data={"intent": "", "url": "https://a.test"})
+            assert r1.json()["ok"] is False and "rough description" in r1.json()["error"].lower()
+            r2 = await c.post("/monitors/refine-intent",
+                              data={"intent": "watch the price", "url": "https://a.test"})
+            assert r2.headers["content-type"].startswith("application/json")
+            assert r2.json()["ok"] is False        # AI not configured in tests
+        return True
+
+    assert _run(_t)
+
+
 def test_analyze_page_endpoint_wired():
     """The page-profiler endpoint is reachable on an owned monitor and returns JSON
     (AI isn't configured in tests, so it reports that rather than crashing)."""
