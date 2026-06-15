@@ -151,8 +151,13 @@
       <textarea name="goal" x-model="goal" rows="2" placeholder="e.g. Track the JBL Boombox 3 and alert me if it drops below £250" class="field text-sm"></textarea>
       <textarea name="urls" x-model="urls" rows="3" placeholder="One product URL per line — the same item on Amazon, JBL.com, Argos…" class="field font-mono text-xs"></textarea>
       <p class="text-xs text-red-300" x-show="aiError" x-cloak x-text="aiError"></p>
-      <div class="flex items-center gap-3">
-        <button type="submit" @click="aiGuard($event)" :disabled="busy" class="btn btn-primary text-sm" x-text="busy ? 'Building the group…' : 'Build group with AI'"></button>
+      <p class="text-[11px] text-slate-500" x-show="urls.trim() && !goal.trim()" x-cloak>Tip: leave the goal empty and press <span class="text-slate-400">Build group with AI</span> — it'll draft one from the first page for you to review.</p>
+      <div class="flex flex-wrap items-center gap-2">
+        <button type="submit" @click="aiGuard($event)" :disabled="busy || suggesting" class="btn btn-primary text-sm" x-text="busy ? 'Building the group…' : 'Build group with AI'"></button>
+        <button type="button" @click="suggestGoal()" :disabled="suggesting || busy" class="btn btn-ghost text-sm inline-flex items-center gap-1.5" title="Read the first page and draft a goal you can edit">
+          <svg viewBox="0 0 24 24" class="h-3.5 w-3.5" fill="none" stroke="currentColor" stroke-width="2"><path d="m12 3 1.9 4.6L18.5 9.5 13.9 11.4 12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3Z"/><path d="M19 14v3m1.5-1.5h-3"/></svg>
+          <span x-text="suggesting ? 'Reading…' : 'Suggest a goal'"></span>
+        </button>
         <button type="button" @click="adv = true" class="text-xs text-slate-400 hover:text-white">manual setup</button>
       </div>
     </form>
@@ -235,12 +240,27 @@
 {% block scripts %}
 <script>
 function groupForm(){return {
-  adv: false, kind: 'price', goal: '', urls: '', busy: false, aiError: '',
+  adv: false, kind: 'price', goal: '', urls: '', busy: false, aiError: '', suggesting: false,
+  // Read the FIRST pasted URL and draft an editable group goal into the box (the user
+  // reviews it, then presses "Build group with AI"). Shares its fetch with ai-create.
+  async suggestGoal(){
+    if (!this.urls.trim()){ this.aiError = 'Add at least one page URL first.'; return; }
+    this.suggesting = true; this.aiError = '';
+    try {
+      const r = await fetch('/groups/ai-suggest-goal', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ urls: this.urls }),
+      });
+      const d = await r.json();
+      if (d.ok && d.goal) this.goal = d.goal;
+      else this.aiError = d.error || 'Couldn’t draft a goal — describe it yourself.';
+    } catch (e) { this.aiError = 'Request failed.'; }
+    this.suggesting = false;
+  },
   // Friendly inline validation (busy is set on the form's @submit, not here, so
   // disabling the button can't cancel the native submit).
   aiGuard(e){
-    if (!this.goal.trim()){ e.preventDefault(); this.aiError = 'Describe what to track in this group.'; return; }
     if (!this.urls.trim()){ e.preventDefault(); this.aiError = 'Add at least one page URL (one per line).'; return; }
+    if (!this.goal.trim()){ e.preventDefault(); this.suggestGoal(); return; }  // draft from the first URL
     this.aiError = '';
   },
 }}

@@ -656,6 +656,14 @@ _GOAL_SYSTEM = (
     "a starting point the user will review and edit. Respond ONLY with the JSON."
 )
 
+_GOAL_GROUP_HINT = (
+    " This page is one of SEVERAL the user will watch together as a GROUP — usually the "
+    "same product across different retailers, or related pages. Phrase the goal for the "
+    "whole group, not just this one page: e.g. 'Alert me when the cheapest of these "
+    "drops below £X, or any goes out of stock.' / 'Tell me when any of these posts a "
+    "major update.'"
+)
+
 
 async def suggest_goal(
     *,
@@ -665,10 +673,12 @@ async def suggest_goal(
     url: str,
     title: str | None,
     page_text: str,
+    for_group: bool = False,
     timeout: float = 40.0,
 ) -> str | None:
     """A single plain-English 'what to watch for' goal sentence for a page, to pre-fill
-    the 'Set up with AI' box (the user reviews/edits it). None on failure."""
+    the 'Set up with AI' box (the user reviews/edits it). When ``for_group`` is set, the
+    goal is phrased for several pages watched together. None on failure."""
     if not api_key or not (page_text or "").strip():
         return None
     text = page_text.strip()
@@ -678,7 +688,7 @@ async def suggest_goal(
     body = {
         "model": model,
         "messages": [
-            {"role": "system", "content": _GOAL_SYSTEM},
+            {"role": "system", "content": _GOAL_SYSTEM + (_GOAL_GROUP_HINT if for_group else "")},
             {"role": "user", "content": user},
         ],
         "temperature": 0.3,

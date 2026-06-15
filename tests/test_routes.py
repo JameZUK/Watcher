@@ -346,6 +346,11 @@ def test_ai_suggest_goal_route():
             assert r.status_code == 400 and "URL" in r.json()["error"]
             r = await c.post("/monitors/ai-suggest-goal", json={"url": "https://example.com"})
             assert r.status_code == 400 and "AI" in r.json()["error"]   # no key configured
+            # group variant: drafts a goal from the first pasted URL
+            r = await c.post("/groups/ai-suggest-goal", json={"urls": ""})
+            assert r.status_code == 400 and "URL" in r.json()["error"]
+            r = await c.post("/groups/ai-suggest-goal", json={"urls": "https://example.com\nhttps://example.org"})
+            assert r.status_code == 400 and "AI" in r.json()["error"]   # no key configured
         return True
 
     assert _run(_t)

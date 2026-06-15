@@ -4,12 +4,12 @@ across retailers) for price comparison + a single group-level alert."""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ...ai import configure_group
+from ...ai import configure_group, suggest_goal
 from ...app_settings import get_app_settings, get_openrouter_key
 from ...auth.users import get_current_user
 from ...config import settings
@@ -191,6 +191,46 @@ async def create_group(
             m.group_id = g.id
     await session.commit()
     return RedirectResponse(f"/groups/{g.id}", status_code=303)
+
+
+@router.post("/groups/ai-suggest-goal")
+async def ai_suggest_group_goal(
+    request: Request,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Read the FIRST pasted URL and draft a one-line group goal to pre-fill the box
+    (the user reviews/edits it). Phrased for a group (cheapest-of / any-of). Shares its
+    page fetch with the follow-up ai-create."""
+    from ..ratelimit import allow
+    if not allow(f"ai:{user.id}", limit=settings.ai_max_calls, window=settings.ai_window_seconds):
+        return JSONResponse({"ok": False, "error": "Too many AI requests — wait a moment."}, status_code=429)
+    data = await request.json()
+    urls = [u.strip() for u in (data.get("urls") or "").splitlines() if u.strip()]
+    if not urls:
+        return JSONResponse({"ok": False, "error": "Add at least one page URL first."}, status_code=400)
+    url = urls[0]
+    if validate_monitor_url(url) or (not settings.allow_private_targets and validate_public_url(url)):
+        return JSONResponse({"ok": False, "error": "The first URL isn’t a valid public web page."}, status_code=400)
+    app = await get_app_settings(session)
+    key = get_openrouter_key(app)
+    if not key:
+        return JSONResponse(
+            {"ok": False, "error": "AI isn’t configured — an admin must set an OpenRouter key in Settings."},
+            status_code=400,
+        )
+    from .monitors import _page_text_for_suggest
+    title, text = await _page_text_for_suggest(session, user, url, None)
+    if not (text or "").strip():
+        return JSONResponse(
+            {"ok": False, "error": "Couldn’t read the first page — check the URL, then try again."},
+            status_code=502,
+        )
+    goal = await suggest_goal(api_key=key, model=app.ai_model, base_url=app.ai_base_url,
+                              url=url, title=title, page_text=text, for_group=True)
+    if not goal:
+        return JSONResponse({"ok": False, "error": "Couldn’t draft a goal — describe it yourself, or try again."}, status_code=502)
+    return JSONResponse({"ok": True, "goal": goal})
 
 
 @router.post("/groups/ai-create")
