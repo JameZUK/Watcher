@@ -2,6 +2,43 @@
 
 All notable changes to Watcher are documented here. Dates are ISO-8601.
 
+## 2026-06-16 — Pushover + Home Assistant notifications, deep-linked alerts
+
+### Added
+- **Pushover notifications.** A global Pushover app token (admin-only, encrypted in
+  app settings) plus a per-user user/group key — mirroring the Telegram bot-token +
+  chat-id split.
+- **Home Assistant notifications.** Per-user HA base URL + long-lived access token
+  (encrypted) + notify service (default `persistent_notification.create`); delivers by
+  calling the HA REST API. A bare service name is treated as `notify.<name>`.
+- **Notifications deep-link to the highlighted change.** A new `WATCHER_PUBLIC_URL`
+  (with `settings.public_base`, falling back to the first `WATCHER_TRUSTED_HOSTS`
+  entry) lets Watcher build **absolute** links, so tapping a Telegram / Discord / ntfy
+  / Pushover / Home Assistant / email alert opens `/monitors/{id}?change={cid}` — the
+  change page on the highlighted diff — instead of the watched page. HA `notify.*`
+  services carry `data.clickAction` (tap-to-open on the mobile app);
+  `persistent_notification` embeds a markdown "Open in Watcher" link.
+- **"Send test" button** in Settings (`POST /settings/notifications/test`) fires a
+  sample alert to every configured destination and reports per-channel success.
+
+### Changed
+- **Settings saves are non-destructive.** Notification / transport / AI settings now
+  collect per-field validation errors and save the rest, redirecting with
+  `?error=codes` / `?saved=1` and an error/success banner — instead of silently
+  discarding the whole form when one field failed.
+- **SSRF relaxed for notification destinations only.** New `validate_notify_url` +
+  `WATCHER_ALLOW_PRIVATE_NOTIFY_TARGETS` (default **on**): notification targets
+  (Home Assistant / ntfy / Discord / webhook) may point at private/LAN addresses —
+  notifying your own LAN Home Assistant is the norm for a self-hosted box — while
+  monitor **render** targets stay locked to public IPs. Set it `false` on a
+  multi-tenant/public deployment to re-lock notification targets too.
+
+### Fixed
+- **Home Assistant config no longer silently fails to save.** A LAN base URL was
+  rejected by the SSRF guard via a destructive early-return that discarded the whole
+  form with no error shown (base URL + token appeared "not saved"). Fixed by the
+  non-destructive saves + the notification-target SSRF relax above.
+
 ## 2026-06-14 — Security & reliability hardening (full code-review batch)
 
 A full code review of the authenticated surface (which the prior black-box pentest
