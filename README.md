@@ -28,7 +28,7 @@
 - **Sees changes in place** — dashboard cards show live screenshot thumbnails; the diff viewer overlays **changed regions in red** on the actual page, with an interactive **before/after slider**, a scrubbable **history timeline**, and full-screen **zoom**.
 - **Clickable links on every capture** — captures are screenshots, but Watcher extracts each page's hyperlinks from the DOM and floats **real clickable anchors** over the image, so you can jump straight from a snapshot to the live page (history view **and** zoom, desktop **and** mobile, opens in a new tab) — even on links that sit under a change highlight.
 - **Group monitoring & price comparison** — group related pages (the **same product across retailers**) and watch them together: a side-by-side comparison with the **cheapest highlighted**, all prices on **one chart**, and a single group alert ("tell me when the cheapest drops below £X"). Groups aren't just for price — choose **back-in-stock**, **any-change**, or a **custom AI intent** that's combined with each page's own.
-- **AI triage & setup** *(optional)* — an OpenRouter-hosted model (or any OpenAI-compatible / **Ollama** endpoint) writes a one-line **headline**, classifies the change (price / stock / content / cosmetic …), and rates **importance** so low-value churn is muted. It also **builds monitors and groups from a plain-English goal** ("track this across these retailers and alert me under £250"), **suggests what to watch for**, and **summarises** recent activity.
+- **AI triage & setup** *(optional)* — an OpenRouter-hosted model (or any OpenAI-compatible / **Ollama** endpoint) writes a one-line **headline**, classifies the change (price / stock / content / cosmetic …), and rates **importance** so low-value churn is muted. It also **builds monitors and groups from a plain-English goal** ("track this across these retailers and alert me under £250") — or **drafts that goal for you straight from the page** (one click, then you edit) — **suggests what to watch for**, and **summarises** recent activity.
 - **Value tracking & trends** — extract a numeric value (price, stock count, rating) each check, chart it over time, and fire **threshold alerts** ("tell me when it drops below £300").
 - **Notifications** — in-app **inbox**, **Web Push**, **HMAC-signed webhooks**, **Email/SMTP**, **Telegram**, **Discord**, and **ntfy** — with **hourly digests** and **quiet hours** so non-urgent changes batch up instead of pinging you at 3am.
 - **Reliability & observability** — per-check render/detect timeouts, retries, **auto-pause** after repeated failures (with a recovery alert), **adaptive intervals**, **auto-escalation to stealth Camoufox** when a render is bot-walled, optional **automatic AI re-login** when a login session expires (credential logins, no captcha), and a **status page** (per-monitor success rate, render times, AI budget, blob-store size). A **per-step render trace** flags *degraded* captures and **auto-skips steps that repeatedly time out** (with per-monitor toggles), so one slow step never sinks the whole render.
@@ -44,6 +44,10 @@
 | Dashboard — monitors, groups & an AI fleet summary | Status — per-monitor health & resource use |
 |---|---|
 | ![Dashboard](docs/screenshots/dashboard.png) | ![Status page](docs/screenshots/status.png) |
+
+| Set up a monitor with AI — *draft the goal straight from the page* | …build a price group the same way |
+|---|---|
+| ![AI monitor setup](docs/screenshots/ai-setup.png) | ![AI group setup](docs/screenshots/ai-setup-group.png) |
 
 | Grouped price comparison (cheapest highlighted) | Combined price trend across sources |
 |---|---|
