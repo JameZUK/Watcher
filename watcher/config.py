@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     # Extra hostnames permitted in Host/Origin (besides the request host) — e.g.
     # the public hostname when behind a reverse proxy. Comma-separated via env.
     trusted_hosts: str = Field(default="")
+    # Public base URL of THIS Watcher instance (e.g. https://watcher.example.com). Used
+    # to build ABSOLUTE links in external notifications so tapping an alert opens the
+    # change in Watcher. Falls back to https://<first trusted host> when unset; if
+    # neither is set, external alerts link to the watched page instead.
+    public_url: str = Field(default="")
     # Honour X-Forwarded-For for the client IP used in rate-limit keys. Enable ONLY
     # when a trusted reverse proxy you control sits in front (it sets/overwrites the
     # header) — otherwise a direct client could spoof it to dodge/poison the limiter.
@@ -91,6 +96,11 @@ class Settings(BaseSettings):
 
     # --- Abuse / resource limits (public-exposure hardening) ---
     allow_private_targets: bool = Field(default=False)   # let monitors hit private IPs
+    # Let USER notification destinations (Home Assistant / ntfy / Discord / webhook)
+    # point at private/LAN addresses, while monitor render targets stay locked to public.
+    # On by default — notifying your own LAN service (e.g. Home Assistant) is the norm
+    # for a self-hosted instance. Set false on a multi-tenant/public deployment to re-lock.
+    allow_private_notify_targets: bool = Field(default=True)
     max_monitors_per_user: int = Field(default=100)      # 0 = unlimited
     max_groups_per_user: int = Field(default=50)         # 0 = unlimited
     ai_max_calls: int = Field(default=30)                # per user per window (shared AI key)
@@ -172,6 +182,17 @@ class Settings(BaseSettings):
     @property
     def trusted_host_set(self) -> set[str]:
         return {h.strip().lower() for h in self.trusted_hosts.split(",") if h.strip()}
+
+    @property
+    def public_base(self) -> str:
+        """Absolute base URL of this instance for notification links ('' if unknown).
+        Prefers WATCHER_PUBLIC_URL; else derives https://<first trusted host>."""
+        if self.public_url.strip():
+            return self.public_url.strip().rstrip("/")
+        hosts = [h.strip() for h in self.trusted_hosts.split(",") if h.strip()]
+        if hosts:
+            return ("https://" if self.secure_cookies else "http://") + hosts[0]
+        return ""
 
     def _derived_fernet_key(self) -> bytes:
         """HKDF-derive a 32-byte Fernet key from secret_key (domain-separated)."""

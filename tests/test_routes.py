@@ -356,6 +356,85 @@ def test_ai_suggest_goal_route():
     assert _run(_t)
 
 
+def test_pushover_and_homeassistant_settings():
+    """Pushover key + HA config round-trip (token encrypted). A LAN Home Assistant URL is
+    accepted by default (notify-private allowed); with that relaxation off a private URL
+    is SSRF-rejected and reported without dropping the other fields. Admin Pushover token
+    is stored."""
+    async def _t():
+        from watcher.config import settings
+        from watcher.main import create_app
+        from watcher.models import User
+        from watcher.app_settings import get_app_settings, get_pushover_token, get_user_ha_token
+        settings.registration_open = True
+        email = _email()
+        c = httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app()), base_url="http://t",
+                              headers={"Origin": "http://t"}, follow_redirects=False)
+        async with c:
+            await c.post("/register", data={"email": email, "password": "password123"})
+            await c.post("/login", data={"email": email, "password": "password123"})
+            # default: a LAN HA URL is ACCEPTED (notification destinations may be private)
+            r = await c.post("/settings/notifications", data={
+                "pushover_key": "uKEY", "ha_url": "http://192.168.1.10:8123",
+                "ha_service": "notify.mobile_app_phone", "ha_token": "lltoken-secret"})
+            assert r.status_code == 303 and "error" not in (r.headers.get("location") or "")
+            # with the relaxation OFF, a private URL is reported — and the rest still saves
+            settings.allow_private_notify_targets = False
+            try:
+                r = await c.post("/settings/notifications", data={
+                    "pushover_key": "uKEY", "ha_url": "http://10.0.0.5:8123"})
+                assert r.status_code == 303 and "ha_url" in (r.headers.get("location") or "")
+            finally:
+                settings.allow_private_notify_targets = True
+            # promote to admin (in the full suite this isn't the bootstrap admin), then
+            # save the shared Pushover app token via the admin-only transports route
+            async with SessionLocal() as s:
+                u = (await s.execute(select(User).where(User.email == email))).scalar_one()
+                u.is_admin = True
+                await s.commit()
+            r = await c.post("/settings/transports", data={"pushover_token": "appTOKEN"})
+            assert r.status_code == 303
+
+        async with SessionLocal() as s:
+            u = (await s.execute(select(User).where(User.email == email))).scalar_one()
+            assert u.pushover_key == "uKEY"
+            # the rejected private URL left the accepted LAN config untouched
+            assert u.ha_url == "http://192.168.1.10:8123" and u.ha_service == "notify.mobile_app_phone"
+            assert get_user_ha_token(u) == "lltoken-secret"        # encrypted at rest, decrypts
+            assert get_pushover_token(await get_app_settings(s)) == "appTOKEN"
+        return True
+
+    assert _run(_t)
+
+
+def test_notification_test_endpoint():
+    """'Send test' 400s with nothing configured, then reports a per-channel result for a
+    configured (here unreachable) destination."""
+    async def _t():
+        from watcher.config import settings
+        from watcher.main import create_app
+        settings.registration_open = True
+        settings.allow_private_notify_targets = True
+        email = _email()
+        c = httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app()), base_url="http://t",
+                              headers={"Origin": "http://t"}, follow_redirects=False)
+        async with c:
+            await c.post("/register", data={"email": email, "password": "password123"})
+            await c.post("/login", data={"email": email, "password": "password123"})
+            r = await c.post("/settings/notifications/test")
+            assert r.status_code == 400 and "configured" in r.json()["error"]
+            # configure a bogus HA destination (dead port), then test
+            await c.post("/settings/notifications", data={
+                "ha_url": "http://127.0.0.1:1/", "ha_service": "persistent_notification.create", "ha_token": "x"})
+            r = await c.post("/settings/notifications/test")
+            assert r.status_code == 200
+            body = r.json()
+            assert "Home Assistant" in body["results"] and body["ok"] is False   # unreachable
+        return True
+
+    assert _run(_t)
+
+
 def test_otp_login_flow():
     async def _t():
         import pyotp

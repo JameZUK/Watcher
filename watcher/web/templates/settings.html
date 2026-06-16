@@ -4,6 +4,19 @@
 <div class="max-w-5xl mx-auto">
   <h1 class="text-3xl font-bold tracking-tight text-white mb-5">Settings</h1>
 
+  {% if error %}
+  {% set err_msgs = {
+    'ha_url': 'Home Assistant URL rejected — it resolves to a private/internal address and private notification targets are disabled on this instance. Set WATCHER_ALLOW_PRIVATE_NOTIFY_TARGETS=true (the default), or use a public HTTPS URL (e.g. Nabu Casa). Your other changes were saved.',
+    'ntfy_url': 'ntfy server rejected — it resolves to a private/internal address and private notification targets are disabled. Set WATCHER_ALLOW_PRIVATE_NOTIFY_TARGETS=true. Your other changes were saved.',
+    'discord_url': 'Discord webhook rejected — private notification targets are disabled on this instance. Your other changes were saved.',
+    'ai_base_url': 'AI base URL rejected — it must be a valid http(s) URL. Your other changes were saved.' } %}
+  <div class="mb-5 rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
+    {% for code in error.split(',') %}<p>{{ err_msgs.get(code, 'Some settings were rejected (' ~ code ~ ').') }}</p>{% endfor %}
+  </div>
+  {% elif saved %}
+  <div class="mb-5 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-3.5 text-sm text-emerald-200">Settings saved.</div>
+  {% endif %}
+
   <div class="card-grid">
   <section class="glass rounded-2xl p-5 sm:p-6">
     <h2 class="font-semibold text-white mb-1">Account</h2>
@@ -91,7 +104,7 @@
   {% if is_admin %}
   <section class="glass rounded-2xl p-5 sm:p-6">
     <h2 class="font-semibold text-white mb-1">Notification transports <span class="pill pill-amber">admin</span></h2>
-    <p class="text-sm text-slate-400 mb-4 max-w-xl">Shared SMTP server, Telegram bot, and ntfy host used to deliver alerts. Secrets are encrypted at rest.</p>
+    <p class="text-sm text-slate-400 mb-4 max-w-xl">Shared SMTP server, Telegram bot, ntfy host, and Pushover app used to deliver alerts. Secrets are encrypted at rest.</p>
     <form method="post" action="/settings/transports" class="space-y-4">
       <div class="grid sm:grid-cols-2 gap-4">
         <div><label class="block text-sm font-medium text-slate-300 mb-1.5">SMTP host</label><input name="smtp_host" value="{{ tx.smtp_host }}" placeholder="smtp.example.com" class="field"></div>
@@ -102,6 +115,7 @@
         <label class="flex items-center gap-2.5 self-end pb-2.5 text-sm text-slate-300"><input type="checkbox" name="smtp_tls" {{ 'checked' if tx.smtp_tls else '' }} class="rounded bg-white/10 border-white/20 text-brand-500"> Use STARTTLS</label>
         <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Telegram bot token</label><input type="password" name="telegram_token" autocomplete="new-password" placeholder="{{ '•••• set (blank = keep)' if tx.telegram_token_set else '123456:ABC-DEF' }}" class="field"></div>
         <div><label class="block text-sm font-medium text-slate-300 mb-1.5">ntfy server</label><input name="ntfy_server" value="{{ tx.ntfy_server }}" placeholder="https://ntfy.sh" class="field"></div>
+        <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Pushover app token <span class="text-slate-500 font-normal">· <a href="https://pushover.net/apps/build" target="_blank" rel="noopener" class="underline">register an app</a></span></label><input type="password" name="pushover_token" autocomplete="new-password" placeholder="{{ '•••• set (blank = keep)' if tx.pushover_token_set else 'azGDORePK8gMaC0QOYAMyEEuzJnyUi' }}" class="field"></div>
       </div>
       <div>
         <label class="block text-sm font-medium text-slate-300 mb-1.5">Proxy pool <span class="text-slate-500 font-normal">· one proxy URL per line</span></label>
@@ -121,6 +135,17 @@
         <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Telegram chat ID</label><input name="telegram_chat_id" value="{{ nd.telegram_chat_id }}" placeholder="123456789" class="field"></div>
         <div><label class="block text-sm font-medium text-slate-300 mb-1.5">ntfy topic</label><input name="ntfy_topic" value="{{ nd.ntfy_topic }}" placeholder="my-watcher-alerts" class="field"></div>
         <div class="sm:col-span-2"><label class="block text-sm font-medium text-slate-300 mb-1.5">Discord webhook URL</label><input name="discord_webhook" value="{{ nd.discord_webhook }}" placeholder="https://discord.com/api/webhooks/…" class="field"></div>
+        <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Pushover user/group key <span class="text-slate-500 font-normal">· admin sets the app token above</span></label><input name="pushover_key" value="{{ nd.pushover_key }}" placeholder="uQiRzpo4DXghDmr9QzzfQu27cmVRsG" class="field"></div>
+      </div>
+      <div class="rounded-xl border border-white/10 bg-white/[.02] p-4 space-y-3">
+        <p class="text-sm font-medium text-slate-200 flex items-center gap-2">Home Assistant <span class="text-xs text-slate-500 font-normal">— calls a notify service via the HA REST API</span></p>
+        <div class="grid sm:grid-cols-2 gap-4">
+          <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Base URL</label><input name="ha_url" value="{{ nd.ha_url }}" placeholder="https://homeassistant.local:8123" class="field"></div>
+          <div><label class="block text-sm font-medium text-slate-300 mb-1.5">Notify service</label><input name="ha_service" value="{{ nd.ha_service }}" placeholder="persistent_notification.create" class="field"></div>
+          <div class="sm:col-span-2"><label class="block text-sm font-medium text-slate-300 mb-1.5">Long-lived access token</label><input type="password" name="ha_token" autocomplete="new-password" placeholder="{{ '•••• set (blank = keep)' if nd.ha_token_set else 'from your HA profile → Long-lived tokens' }}" class="field">
+            {% if nd.ha_token_set %}<label class="flex items-center gap-2 mt-2 text-xs text-slate-400"><input type="checkbox" name="ha_token_clear" class="rounded bg-white/10 border-white/20 text-red-500"> Clear the stored token</label>{% endif %}</div>
+        </div>
+        <p class="text-xs text-slate-500">e.g. <code class="text-slate-400">notify.mobile_app_phone</code> to push to your devices, or <code class="text-slate-400">persistent_notification.create</code> (default) to show in the HA dashboard. A LAN/internal URL works by default — just make sure the Watcher container can reach (and resolve) it.</p>
       </div>
       <label class="flex items-center gap-2.5 text-sm text-slate-200"><input type="checkbox" name="digest_enabled" {{ 'checked' if nd.digest_enabled else '' }} class="rounded bg-white/10 border-white/20 text-brand-500"> Digest mode — batch non-urgent changes hourly (high-importance still interrupts)</label>
       <div>
@@ -130,7 +155,19 @@
           to <input type="number" min="0" max="23" name="quiet_end" value="{{ nd.quiet_end if nd.quiet_end is not none else '' }}" class="field !w-20"> <span class="text-slate-500">(hour)</span>
         </div>
       </div>
-      <button class="btn btn-primary text-sm">Save destinations</button>
+      <div class="flex flex-wrap items-center gap-3" x-data="{ testing:false, ok:false, msg:'' }">
+        <button class="btn btn-primary text-sm">Save destinations</button>
+        <button type="button" :disabled="testing" title="Fires a sample alert to your SAVED destinations — save first if you just changed something"
+          @click="testing=true; msg='';
+            fetch('/settings/notifications/test',{method:'POST'})
+              .then(r=>r.json()).then(d=>{ testing=false; ok=d.ok;
+                msg = d.error ? d.error
+                    : (d.ok ? 'Sent to ' + Object.keys(d.results).join(', ')
+                            : Object.entries(d.results).map(([k,v]) => k + (v ? ' ✓' : ' ✗')).join(' · ')); })
+              .catch(() => { testing=false; ok=false; msg='Request failed.'; })"
+          class="btn btn-ghost text-sm" x-text="testing ? 'Sending…' : 'Send test'"></button>
+        <span x-show="msg" x-cloak class="text-xs" :class="ok ? 'text-emerald-300' : 'text-amber-300'" x-text="msg"></span>
+      </div>
     </form>
   </section>
 

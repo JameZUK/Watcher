@@ -11,16 +11,21 @@ from ...ai import triage_change
 from ...app_settings import (
     get_app_settings,
     get_openrouter_key,
+    get_pushover_token,
+    get_telegram_token,
+    get_user_ha_token,
     set_openrouter_key,
+    set_pushover_token,
     set_smtp_password,
     set_telegram_token,
 )
+from ...auth.security import encrypt_secret
 from ...auth.users import get_current_user, require_admin
 from ...config import settings
 from ...db import get_session
 from ...models import PushSubscription, User
-from ...netsec import validate_monitor_url, validate_public_url
-from ...notify import push
+from ...netsec import validate_monitor_url, validate_notify_url, validate_public_url
+from ...notify import discord, email, homeassistant, ntfy, push, pushover, telegram
 from .. import templates
 
 router = APIRouter()
@@ -46,6 +51,8 @@ async def settings_page(
         request, "settings.html",
         {
             "user": user,
+            "error": request.query_params.get("error"),
+            "saved": request.query_params.get("saved"),
             "push_enabled": push.enabled(),
             "vapid_public_key": settings.vapid_public_key or "",
             "sub_count": sub_count,
@@ -68,6 +75,10 @@ async def settings_page(
                 "telegram_chat_id": user.telegram_chat_id or "",
                 "discord_webhook": user.discord_webhook or "",
                 "ntfy_topic": user.ntfy_topic or "",
+                "pushover_key": user.pushover_key or "",
+                "ha_url": user.ha_url or "",
+                "ha_service": user.ha_service or "",
+                "ha_token_set": bool(user.ha_token_enc),
                 "digest_enabled": user.digest_enabled,
                 "quiet_start": user.quiet_start,
                 "quiet_end": user.quiet_end,
@@ -84,6 +95,7 @@ async def settings_page(
                 "smtp_user": app.smtp_user or "", "smtp_from": app.smtp_from or "",
                 "smtp_tls": app.smtp_tls, "smtp_pass_set": bool(app.smtp_pass_enc),
                 "telegram_token_set": bool(app.telegram_token_enc), "ntfy_server": app.ntfy_server,
+                "pushover_token_set": bool(app.pushover_token_enc),
                 "proxy_pool": app.proxy_pool or "",
             },
         },
@@ -118,18 +130,81 @@ async def save_notifications(
     session: AsyncSession = Depends(get_session),
 ):
     form = await request.form()
+    # Collect rejected-URL errors instead of bailing out early (which silently dropped
+    # the whole form — and left a half-saved HA token without its URL). Every other
+    # field still saves; the rejected one keeps its old value and is reported.
+    errors: list[str] = []
     user.telegram_chat_id = (form.get("telegram_chat_id") or "").strip() or None
-    discord = (form.get("discord_webhook") or "").strip() or None
-    if discord and not settings.allow_private_targets and validate_public_url(discord):
-        return RedirectResponse("/settings?error=discord_url", status_code=303)
-    user.discord_webhook = discord
     user.ntfy_topic = (form.get("ntfy_topic") or "").strip() or None
+    user.pushover_key = (form.get("pushover_key") or "").strip() or None
+
+    discord = (form.get("discord_webhook") or "").strip() or None
+    if discord and validate_notify_url(discord):
+        errors.append("discord_url")          # keep the existing value
+    else:
+        user.discord_webhook = discord
+
+    # Home Assistant: SSRF-guarded like the other notifier destinations (a LAN URL needs
+    # WATCHER_ALLOW_PRIVATE_TARGETS). Tolerate a scheme-less host:port. On rejection the
+    # whole HA config is left untouched so a token is never saved without its URL.
+    ha_url = (form.get("ha_url") or "").strip()
+    if ha_url and "://" not in ha_url:
+        ha_url = "http://" + ha_url
+    if ha_url and validate_notify_url(ha_url):
+        errors.append("ha_url")
+    else:
+        user.ha_url = ha_url or None
+        user.ha_service = (form.get("ha_service") or "").strip() or None
+        if _bool(form, "ha_token_clear"):
+            user.ha_token_enc = None
+        elif (form.get("ha_token") or "").strip():
+            user.ha_token_enc = encrypt_secret(form["ha_token"].strip())
+
     user.digest_enabled = _bool(form, "digest_enabled")
     qs, qe = _int_or_none(form.get("quiet_start")), _int_or_none(form.get("quiet_end"))
     user.quiet_start = qs if qs is not None and 0 <= qs <= 23 else None
     user.quiet_end = qe if qe is not None and 0 <= qe <= 23 else None
     await session.commit()
-    return RedirectResponse("/settings", status_code=303)
+    qstr = ("?error=" + ",".join(errors)) if errors else "?saved=1"
+    return RedirectResponse("/settings" + qstr, status_code=303)
+
+
+@router.post("/settings/notifications/test")
+async def test_notifications(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Fire a sample alert to every notification destination this user has configured,
+    and report per-channel success. Tests the SAVED config (save first)."""
+    app = await get_app_settings(session)
+    title = "Watcher test"
+    body = "✅ Test notification from Watcher — this channel is working."
+    click = "/settings"
+    ext_link = (settings.public_base + click) if settings.public_base else None
+    results: dict[str, bool] = {}
+
+    if app.smtp_host and user.email:
+        results["Email"] = await email.send(app, user.email, subject=title, body=f"{body}\n\n{ext_link}" if ext_link else body)
+    if get_telegram_token(app) and user.telegram_chat_id:
+        results["Telegram"] = await telegram.send(get_telegram_token(app), user.telegram_chat_id, title=title, body=body)
+    if user.discord_webhook:
+        results["Discord"] = await discord.send(user.discord_webhook, title=title, body=body, url=ext_link)
+    if app.ntfy_server and user.ntfy_topic:
+        results["ntfy"] = await ntfy.send(app.ntfy_server, user.ntfy_topic, title=title, body=body, url=ext_link)
+    if get_pushover_token(app) and user.pushover_key:
+        results["Pushover"] = await pushover.send(get_pushover_token(app), user.pushover_key, title=title, body=body, url=ext_link)
+    if user.ha_url:
+        results["Home Assistant"] = await homeassistant.send(user.ha_url, get_user_ha_token(user), user.ha_service, title=title, body=body, url=ext_link)
+    subs = (await session.execute(
+        select(PushSubscription).where(PushSubscription.user_id == user.id))).scalars().all()
+    if subs:
+        results["Web Push"] = await push.send_to_all(subs, title=title, body=body, url=click)
+
+    if not results:
+        return JSONResponse(
+            {"ok": False, "error": "No notification destinations configured — add one and save first."},
+            status_code=400)
+    return JSONResponse({"ok": all(results.values()), "results": results})
 
 
 @router.post("/settings/summary")
@@ -162,17 +237,24 @@ async def save_transports(
     app.smtp_user = (form.get("smtp_user") or "").strip() or None
     app.smtp_from = (form.get("smtp_from") or "").strip() or None
     app.smtp_tls = _bool(form, "smtp_tls")
-    ntfy_server = (form.get("ntfy_server") or "").strip() or "https://ntfy.sh"
-    if not settings.allow_private_targets and validate_public_url(ntfy_server):
-        return RedirectResponse("/settings?error=ntfy_url", status_code=303)
-    app.ntfy_server = ntfy_server
     app.proxy_pool = (form.get("proxy_pool") or "").strip() or None
     if (form.get("smtp_pass") or "").strip():
         set_smtp_password(app, form["smtp_pass"].strip())
     if (form.get("telegram_token") or "").strip():
         set_telegram_token(app, form["telegram_token"].strip())
+    if (form.get("pushover_token") or "").strip():
+        set_pushover_token(app, form["pushover_token"].strip())
+    # ntfy host last: a rejected (private) host keeps the old value + reports it rather
+    # than discarding the SMTP/token changes above.
+    errors: list[str] = []
+    ntfy_server = (form.get("ntfy_server") or "").strip() or "https://ntfy.sh"
+    if validate_notify_url(ntfy_server):
+        errors.append("ntfy_url")
+    else:
+        app.ntfy_server = ntfy_server
     await session.commit()
-    return RedirectResponse("/settings", status_code=303)
+    qstr = ("?error=" + ",".join(errors)) if errors else "?saved=1"
+    return RedirectResponse("/settings" + qstr, status_code=303)
 
 
 def _bool(form, key: str) -> bool:
@@ -193,13 +275,6 @@ async def save_ai_settings(
         app.ai_model = model
     policy = (form.get("ai_low_value_policy") or "silent").strip()
     app.ai_low_value_policy = policy if policy in _POLICIES else "silent"
-    base_url = (form.get("ai_base_url") or "").strip() or None
-    # The shared OpenRouter key is sent as a Bearer header to this URL — only
-    # accept http(s) so it can't be redirected to an exfiltration endpoint via a
-    # malformed scheme. (Localhost is allowed: self-hosted Ollama is a valid use.)
-    if base_url and validate_monitor_url(base_url):
-        return RedirectResponse("/settings?error=ai_base_url", status_code=303)
-    app.ai_base_url = base_url
     # Key: a new value replaces; "clear" wipes; blank leaves the existing key.
     if _bool(form, "openrouter_key_clear"):
         set_openrouter_key(app, None)
@@ -207,8 +282,19 @@ async def save_ai_settings(
         new_key = (form.get("openrouter_key") or "").strip()
         if new_key:
             set_openrouter_key(app, new_key)
+    # Base URL last: the shared OpenRouter key is sent as a Bearer header to this URL —
+    # only accept http(s) so it can't be redirected to an exfiltration endpoint via a
+    # malformed scheme (localhost is allowed: self-hosted Ollama). A bad URL keeps the
+    # old value + reports it rather than discarding the model/policy/key changes above.
+    errors: list[str] = []
+    base_url = (form.get("ai_base_url") or "").strip() or None
+    if base_url and validate_monitor_url(base_url):
+        errors.append("ai_base_url")
+    else:
+        app.ai_base_url = base_url
     await session.commit()
-    return RedirectResponse("/settings", status_code=303)
+    qstr = ("?error=" + ",".join(errors)) if errors else "?saved=1"
+    return RedirectResponse("/settings" + qstr, status_code=303)
 
 
 @router.post("/settings/ai/test")

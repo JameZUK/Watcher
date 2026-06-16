@@ -151,6 +151,21 @@ def validate_public_url(url: str) -> str | None:
     return _host_is_public(urlparse(url.strip()).hostname or "")
 
 
+def validate_notify_url(url: str) -> str | None:
+    """Validate a USER notification destination (Home Assistant / ntfy / Discord /
+    webhook). Always scheme/format-checked; the private-IP restriction is applied ONLY
+    when both ``allow_private_targets`` and ``allow_private_notify_targets`` are off — so
+    by default a user can notify their own LAN service while monitor render targets stay
+    locked to public addresses."""
+    from .config import settings
+    err = validate_monitor_url(url)
+    if err:
+        return err
+    if settings.allow_private_targets or settings.allow_private_notify_targets:
+        return None
+    return _host_is_public(urlparse(url.strip()).hostname or "")
+
+
 def validate_proxy(proxy: str | None) -> str | None:
     """Validate a per-monitor proxy string ``scheme://host[:port]``: known scheme
     and a host that resolves only to public addresses. None/empty is allowed."""

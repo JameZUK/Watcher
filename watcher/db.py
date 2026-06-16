@@ -63,6 +63,8 @@ _ADDED_COLUMNS = {
         "session_token": "VARCHAR(64)", "last_otp_step": "INTEGER DEFAULT 0",
         "summary_enabled": "BOOLEAN DEFAULT 1", "summary_days": "INTEGER DEFAULT 7",
         "summary_prompt": "VARCHAR(500)",
+        "pushover_key": "VARCHAR(64)", "ha_url": "VARCHAR(512)",
+        "ha_token_enc": "TEXT", "ha_service": "VARCHAR(128)",
     },
     "snapshots": {
         "title": "VARCHAR(512)", "screenshot_mobile_blob": "VARCHAR(64)",
@@ -100,7 +102,7 @@ _ADDED_COLUMNS = {
         "smtp_host": "VARCHAR(255)", "smtp_port": "INTEGER DEFAULT 587", "smtp_user": "VARCHAR(255)",
         "smtp_pass_enc": "TEXT", "smtp_from": "VARCHAR(255)", "smtp_tls": "BOOLEAN DEFAULT 1",
         "telegram_token_enc": "TEXT", "ntfy_server": "VARCHAR(255) DEFAULT 'https://ntfy.sh'",
-        "ai_base_url": "VARCHAR(255)", "proxy_pool": "TEXT",
+        "ai_base_url": "VARCHAR(255)", "proxy_pool": "TEXT", "pushover_token_enc": "TEXT",
     },
 }
 

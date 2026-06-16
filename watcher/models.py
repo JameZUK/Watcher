@@ -131,6 +131,12 @@ class User(Base):
     telegram_chat_id: Mapped[str | None] = mapped_column(String(64), default=None)
     discord_webhook: Mapped[str | None] = mapped_column(String(512), default=None)
     ntfy_topic: Mapped[str | None] = mapped_column(String(128), default=None)
+    pushover_key: Mapped[str | None] = mapped_column(String(64), default=None)  # Pushover user/group key
+    # Home Assistant: base URL + long-lived access token (encrypted) + the notify
+    # service to call (e.g. "notify.mobile_app_phone" or "persistent_notification.create").
+    ha_url: Mapped[str | None] = mapped_column(String(512), default=None)
+    ha_token_enc: Mapped[str | None] = mapped_column(Text, default=None)
+    ha_service: Mapped[str | None] = mapped_column(String(128), default=None)
     digest_enabled: Mapped[bool] = mapped_column(Boolean, default=False)  # batch low-importance
     quiet_start: Mapped[int | None] = mapped_column(Integer, default=None)  # quiet-hours start (0-23)
     quiet_end: Mapped[int | None] = mapped_column(Integer, default=None)
@@ -423,6 +429,7 @@ class AppSetting(Base):
     smtp_from: Mapped[str | None] = mapped_column(String(255), default=None)
     smtp_tls: Mapped[bool] = mapped_column(Boolean, default=True)
     telegram_token_enc: Mapped[str | None] = mapped_column(Text, default=None)
+    pushover_token_enc: Mapped[str | None] = mapped_column(Text, default=None)  # Pushover app API token
     ntfy_server: Mapped[str] = mapped_column(String(255), default="https://ntfy.sh")
     # Shared proxy pool — one proxy URL per line; health-checked and round-robined
     # to monitors that opt in (use_proxy_pool) and have no explicit proxy.

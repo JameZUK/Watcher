@@ -565,7 +565,7 @@
     <section class="glass rounded-2xl p-5 sm:p-6 space-y-4" x-data='{ channels: {{ (m.notify_channels if m else ["inbox"])|tojson }} }'>
       <h2 class="font-semibold text-white">Notify me via</h2>
       <div class="flex flex-wrap gap-2.5">
-        {% for ch, label in [('inbox','In-app inbox'),('push','Web Push'),('email','Email'),('telegram','Telegram'),('discord','Discord'),('ntfy','ntfy'),('webhook','Webhook')] %}
+        {% for ch, label in [('inbox','In-app inbox'),('push','Web Push'),('email','Email'),('telegram','Telegram'),('discord','Discord'),('ntfy','ntfy'),('pushover','Pushover'),('homeassistant','Home Assistant'),('webhook','Webhook')] %}
         <label class="cursor-pointer">
           <input type="checkbox" name="notify_channels" value="{{ ch }}" x-model="channels" class="sr-only peer">
           <span class="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[.03] px-3.5 py-2 text-sm text-slate-300 transition peer-checked:border-brand-500 peer-checked:bg-brand-500/10 peer-checked:text-white">{{ label }}</span>

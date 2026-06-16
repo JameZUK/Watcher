@@ -43,7 +43,7 @@ from ...models import (
     User,
     utcnow,
 )
-from ...netsec import validate_monitor_url, validate_proxy, validate_public_url
+from ...netsec import validate_monitor_url, validate_notify_url, validate_proxy, validate_public_url
 
 # How long a manually pasted cookie session is trusted before re-prompting.
 # Successful checks roll this forward via mark_session(), so it self-maintains.
@@ -195,18 +195,20 @@ def _apply_form(monitor: Monitor, form) -> None:
 
 
 def _validate_targets(monitor: Monitor) -> str | None:
-    """Validate every network destination on a monitor against the SSRF policy.
-    Always enforces the http(s) scheme; additionally requires public IPs for the
-    URL, webhook, and proxy unless ``allow_private_targets`` is set."""
+    """Validate every network destination on a monitor against the SSRF policy. Always
+    enforces the http(s) scheme; the render URL and proxy require public IPs unless
+    ``allow_private_targets`` is set. The webhook is a NOTIFICATION destination, so it
+    follows the (more permissive) notify policy — a private webhook is allowed when
+    ``allow_private_notify_targets`` (default on) is set."""
     err = validate_monitor_url(monitor.url)
     if err:
         return err
+    if monitor.webhook_url and (e := validate_notify_url(monitor.webhook_url)):
+        return f"Webhook URL — {e}"
     if settings.allow_private_targets:
         return None
     if (e := validate_public_url(monitor.url)):
         return e
-    if monitor.webhook_url and (e := validate_public_url(monitor.webhook_url)):
-        return f"Webhook URL — {e}"
     if (e := validate_proxy(monitor.proxy)):
         return f"Proxy — {e}"
     return None

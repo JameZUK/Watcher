@@ -68,3 +68,17 @@ def get_telegram_token(s: AppSetting) -> str | None:
 
 def set_telegram_token(s: AppSetting, plaintext: str | None) -> None:
     s.telegram_token_enc = encrypt_secret(plaintext) if plaintext else None
+
+
+def get_pushover_token(s: AppSetting) -> str | None:
+    """The shared Pushover *application* API token (admin-set), decrypted."""
+    return _get_enc(s.pushover_token_enc)
+
+
+def set_pushover_token(s: AppSetting, plaintext: str | None) -> None:
+    s.pushover_token_enc = encrypt_secret(plaintext) if plaintext else None
+
+
+def get_user_ha_token(user) -> str | None:
+    """A user's Home Assistant long-lived access token, decrypted (None if unset)."""
+    return _get_enc(getattr(user, "ha_token_enc", None))

@@ -21,6 +21,10 @@ services:
       WATCHER_DATA_DIR: "/data"
       # Set true once this is fronted with HTTPS (Secure cookie + HSTS).
       WATCHER_SECURE_COOKIES: "false"
+      # Public URL of THIS Watcher, e.g. http://192.168.4.5:8000 or
+      # https://watcher.example.com. Makes notification links open the change
+      # page in Watcher (tap an alert → see the diff). Set it in .env:
+      #   WATCHER_PUBLIC_URL=https://watcher.example.com
     volumes:
       # Live database + screenshot blobs, bind-mounted so existing monitors,
       # sessions and history carry over. The image runs as uid 1001 (pwuser), so

@@ -141,6 +141,65 @@ def test_quiet_hours():
     assert _in_quiet_hours(None) is False
 
 
+def test_pushover_homeassistant_send_guards_and_service_parse():
+    """Both new channels no-op (no network) when their config is missing, and the HA
+    notify-service string is normalised into (domain, service)."""
+    import asyncio
+    from watcher.notify import homeassistant, pushover
+    # missing config → False, no HTTP attempted
+    assert asyncio.run(pushover.send(None, "key", title="t", body="b")) is False
+    assert asyncio.run(pushover.send("tok", None, title="t", body="b")) is False
+    assert asyncio.run(homeassistant.send(None, "tok", "notify.x", title="t", body="b")) is False
+    assert asyncio.run(homeassistant.send("http://ha", None, "notify.x", title="t", body="b")) is False
+    # service normalisation
+    sp = homeassistant._split_service
+    assert sp("notify.mobile_app_phone") == ("notify", "mobile_app_phone")
+    assert sp("persistent_notification.create") == ("persistent_notification", "create")
+    assert sp("mobile_app_phone") == ("notify", "mobile_app_phone")   # bare name → notify domain
+    assert sp(None) == ("persistent_notification", "create")          # default service
+
+    # payload: notify.* puts the link in data.clickAction (tap-to-open on mobile);
+    # persistent_notification embeds a markdown link (it rejects unknown data keys).
+    link = "https://watcher.example.com/monitors/3?change=9"
+    bp = homeassistant._build_payload
+    p_notify = bp("notify", "T", "B", link)
+    assert p_notify["data"] == {"url": link, "clickAction": link}
+    assert link in p_notify["message"]
+    p_persist = bp("persistent_notification", "T", "B", link)
+    assert "data" not in p_persist
+    assert f"[Open in Watcher]({link})" in p_persist["message"]
+    assert "data" not in bp("notify", "T", "B", None)   # no link → no data key
+
+
+def test_notify_links_deep_link_to_change():
+    """External notification links resolve to the ABSOLUTE Watcher change page when a
+    public base URL is configured, and fall back to the watched page when it isn't."""
+    from types import SimpleNamespace
+    from watcher.config import settings
+    from watcher.notify import _links
+
+    mon = SimpleNamespace(id=7, url="https://shop.example/item")
+    chg = SimpleNamespace(id=42)
+    orig = settings.public_url
+    try:
+        settings.public_url = "https://watcher.example.com/"
+        rel, ext = _links(mon, chg)
+        assert rel == "/monitors/7?change=42"
+        assert ext == "https://watcher.example.com/monitors/7?change=42"
+        # no change → bare monitor path
+        assert _links(mon)[1] == "https://watcher.example.com/monitors/7"
+        # no public base (and no trusted host) → fall back to the watched page
+        settings.public_url = ""
+        orig_hosts = settings.trusted_hosts
+        settings.trusted_hosts = ""
+        try:
+            assert _links(mon, chg)[1] == "https://shop.example/item"
+        finally:
+            settings.trusted_hosts = orig_hosts
+    finally:
+        settings.public_url = orig
+
+
 # --- HTML→text for AI suggestions ------------------------------------------
 
 def test_netsec_url_guards():
