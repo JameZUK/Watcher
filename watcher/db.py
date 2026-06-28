@@ -89,6 +89,8 @@ _ADDED_COLUMNS = {
         "auto_relogin_enabled": "BOOLEAN DEFAULT 0", "use_proxy_pool": "BOOLEAN DEFAULT 0",
         "ai_page_profile": "TEXT", "churn_lines": "JSON",
         "render_step_overrides": "JSON", "render_step_stats": "JSON",
+        "new_items_only": "BOOLEAN DEFAULT 0",
+        "ai_list_rid": "VARCHAR(255)", "ai_list_sample": "TEXT",
     },
     "login_flows": {
         "relogin_cooldown_until": "TIMESTAMP",

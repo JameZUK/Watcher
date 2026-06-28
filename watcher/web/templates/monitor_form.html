@@ -537,6 +537,17 @@
             <option value="drop"   {{ 'selected' if m and m.ai_policy=='drop'   else '' }}>Drop entirely</option>
           </select>
         </div>
+        <label class="flex items-start gap-3 cursor-pointer">
+          <input type="checkbox" name="new_items_only" {{ 'checked' if (m.new_items_only if m else true) else '' }}
+                 class="mt-0.5 rounded bg-white/10 border-white/20 text-brand-500">
+          <span class="text-sm text-slate-300">
+            <span class="font-medium text-slate-200">New items only (feeds &amp; lists)</span><br>
+            <span class="text-xs text-slate-500">For pages that are a list of entries — reviews, jobs, products, posts:
+            alert only when a genuinely new entry appears; ignore reordering and changes to existing entries.
+            Safe to leave on — on a page that isn't a list (or with value tracking) it has no effect and normal
+            detection applies. Works on any list page (no per-site setup); the first check just learns what's already there.</span>
+          </span>
+        </label>
       </div>
     </section>
 

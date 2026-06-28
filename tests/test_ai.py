@@ -99,6 +99,32 @@ def test_profile_page_assembles_understanding(fake_http):
     assert fake_http.last["url"] == "http://x/v1"
 
 
+def test_pick_list_region_returns_index_and_sends_samples(fake_http):
+    out = _run(T.pick_list_region(
+        api_key="k", model="m", base_url="http://x/v1", url="u", title="t",
+        intent="new reviews", regions=[
+            {"index": 0, "samples": ["great place to work", "loved my time here"]},
+            {"index": 1, "samples": ["Home", "Jobs", "Salaries"]},
+        ]))
+    assert out == 0
+    sent = fake_http.last["json"]["messages"][1]["content"]
+    assert "great place to work" in sent and "new reviews" in sent
+
+
+def test_pick_list_region_declines_with_negative_index(monkeypatch):
+    class _Client(_FakeClient):
+        _content = '{"index":-1}'
+    monkeypatch.setattr(T.httpx, "AsyncClient", _Client)
+    out = _run(T.pick_list_region(api_key="k", model="m", url="u", title="t",
+                                  intent="x", regions=[{"index": 0, "samples": ["a"]}]))
+    assert out is None
+
+
+def test_pick_list_region_empty_regions_is_none(fake_http):
+    assert _run(T.pick_list_region(api_key="k", model="m", url="u", title="t",
+                                   intent="x", regions=[])) is None
+
+
 def test_refine_intent_returns_clear_rewrite(fake_http):
     """refine_intent rewrites a rough draft into a clear instruction (+ a note), and
     forwards the draft and page context to the model."""
@@ -241,6 +267,23 @@ def test_extract_value_threads_base_url(fake_http):
                              url="u", title="t", page_text="Price £1.50"))
     assert r == (1.5, "£1.50")
     assert fake_http.last["url"] == "http://x/v1"
+
+
+def test_extract_value_reconciles_scale_against_label(monkeypatch):
+    """The model sometimes reports `value` at the wrong scale (pence vs pounds:
+    26399 while the label says '£263.99'), which poisons the chart and fires
+    threshold crossings on the scale flip. The verbatim label is canonical, so
+    the parsed numeric value must follow it."""
+    class _Resp(_FakeResp):
+        pass
+
+    class _Client(_FakeClient):
+        _content = '{"found":true,"value":26399,"label":"£263.99"}'
+
+    monkeypatch.setattr(T.httpx, "AsyncClient", _Client)
+    r = _run(T.extract_value(api_key="k", model="m", url="u", title="t",
+                             page_text="Price £263.99"))
+    assert r == (263.99, "£263.99")
 
 
 def test_configure_monitor_threads_base_url(fake_http):

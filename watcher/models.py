@@ -212,6 +212,19 @@ class Monitor(Base):
     value_threshold: Mapped[float | None] = mapped_column(Float, default=None)
     value_threshold_dir: Mapped[str | None] = mapped_column(String(8), default=None)  # below|above
 
+    # Feed/list mode: alert only when a GENUINELY NEW record appears in the page's
+    # repeating list (reviews/jobs/products/posts) — reordering and existing-item churn
+    # are ignored. Identity comes from the page-tree record keys + a persisted seen-set.
+    # Default ON but auto-safe: it only ever suppresses on a page that actually has a
+    # list; non-list pages and value trackers fall through to normal detection (see the
+    # gate in runner.check_monitor), so leaving it on can't silence a non-list monitor.
+    new_items_only: Mapped[bool] = mapped_column(Boolean, default=True)
+    # The list region the AI judged relevant (its page-tree signature + a sample record),
+    # so new-item tracking and value extraction target the right list, not a nav/footer
+    # rail. NULL → fall back to the structural main_region() heuristic.
+    ai_list_rid: Mapped[str | None] = mapped_column(String(255), default=None)
+    ai_list_sample: Mapped[str | None] = mapped_column(Text, default=None)
+
     # Reliability
     consecutive_failures: Mapped[int] = mapped_column(Integer, default=0)
     # Set when the monitor was AUTO-paused (too many failures), so we can tell it apart
@@ -252,6 +265,36 @@ class Monitor(Base):
         back_populates="monitor", cascade="all, delete-orphan", uselist=False
     )
     group: Mapped["Group | None"] = relationship(back_populates="monitors")
+    seen_items: Mapped[list["MonitorSeenItem"]] = relationship(
+        back_populates="monitor", cascade="all, delete-orphan"
+    )
+
+
+class MonitorSeenItem(Base):
+    """The persisted seen-set for a feed/list monitor (``new_items_only``).
+
+    One row per record identity ever observed in the monitor's relevant list. A check
+    flags an item as NEW when its page-tree key isn't already here, then records the key
+    so it never re-fires — reordering keeps the same key, so it stays silent. Scoped by
+    monitor (not region) so a class-name reshuffle that changes the region signature
+    doesn't resurface every existing item as 'new'. Bounded: oldest keys are evicted past
+    a per-monitor cap. ``region_id`` is kept for diagnostics only.
+    """
+
+    __tablename__ = "monitor_seen_items"
+    __table_args__ = (
+        Index("ix_seen_monitor_key", "monitor_id", "key", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    monitor_id: Mapped[int] = mapped_column(
+        ForeignKey("monitors.id", ondelete="CASCADE"), index=True)
+    key: Mapped[str] = mapped_column(String(32))          # page-tree record identity
+    region_id: Mapped[str | None] = mapped_column(String(255), default=None)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow)
+
+    monitor: Mapped["Monitor"] = relationship(back_populates="seen_items")
 
 
 class Group(Base):

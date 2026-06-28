@@ -11,7 +11,7 @@ from datetime import timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from .ai import ai_login_action, extract_value, profile_page, triage_change
+from .ai import ai_login_action, extract_value, pick_list_region, profile_page, triage_change
 from .app_settings import get_app_settings, get_openrouter_key
 from .auth.login_flows import (
     build_secret_map,
@@ -22,10 +22,12 @@ from .auth.login_flows import (
 from .config import settings
 from .db import SessionLocal
 from .detection import churn, detect
+from .detection.page_tree import build_tree, select_region
 from .detection.value import parse_number
 from .engines import RenderResult, render_monitor
 from .models import (
-    Change, DetectionMode, Engine, Group, LoginFlow, Monitor, Snapshot, SnapshotStatus, utcnow,
+    Change, DetectionMode, Engine, Group, LoginFlow, Monitor, MonitorSeenItem,
+    Snapshot, SnapshotStatus, utcnow,
 )
 from .notify import dispatch, notify_monitor_alert
 from .storage import blobs
@@ -304,6 +306,74 @@ async def _maybe_profile_page(app, monitor, result) -> None:
     task.add_done_callback(_profile_tasks.discard)
 
 
+# Monitors whose relevant-list region is being chosen right now (dedup across checks).
+_region_inflight: set[int] = set()
+
+
+async def _run_pick_region(monitor_id, model, base_url, key, url, title, intent,
+                           regions, candidates) -> None:
+    """Background: ask the AI which repeating list is the watched content and pin its
+    signature (+ a sample) on the monitor, so new-item tracking and value extraction
+    target the right list. Clears the seen-set if the choice differs from what was being
+    tracked, so the corrected region re-seeds silently instead of flooding. Own session;
+    never raises into the caller."""
+    try:
+        idx = await pick_list_region(api_key=key, model=model, base_url=base_url,
+                                     url=url, title=title, intent=intent, regions=regions)
+        if idx is None or not (0 <= idx < len(candidates)):
+            return
+        rid, sample = candidates[idx]
+        async with SessionLocal() as s:
+            m = await s.get(Monitor, monitor_id)
+            if m is None or m.ai_list_rid == rid:
+                return
+            m.ai_list_rid = rid
+            m.ai_list_sample = (sample or "")[:500] or None
+            # The seen-set so far was seeded against the structural main_region guess
+            # (or a previously-pinned list). Now that the AI has chosen the real list,
+            # drop those keys so it re-seeds against the right region next check —
+            # otherwise its entries would all read as 'new' in one burst.
+            await s.execute(MonitorSeenItem.__table__.delete().where(
+                MonitorSeenItem.monitor_id == monitor_id))
+            await s.commit()
+    except Exception:  # noqa: BLE001
+        log.warning("region pick failed for monitor %s", monitor_id)
+    finally:
+        _region_inflight.discard(monitor_id)
+
+
+async def _maybe_pick_region(app, monitor, result) -> None:
+    """When a feed/list monitor's page has more than one candidate list, ask the AI once
+    (cached) which one is the watched content. Skipped when there's 0–1 list (the
+    structural main_region heuristic already suffices). Non-blocking; respects the AI
+    budget."""
+    if (not monitor.new_items_only or monitor.track_value or monitor.ai_list_rid
+            or not (monitor.ai_enabled and app.ai_enabled)
+            or monitor.id in _region_inflight):
+        return
+    tree = build_tree(result.element_map)
+    if tree is None:
+        return
+    cands = [r for r in tree.regions if r.role == "records" and len(r.records) >= 3]
+    if len(cands) < 2:
+        return
+    key = get_openrouter_key(app)
+    if not key:
+        return
+    from .web.ratelimit import allow
+    if not allow(f"ai:{monitor.user_id}", limit=settings.ai_max_calls, window=settings.ai_window_seconds):
+        return
+    regions = [{"index": i, "samples": [rec.text for rec in r.records[:3]]}
+               for i, r in enumerate(cands)]
+    candidates = [(r.rid, r.records[0].text if r.records else None) for r in cands]
+    _region_inflight.add(monitor.id)
+    task = asyncio.create_task(_run_pick_region(
+        monitor.id, app.ai_model, app.ai_base_url, key, monitor.url, result.title,
+        monitor.ai_watch_intent, regions, candidates))
+    _profile_tasks.add(task)
+    task.add_done_callback(_profile_tasks.discard)
+
+
 async def _maybe_triage(app, monitor, change_result, result, intent=None, prev=None, snap=None):
     """Best-effort AI triage of a detected change. Returns a Triage or None."""
     if not (monitor.ai_enabled and app.ai_enabled):
@@ -346,6 +416,57 @@ async def _maybe_triage(app, monitor, change_result, result, intent=None, prev=N
     )
 
 
+def _relevant_region(monitor, element_map):
+    """The page-tree region this monitor cares about — the AI-chosen list if set,
+    else the structural main_region heuristic. Returns None when there's no usable
+    repeating list on the page. Shared by new-item detection and value extraction."""
+    tree = build_tree(element_map)
+    if tree is None:
+        return None
+    return select_region(tree, rid=monitor.ai_list_rid, sample=monitor.ai_list_sample)
+
+
+# Per-monitor cap on the persisted seen-set. Generous (a year of daily reviews is
+# ~365) but bounded so a high-churn feed can't grow the table without limit.
+_SEEN_CAP = 5000
+
+
+async def _new_items_gate(session, monitor, snap) -> list[str] | None:
+    """Feed/list gate for ``new_items_only`` monitors. Returns the text of records that
+    are genuinely NEW since we last looked, or ``[]`` when the list rendered but holds
+    nothing new (reorder/seed), or ``None`` when there's no usable list this check.
+
+    Side effects: seeds the seen-set silently on first sight (so enabling the feature
+    doesn't flood), records newly-seen keys, and evicts oldest beyond the cap.
+    """
+    region = _relevant_region(monitor, snap.element_map)
+    if region is None or len(region.records) < 3:
+        return None
+    seen = set((await session.execute(
+        select(MonitorSeenItem.key).where(MonitorSeenItem.monitor_id == monitor.id)
+    )).scalars().all())
+    fresh = [r for r in region.records if r.key not in seen]
+    # First sight (feature just enabled / first capture): seed, announce nothing.
+    seeding = not seen
+    if fresh:
+        for r in fresh:
+            session.add(MonitorSeenItem(monitor_id=monitor.id, key=r.key,
+                                        region_id=region.rid))
+        await session.flush()
+        # Evict oldest beyond the cap so the table stays bounded.
+        if len(seen) + len(fresh) > _SEEN_CAP:
+            cutoff = (await session.execute(
+                select(MonitorSeenItem.id).where(MonitorSeenItem.monitor_id == monitor.id)
+                .order_by(MonitorSeenItem.id.desc()).limit(1).offset(_SEEN_CAP - 1)
+            )).scalar_one_or_none()
+            if cutoff is not None:
+                await session.execute(
+                    MonitorSeenItem.__table__.delete().where(
+                        MonitorSeenItem.monitor_id == monitor.id,
+                        MonitorSeenItem.id < cutoff))
+    return [] if seeding else [r.text for r in fresh]
+
+
 async def _extract_value(app, monitor, result):
     """Extract the monitor's tracked numeric value: a parsed selector/value
     first (free), else the AI. Returns (value, label) or None."""
@@ -355,10 +476,23 @@ async def _extract_value(app, monitor, result):
             return parsed
     if monitor.ai_enabled and app.ai_enabled:
         key = get_openrouter_key(app)
-        if key and (result.rendered_text or "").strip():
+        if not key:
+            return None
+        page_text = result.rendered_text
+        # Typed scoping: when the AI has pinned the watched list (e.g. the relevant row
+        # in a price-comparison grid), feed extraction only that region's text so it
+        # can't lift an unrelated number — a neighbouring product, market cap, a star
+        # rating — from elsewhere on the page (the main cause of wrong/scale-flipped
+        # values). Only when a region was explicitly chosen; ordinary single-value pages
+        # keep using the full text unchanged.
+        if monitor.ai_list_rid:
+            region = _relevant_region(monitor, result.element_map)
+            if region is not None and region.records:
+                page_text = "\n".join(r.text for r in region.records)[:6000]
+        if (page_text or "").strip():
             return await extract_value(
                 api_key=key, model=app.ai_model, base_url=app.ai_base_url, url=monitor.url,
-                title=result.title, page_text=result.rendered_text,
+                title=result.title, page_text=page_text,
             )
     return None
 
@@ -876,6 +1010,11 @@ async def _check_monitor_inner(monitor_id: int, *, manual: bool = False) -> None
             # judges this page's scope correctly. Non-blocking; runs once.
             await _maybe_profile_page(app, monitor, result)
 
+            # Feed/list monitors with several candidate lists: pin which one is the
+            # watched content (once, cached) so new-item tracking targets it, not a
+            # nav/footer/recommendations rail.
+            await _maybe_pick_region(app, monitor, result)
+
             # Value tracking: capture a numeric value each check for trends and
             # threshold alerts (e.g. price drops below a target).
             threshold_msg = None
@@ -925,6 +1064,37 @@ async def _check_monitor_inner(monitor_id: int, *, manual: bool = False) -> None
             if change_result.changed and (change_result.diff_text or "").strip():
                 monitor.churn_lines = churn.update(
                     monitor.churn_lines or {}, churn.changed_lines(change_result.diff_text))
+
+            # Feed/list mode (auto-safe): on a list page, reduce the change to its
+            # genuinely-new records — reordering and existing-item churn (the dominant
+            # noise on review/job/product/news feeds) never reaches triage or the
+            # timeline. Crucially this only SUPPRESSES when an actual list is found with
+            # nothing new; a page with no list (single value, article, status) falls
+            # through to normal detection untouched, so the mode is safe to leave on by
+            # default. Value trackers are exempt so an incidental on-page list (reviews,
+            # 'related items') can never suppress a real price/stock signal.
+            if (monitor.new_items_only and change_result.changed
+                    and not monitor.track_value):
+                new_items = await _new_items_gate(session, monitor, snap)
+                if new_items is None:
+                    pass  # no list this page/check → behave exactly like normal detection
+                elif not new_items:
+                    # A list rendered but holds nothing genuinely new (seed/reorder) →
+                    # suppress the churn. A threshold crossing still records below.
+                    if not threshold_msg:
+                        # Adapt cadence as a no-change check (the shared adapt call below
+                        # is skipped by the early return).
+                        if monitor.adaptive_interval:
+                            _adapt_interval(monitor, False)
+                        await session.commit()
+                        return
+                    change_result.changed = False  # let only the threshold path record
+                else:
+                    # New records → re-aim triage + the timeline entry at them.
+                    shown = new_items[:20]
+                    change_result.diff_text = "New items:\n" + "\n".join(f"- {t}" for t in shown)
+                    change_result.summary = (
+                        f"{len(new_items)} new item{'s' if len(new_items) != 1 else ''}")
 
             if change_result.changed or threshold_msg:
                 # Combine the group's shared watch-intent with the monitor's own

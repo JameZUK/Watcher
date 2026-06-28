@@ -176,6 +176,9 @@ def _apply_form(monitor: Monitor, form) -> None:
     vdir = (form.get("value_threshold_dir") or "").strip()
     monitor.value_threshold_dir = vdir if vdir in ("below", "above") else None
 
+    # Feed/list mode: alert only on genuinely-new list entries (reviews/jobs/products).
+    monitor.new_items_only = _bool(form, "new_items_only")
+
     # Render-step toggles. The form posts render_steps_present=1 plus a checkbox per
     # manageable step (checked = run, unchecked = skip). Absent on the create form /
     # API → leave overrides untouched (every step runs by default).
