@@ -751,9 +751,14 @@ _ELEMENT_MAP_JS = r"""() => {
     if (kids.length < 3) continue;
     const groups = {};
     for (const k of kids) { const g = sig(k); (groups[g] = groups[g] || []).push(k); }
-    for (const g of Object.values(groups)) {
+    for (const [gkey, g] of Object.entries(groups)) {
       if (g.length < 3) continue;
       cand++;                       // a repeated-sibling group exists (latent content)
+      // A stable-ish identity for the record-set this item belongs to (the parent's
+      // structural signature + the child group's). Lets a typed page tree regroup the
+      // otherwise-flat block list into regions without re-walking the DOM. Additive:
+      // existing consumers (crop_block, localize_change, history viewer) ignore `g`.
+      const gsig = sig(parent) + '>' + gkey;
       for (const item of g) {
         if (++probes > PROBE_CAP || out.length >= 400) break outer;
         if (seen.has(item) || !vis(item)) continue;
@@ -761,7 +766,7 @@ _ELEMENT_MAP_JS = r"""() => {
         const text = norm(item.innerText || item.textContent || '');
         if (text.length < 25 || text.length > 2000) continue;
         const r = item.getBoundingClientRect();
-        out.push({ t: text.slice(0, 600),
+        out.push({ t: text.slice(0, 600), g: gsig,
                    x: Math.round(r.left + sx), y: Math.round(r.top + sy),
                    w: Math.round(r.width), h: Math.round(r.height) });
       }
@@ -826,7 +831,8 @@ async def capture_element_map(page) -> dict | None:
         t = b.get("t") or ""
         key = hashlib.sha1(re.sub(r"\d+", "#", t.lower()).encode("utf-8")).hexdigest()[:12]
         blocks.append({"k": key, "x": b.get("x"), "y": b.get("y"),
-                       "w": b.get("w"), "h": b.get("h"), "s": t[:160]})
+                       "w": b.get("w"), "h": b.get("h"), "s": t[:160],
+                       "g": b.get("g")})
     return {"pw": data.get("pw"), "ph": data.get("ph"), "dpr": data.get("dpr"), "blocks": blocks}
 
 
