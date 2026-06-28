@@ -2,6 +2,50 @@
 
 All notable changes to Watcher are documented here. Dates are ISO-8601.
 
+## 2026-06-28 — New-item detection for feed/list monitors (typed page tree)
+
+### Added
+- **Typed page tree.** A new `detection/page_tree.py` regroups the page's captured
+  `element_map` into a reading-ordered tree of record regions (`PageTree → Region →
+  Record`). It uses the DOM as the layout model — no per-site selectors, no ML — driven
+  by a new additive `g` region signature emitted by the capture JS. Record identity
+  reuses the existing digit-masked text hash, so a reordered-but-unchanged entry keeps
+  its key. Derived from the stored map, so it works on historical snapshots with no
+  migration; existing `element_map` consumers ignore the new field.
+- **New-item detection (`new_items_only`).** Feed/list monitors (reviews, jobs,
+  products, news) alert **only when a genuinely new entry appears** — reordering and
+  changes to existing entries, the dominant noise on these pages, no longer reach triage
+  or the timeline. Backed by a `monitor_seen_items` table: the persisted per-monitor
+  seen-set, scoped by monitor (so a site's class-name reshuffle can't resurface every
+  entry as "new"), bounded with oldest-key eviction, and seeded silently on first sight
+  so enabling the mode never floods.
+- **AI list-region selection.** When a page has several repeating lists, a one-off
+  cached AI call (`pick_list_region`) picks the watched one (e.g. the reviews, not the
+  jobs/FAQ/footer rails) and pins it on the monitor; the structural "largest list"
+  heuristic is the fallback. Generic — the model reasons over sample text, naming no
+  selectors. A re-pin clears the seed so the chosen list re-seeds cleanly.
+
+### Changed
+- **`new_items_only` defaults ON, but auto-safe.** It only ever suppresses on a page
+  that genuinely has a list with nothing new; a page with no list (single value,
+  article, status) and any value-tracking monitor fall through to normal detection
+  untouched — so leaving it on can never silence a non-list monitor. Existing monitors
+  are unaffected; only newly-created ones default on.
+- **Typed value extraction.** When a monitor's watched list is pinned, value extraction
+  is scoped to that region's text so the model can't lift an unrelated number (a
+  neighbouring product, market cap, a star rating) from elsewhere on the page.
+- **Compose: public domain stays in `.env`; IPv6 publish.** Deployment settings
+  (`WATCHER_PUBLIC_URL`, secure cookies, trusted hosts) moved out of the committed
+  `environment:` block into `.env` guidance, and the port is now published over IPv6 as
+  well as IPv4 (an IPv6-only reverse proxy previously hit a silent 504).
+
+### Fixed
+- **Tracked value no longer scale-flips.** The AI sometimes reported the value at an
+  inconsistent scale (e.g. `26399` while the label read `£263.99`), flipping check to
+  check and poisoning the trend chart / firing false threshold crossings. The label is a
+  verbatim string lifted from the page, so when it parses to a number that is now trusted
+  as the canonical value.
+
 ## 2026-06-16 — Pushover + Home Assistant notifications, deep-linked alerts
 
 ### Added
